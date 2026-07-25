@@ -1,0 +1,37 @@
+# --- secrets: never commit. The vault contract keeps these out of the vault too.
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets.json
+
+# --- Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Node / frontend
+node_modules/
+dist/
+build/
+.next/
+*.tsbuildinfo
+.vite/
+
+# --- editors & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- never let the vault land inside this repo (see README: two repos, never nested)
+vault/
+obsidian-vault/
+*.md.bak
