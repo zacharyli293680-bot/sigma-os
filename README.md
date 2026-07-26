@@ -1,4 +1,4 @@
-# Gooner
+# Sigma
 
 A personal agentic OS whose memory substrate is an Obsidian vault.
 
@@ -61,7 +61,7 @@ Lives in `~/.obsidian-tools/`, driven by Claude Code hooks and a Windows schedul
 
 | | |
 |---|---|
-| `gooner/` | shared core — settings precedence, frontmatter, the `claude -p` call, project resolution |
+| `sigma/` | shared core — settings precedence, frontmatter, the `claude -p` call, project resolution |
 | `session_logger.py` | Phase 1 — transcript → session log. `--status`, `--sweep`, `--dry-run` |
 | `reflect.py` | Phase 2 — logs → insights + proposals. `--status`, `--apply`, `--install-schedule` |
 
@@ -71,7 +71,7 @@ Both are self-checking: `--status` reports config, wiring, backlog, and skill ro
 
 Local-first web app, Agent SDK backend + React frontend; Tauri as a later native upgrade.
 First target is interactive Q&A and synthesis over the vault's own materials. The shared
-`gooner` package is the seam this repo builds on rather than reimplementing.
+`sigma` package is the seam this repo builds on rather than reimplementing.
 
 ## Privacy
 
