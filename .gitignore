@@ -35,3 +35,15 @@ desktop.ini
 vault/
 obsidian-vault/
 *.md.bak
+
+# --- machine-local runtime: config, state, and failure logs.
+#     These are not secrets, but they are not shareable either: the config holds
+#     the privacy denylist (which names the very client it exists to hide), the
+#     state file lists covered session logs by filename, and the logs record
+#     skipped paths. All three name private working directories. The code is the
+#     artifact worth versioning; this is one machine's operating state. Ship
+#     .example files instead so a fresh clone knows what to fill in.
+runtime/*.config.json
+!runtime/*.config.example.json
+runtime/*.state.json
+runtime/*.log

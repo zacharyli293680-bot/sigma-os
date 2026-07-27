@@ -5,9 +5,10 @@ A personal agentic OS whose memory substrate is an Obsidian vault.
 Agents perceive state (frontmatter, checkboxes, dates), reason, act (write notes, plans,
 reports), and remember (git history) — with the vault co-writable by human and agents alike.
 
-> **This repo is the engine. It is deliberately behind the memory.**
-> Phases 1 and 2 ship as two Python scripts plus Claude Code hooks; this repo starts at
-> Phase 3, the application layer. Memory before engine was the plan, not an accident.
+> **This repo is the engine, and it was deliberately behind the memory.**
+> Memory before engine was the plan, not an accident — so this repo held only a README until
+> Phases 0–2 worked. As of 2026-07-27 the running code lives here too (`runtime/`), which also
+> means it is finally backed up: it had spent its whole life on one disk, untracked.
 
 ## The three systems
 
@@ -39,6 +40,7 @@ Five layers, raw → distilled:
 - **0 — Foundation** ✅ structured vault, frontmatter contract, course study systems
 - **1 — Session logging** ✅ `SessionEnd` hook + `SessionStart` sweep + Haiku summarizer → L1 notes
 - **2 — Reflection & skills** ✅ weekly reflection → insights + proposals, propose-and-approve learning
+- **2.5 — Watchdog** ✅ `doctor.py` on `SessionStart` — the phase two silent failures argued for
 - **3 — Interface** ⬜ *next* — local web app: Claude Agent SDK backend + React frontend
 - **4 — Specialist fleet** ⬜ planner / coach / auditor / tracker; git commits as the coordination log
 
@@ -55,23 +57,41 @@ Non-negotiable, and mechanical rather than promised wherever possible:
 - **Contract drift is the failure mode** — a field derived from one unvalidated input fails
   silently, so health checks report what the resolver can *see*, not just that it ran.
 
-## Phase 1–2 runtime (outside this repo, for now)
+## Layout
 
-Lives in `~/.obsidian-tools/`, driven by Claude Code hooks and a Windows scheduled task:
+```
+runtime/            Phases 1–2 — driven by Claude Code hooks + a Windows scheduled task
+  sigma/            shared core — settings precedence, frontmatter, `claude -p`, project resolution
+  session_logger.py Phase 1 — transcript → session log.   --status --sweep --dry-run
+  reflect.py        Phase 2 — logs → insights + proposals. --status --apply --install-schedule
+  doctor.py         watchdog — reports Sigma's health into every session.  --quiet --json
+tools/              vault utilities that aren't Sigma (PDF → Markdown converter)
+```
 
-| | |
-|---|---|
-| `sigma/` | shared core — settings precedence, frontmatter, the `claude -p` call, project resolution |
-| `session_logger.py` | Phase 1 — transcript → session log. `--status`, `--sweep`, `--dry-run` |
-| `reflect.py` | Phase 2 — logs → insights + proposals. `--status`, `--apply`, `--install-schedule` |
+All three are pure stdlib and self-checking: `--status` reports config, wiring, backlog, and
+skill roots. `doctor.py` exists because those self-checks were green while the system was dead —
+it runs itself, on `SessionStart`, and speaks only when something is wrong.
 
-Both are self-checking: `--status` reports config, wiring, backlog, and skill roots.
+**Config, state, and logs are gitignored** (`*.config.json`, `*.state.json`, `*.log`) — not
+because they hold secrets, but because they hold *this machine's* operating state, including the
+privacy denylist, which names the very client it exists to hide. Copy the `.example` files to set
+up a fresh machine.
+
+**Wiring lives outside the repo** and points back into it: two hooks in `~/.claude/settings.json`
+(`SessionEnd` → capture, `SessionStart` → sweep + doctor) and the `SigmaOS-WeeklyReflection`
+scheduled task. **Quote the interpreter path in every hook** — Claude Code runs hooks through a
+POSIX shell, where an unquoted `C:\Python314\python.exe` silently becomes `C:Python314python.exe`
+and the hook dies before Python starts. That cost three days of capture once.
 
 ## Phase 3 sketch
 
 Local-first web app, Agent SDK backend + React frontend; Tauri as a later native upgrade.
 First target is interactive Q&A and synthesis over the vault's own materials. The shared
 `sigma` package is the seam this repo builds on rather than reimplementing.
+
+**No API key required.** The Claude Agent SDK is Claude Code packaged as a library — it spawns the
+same CLI and inherits the same login, so Phase 3 rides the existing subscription exactly as
+`claude -p` does today. Verified with `ANTHROPIC_API_KEY` explicitly unset.
 
 ## Privacy
 

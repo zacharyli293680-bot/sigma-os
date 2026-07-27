@@ -1,0 +1,11 @@
+{
+  "_help": "Copy to session_logger.config.json and edit. The real file is gitignored. Settings here are read by the Claude Code hooks, which run with no environment. Precedence: env var > this file > built-in default.",
+  "model": "haiku",
+  "min_messages": 4,
+  "vault_path": "C:\\path\\to\\your\\obsidian vault",
+  "_sweep_help": "SessionEnd only fires on a clean exit (/exit, /clear, logout) - closing the terminal loses the session. A SessionStart --sweep logs whatever the hook missed. sweep_max caps how many sessions one sweep will summarize (cost control; the rest wait for the next launch). min_age_minutes skips transcripts touched that recently, so a live session is never summarized mid-flight.",
+  "sweep_max": 3,
+  "min_age_minutes": 15,
+  "_deny_help": "deny: list of case-sensitive path substrings. A session whose working directory contains ANY of them is NEVER summarized or logged - nothing is sent to the model. This is the privacy control; arm it BEFORE running sessions in a directory you need kept private, because it is not retroactive.",
+  "deny": ["ClientName", "clientname"]
+}

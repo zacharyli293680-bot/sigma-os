@@ -1,0 +1,8 @@
+{
+  "_comment": "Copy to reflect.config.json and edit. The real file is gitignored. Phase 2 - weekly reflection loop. See reflect.py and [[reflection-loop]] in the vault.",
+  "model": "sonnet",
+  "vault_path": "C:\\path\\to\\your\\obsidian vault",
+  "max_insights": 4,
+  "max_proposals": 3,
+  "min_sessions": 2
+}
