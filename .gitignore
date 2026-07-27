@@ -47,3 +47,8 @@ runtime/*.config.json
 !runtime/*.config.example.json
 runtime/*.state.json
 runtime/*.log
+
+# --- Phase 3 interface
+interface/backend/.venv/
+interface/frontend/node_modules/
+interface/frontend/dist/
