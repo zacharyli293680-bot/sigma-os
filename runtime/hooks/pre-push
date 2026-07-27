@@ -1,0 +1,63 @@
+#!/bin/sh
+# pre-push — refuse to publish anything the ignore rules say must stay local.
+#
+# The carve-out invariant is not "no file mentions the client". The client's name
+# legitimately appears in daily notes and MOCs, and Sigma's own insights are named
+# after the carve-out itself — a substring grep flags those and trains you to use
+# --no-verify, which is worse than no guard at all.
+#
+# The precise invariant is: a file may not be BOTH tracked AND ignored. Every
+# carved-out path is listed in .gitignore, so this catches all of them, produces
+# no false positives, and needs no maintenance — add a path to .gitignore and the
+# guard covers it from then on.
+#
+# Installed per-machine into .git/hooks/. Canonical copy lives in the sigma-os
+# repo at runtime/hooks/pre-push; see runtime/install_hooks.py.
+
+fail() {
+    echo ""
+    echo "  PUSH BLOCKED — $1" >&2
+    echo "" >&2
+    shift
+    for f in "$@"; do echo "      $f" >&2; done
+    echo "" >&2
+    echo "  These paths are gitignored, which means they were meant to stay on this" >&2
+    echo "  machine — but they are also tracked, so pushing would publish them." >&2
+    echo "" >&2
+    echo "  To untrack while keeping the file on disk:" >&2
+    echo "      git rm --cached <path> && git commit" >&2
+    echo "" >&2
+    echo "  If it is already in earlier commits, the history needs rewriting too —" >&2
+    echo "  see [[repo-and-privacy-model]] in the vault." >&2
+    echo "" >&2
+    exit 1
+}
+
+# 1. The working tree as it stands.
+tracked_and_ignored=$(git ls-files -i -c --exclude-standard)
+if [ -n "$tracked_and_ignored" ]; then
+    # shellcheck disable=SC2086
+    fail "tracked file(s) are also gitignored:" $tracked_and_ignored
+fi
+
+# 2. The commits actually being pushed — a file can be clean now and still be
+#    present in an earlier commit in the outgoing range.
+zero=$(git hash-object --stdin </dev/null | tr '[:xdigit:]' '0')
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+    [ "$local_sha" = "$zero" ] && continue            # branch deletion
+
+    if [ "$remote_sha" = "$zero" ]; then              # new branch: whole history
+        files=$(git ls-tree -r --name-only "$local_sha")
+    else
+        files=$(git diff --name-only "$remote_sha" "$local_sha")
+    fi
+    [ -z "$files" ] && continue
+
+    offenders=$(printf '%s\n' "$files" | git check-ignore --stdin 2>/dev/null)
+    if [ -n "$offenders" ]; then
+        # shellcheck disable=SC2086
+        fail "commit(s) being pushed contain gitignored path(s):" $offenders
+    fi
+done
+
+exit 0

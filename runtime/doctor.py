@@ -158,7 +158,36 @@ def check_schedule(out):
                     "tail reflect.log; python reflect.py"))
 
 
-CHECKS = (check_capture, check_reflection, check_schedule)
+def check_privacy(out):
+    """Is anything the ignore rules protect actually tracked — and is the guard armed?
+
+    The pre-push hook is the real enforcement, but obsidian-git auto-pushes the
+    vault every 30 minutes and may not run hooks at all. So the same invariant is
+    re-checked here, where it surfaces in a session's context either way.
+    """
+    import session_logger as sl
+    vault = sl.DEFAULT_VAULT
+
+    r = subprocess.run(["git", "-C", str(vault), "ls-files", "-i", "-c",
+                        "--exclude-standard"], capture_output=True, text=True, timeout=30)
+    if r.returncode != 0:
+        return                                   # not a repo / git unavailable
+
+    files = [f for f in r.stdout.splitlines() if f.strip()]
+    if files:
+        out.append((ALERT, f"{len(files)} gitignored file(s) are tracked in the vault "
+                           f"- a push would publish them: {files[0]}"
+                           + (f" (+{len(files) - 1} more)" if len(files) > 1 else ""),
+                    "git rm --cached <path> && git commit"))
+    else:
+        out.append((OK, "privacy invariant holds (nothing tracked is gitignored)", None))
+
+    if not (Path(vault) / ".git" / "hooks" / "pre-push").exists():
+        out.append((TODO, "vault pre-push privacy guard is not installed",
+                    "python install_hooks.py"))
+
+
+CHECKS = (check_capture, check_reflection, check_schedule, check_privacy)
 
 
 def collect():

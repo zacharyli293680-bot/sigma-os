@@ -335,8 +335,39 @@ def write_proposal(pr, today) -> Path:
     return p
 
 
+def heal_capture_first():
+    """Recover unlogged sessions before reflecting on the week.
+
+    The reflection's conclusions are only as complete as its input, and on
+    2026-07-25 three days of sessions were missing without anyone noticing —
+    a reflection run in that window would have drawn confident lessons from a
+    hole in the evidence. Rather than merely flagging the gap, close it: the
+    sweep is the same code the SessionStart hook runs, so this is a retry, not
+    a new mechanism. A gap that survives the sweep is reported and does not
+    block — a partial reflection beats skipping the week entirely.
+    """
+    try:
+        import session_logger as sl
+    except Exception as e:
+        log(f"capture pre-check unavailable ({type(e).__name__}: {e}); reflecting anyway.")
+        return
+    sessions = VAULT / "06-System" / "sessions"
+    try:
+        pending = len(sl.capture_candidates(sessions)[0])
+        if not pending:
+            return
+        log(f"capture pre-check: {pending} unlogged session(s) - sweeping before reflecting")
+        sl.sweep(argparse.Namespace(vault=str(VAULT), out_dir=None,
+                                    max=pending, dry_run=False))
+        left = len(sl.capture_candidates(sessions)[0])
+        log(f"capture pre-check: {'all recovered' if not left else f'{left} still unlogged - reflecting over an incomplete window'}")
+    except Exception as e:
+        log(f"capture pre-check failed ({type(e).__name__}: {e}); reflecting anyway.")
+
+
 def do_reflect(a):
     state = load_state()
+    heal_capture_first()
     logs = new_sessions(state, a.all, a.since)
     if len(logs) < MIN_SESSIONS and not a.force:
         log(f"only {len(logs)} new session log(s) (min {MIN_SESSIONS}) - nothing to reflect on.")
