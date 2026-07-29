@@ -283,7 +283,58 @@ def check_privacy(out):
                     "python install_hooks.py"))
 
 
-CHECKS = (check_capture, check_reflection, check_schedule, check_auth, check_privacy)
+def check_fleet(out):
+    """Phase 4: is each specialist still running, and did any of them stall?
+
+    The fleet takes Sigma from one unattended scheduled process to five, and the
+    two it already had each died silently once. So the watchdog watches per
+    *specialist*, not just per task: a fleet run that completes while one
+    specialist has failed every time for a fortnight is exactly the kind of
+    healthy-looking failure this file exists to catch.
+    """
+    import fleet as fl
+    import specialists as sp
+
+    state = fl.load_state()
+    if not state.get("last_run"):
+        out.append((TODO, "the specialist fleet has never run",
+                    f"python {fl.HERE / 'fleet.py'} --all"))
+        return
+
+    if not fl._task_installed():
+        out.append((TODO, f"fleet is not scheduled (task '{fl.TASK_NAME}' missing)",
+                    "python fleet.py --install-schedule"))
+
+    specs = state.get("specialists") or {}
+    stale, broken = [], []
+    for s in sp.in_run_order():
+        rec = specs.get(s.key) or {}
+        if rec.get("last_result") not in (None, "ok"):
+            broken.append(s.key)
+            continue
+        days = _days_since(rec.get("last_ok"))
+        allowed = fl.CADENCE_DAYS.get(s.cadence, 1) * 2 + 1   # two cycles + slack
+        if days is None or days > allowed:
+            stale.append(f"{s.key} ({'never' if days is None else str(days) + 'd'})")
+
+    if broken:
+        out.append((ALERT, f"specialist(s) failing: {', '.join(broken)}",
+                    "tail fleet.log; python fleet.py --only " + broken[0]))
+    if stale:
+        out.append((TODO, f"specialist(s) overdue: {', '.join(stale)}",
+                    "python fleet.py"))
+    if state.get("stopped_early_at"):
+        out.append((TODO, f"last fleet run stopped early on a rate limit "
+                          f"({state['stopped_early_at']}) - some specialists "
+                          f"did not run", "python fleet.py"))
+    if not (broken or stale):
+        n = len(specs)
+        out.append((OK, f"fleet healthy ({n}/{len(sp.FLEET)} specialist(s) "
+                        f"reporting, last run {state.get('last_run')})", None))
+
+
+CHECKS = (check_capture, check_reflection, check_schedule, check_auth,
+          check_privacy, check_fleet)
 
 
 def collect():

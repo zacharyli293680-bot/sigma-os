@@ -83,15 +83,24 @@ same gate the weekly reflection goes through.
 """.strip()
 
 
-def build_options(allow_proposals: bool = True) -> ClaudeAgentOptions:
-    """Options for one question.
+def build_options(allow_proposals: bool = True,
+                  orientation: str = ORIENTATION,
+                  model: str | None = None,
+                  effort: str = "medium",
+                  max_turns: int = 30) -> ClaudeAgentOptions:
+    """Options for one agent run — a chat question, or one Phase 4 specialist.
+
+    Parameterised rather than copied because the *guarantees* below must not be
+    re-derived per caller. A specialist that built its own options would be one
+    edit away from a model path with no privacy guard on it, which is exactly
+    the carve-out this vault paid a history rewrite to make.
 
     `allow_proposals` toggles the *proposal* tool only. It deliberately does not
     reach `VaultPrivacy`, which is constructed with `allow_writes=False`
     unconditionally: `Write`, `Edit` and `Bash` are refused at the PreToolUse
     boundary no matter how this is called. Wiring one flag to both would mean
     "let the agent propose" and "let the agent edit notes" were the same switch,
-    and the second is a thing this interface must never do.
+    and the second is a thing nothing here may do.
     """
     privacy = VaultPrivacy(VAULT, allow_writes=False)
     return ClaudeAgentOptions(
@@ -113,7 +122,7 @@ def build_options(allow_proposals: bool = True) -> ClaudeAgentOptions:
         mcp_servers={"sigma": proposal_server()},
         # Keep Claude Code's tool-use competence, add our framing on top.
         system_prompt={"type": "preset", "preset": "claude_code",
-                       "append": ORIENTATION},
+                       "append": orientation},
         # PreToolUse fires for EVERY tool call regardless of permission mode.
         # This is the guarantee; can_use_tool below is a second layer that only
         # covers calls which would otherwise prompt.
@@ -127,6 +136,7 @@ def build_options(allow_proposals: bool = True) -> ClaudeAgentOptions:
         # question the interface is asked.
         setting_sources=[],
         include_partial_messages=True,  # token-level streaming to the browser
-        max_turns=30,
-        effort="medium",
+        max_turns=max_turns,
+        effort=effort,
+        **({"model": model} if model else {}),
     )
