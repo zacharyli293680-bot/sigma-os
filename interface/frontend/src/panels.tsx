@@ -56,7 +56,7 @@ export function TopStrip({ health, window: win, block, clock, onHealthClick }: {
 
 const RAIL: [string, string, boolean][] = [
   ["OV", "Overview", true],
-  ["BR", "Brain — Phase 2", false],
+  ["BR", "Brain (Ctrl+G)", true],
   ["AG", "Agents — Phase 1", false],
   ["WK", "Work — Phase 6", false],
   ["ST", "Study — Phase 6", false],
@@ -65,14 +65,21 @@ const RAIL: [string, string, boolean][] = [
   ["SY", "System — Phase 6", false],
 ];
 
-export function Rail() {
+export function Rail({ brainOpen, onBrain }: {
+  brainOpen: boolean; onBrain: () => void;
+}) {
   return (
     <nav className="rail">
-      {RAIL.map(([k, title, live]) => (
-        <button key={k} className={live ? "active" : ""} disabled={!live} title={title}>
-          ◇ {k}
-        </button>
-      ))}
+      {RAIL.map(([k, title, live]) => {
+        const active = k === "BR" ? brainOpen : k === "OV" ? !brainOpen : false;
+        return (
+          <button key={k} className={active ? "active" : ""} disabled={!live}
+                  title={title}
+                  onClick={k === "BR" ? onBrain : k === "OV" && brainOpen ? onBrain : undefined}>
+            ◇ {k}
+          </button>
+        );
+      })}
       <div className="rail-gap" />
       <button className="seal" disabled title="Sealed lane — Phase 5">▦ SEAL</button>
     </nav>
@@ -198,7 +205,7 @@ export function FleetDetail({ fleet }: { fleet: Fleet | null }) {
 export function Foot({ activity }: { activity: { text: string; live: boolean } }) {
   return (
     <footer className="foot">
-      <span><kbd>Ctrl</kbd>+<kbd>/</kbd> chat · <kbd>Esc</kbd> overview</span>
+      <span><kbd>Ctrl</kbd>+<kbd>/</kbd> chat · <kbd>Ctrl</kbd>+<kbd>G</kbd> brain · <kbd>Esc</kbd> overview</span>
       <span className={`dock ${activity.live ? "live" : "dim"}`}>{activity.text}</span>
     </footer>
   );

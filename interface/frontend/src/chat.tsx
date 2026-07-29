@@ -67,8 +67,9 @@ function Markdown({ text, vault }: { text: string; vault: string }) {
   return <>{blocks}</>;
 }
 
-export default function ChatDrawer({ open, vault, onClose }: {
+export default function ChatDrawer({ open, vault, onClose, onTool }: {
   open: boolean; vault: string; onClose: () => void;
+  onTool?: (detail: string) => void;   // feeds the brain's live firing (D2)
 }) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [draft, setDraft] = useState("");
@@ -108,8 +109,10 @@ export default function ChatDrawer({ open, vault, onClose }: {
           if (!line) continue;
           const e = JSON.parse(line.slice(6));
           if (e.type === "token") patch(t => ({ ...t, a: t.a + e.text }));
-          else if (e.type === "tool")
+          else if (e.type === "tool") {
             patch(t => ({ ...t, tools: [...t.tools, { name: e.name, detail: e.detail }] }));
+            if (e.detail) onTool?.(e.detail);
+          }
           else if (e.type === "denied")
             patch(t => ({ ...t, blocked: [...t.blocked, e.message] }));
           else if (e.type === "error") patch(t => ({ ...t, error: e.message }));

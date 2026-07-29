@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import "./App.css";
 import { API, get } from "./api";
 import type { Fleet, Health, Progress, Projects, Proposals, Tasks, Window_ } from "./api";
+import Brain from "./brain";
 import ChatDrawer from "./chat";
 import { FleetDetail, Foot, Panel, ProjectsPanel, Rail, TodayPanel, TopStrip, WaitingPanel } from "./panels";
 import Reactor, { activityLine, useElapsed } from "./reactor";
@@ -35,6 +36,8 @@ export default function App() {
   const [window_, setWindow] = useState<Window_ | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
+  const [brainOpen, setBrainOpen] = useState(false);
+  const fireRef = useRef<((detail: string) => void) | null>(null);
   const clock = useClock();
 
   const refresh = useCallback(() => {
@@ -82,7 +85,16 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.key === "/") { e.preventDefault(); setChatOpen(o => !o); }
-      else if (e.key === "Escape") setChatOpen(false);
+      else if (e.ctrlKey && (e.key === "g" || e.key === "G")) {
+        e.preventDefault();
+        setBrainOpen(o => !o);
+      } else if (e.key === "Escape") {
+        // Esc peels one layer: the drawer first, then the brain, then overview.
+        setChatOpen(open => {
+          if (!open) setBrainOpen(false);
+          return false;
+        });
+      }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -98,7 +110,7 @@ export default function App() {
     <div className="shell">
       <TopStrip health={health} window={window_} block={tasks?.block ?? null}
                 clock={clock} onHealthClick={checkHealth} />
-      <Rail />
+      <Rail brainOpen={brainOpen} onBrain={() => setBrainOpen(o => !o)} />
       <Reactor fleet={fleet} progress={progress} waitingCount={waitingCount} />
       <div className="right">
         <WaitingPanel proposals={proposals} vault={vault} />
@@ -109,7 +121,9 @@ export default function App() {
         <FleetDetail fleet={fleet} />
       </div>
       <Foot activity={activityLine(fleet, progress, dockElapsed)} />
-      <ChatDrawer open={chatOpen} vault={vault} onClose={() => setChatOpen(false)} />
+      <Brain open={brainOpen} vault={vault} fireRef={fireRef} />
+      <ChatDrawer open={chatOpen} vault={vault} onClose={() => setChatOpen(false)}
+                  onTool={d => fireRef.current?.(d)} />
       {!chatOpen && (
         <button className="chat-fab" onClick={() => setChatOpen(true)} title="Ask Sigma (Ctrl+/)">
           ⌕ ask

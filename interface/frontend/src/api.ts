@@ -46,6 +46,15 @@ export type Window_ = {
   known: boolean; percent: number | null; reserved: number | null; note: string;
 };
 
+export type GraphNode = {
+  id: string; label: string; bucket: string;
+  inlinks: number; mtime: string | null;
+};
+export type Graph = {
+  notes: number; edges: number;
+  nodes: GraphNode[]; links: [number, number][];
+};
+
 export type ProgressResult = {
   ok: boolean; seconds: number; proposals: number; error: string | null;
 };
