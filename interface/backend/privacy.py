@@ -33,10 +33,11 @@ PATH_ARGS = {
     "Grep": ("path",),
 }
 
-# Read-only by default. Phase 3's first slice answers questions; it does not
-# write. When writing arrives it must follow the propose-don't-apply rule the
-# rest of Sigma already obeys, so opening these up is a deliberate later step,
-# not something to leave ajar now.
+# Always refused. Writing arrived in 2026-07-28, and deliberately not through
+# these: the agent proposes via a structured `propose_change` tool and the
+# backend writes the proposal note (see propose.py). So there is still no path
+# by which the model edits a note directly, and `allow_writes` stays False —
+# it exists for a future caller that has earned it, not for the interface.
 WRITE_TOOLS = {"Write", "Edit", "NotebookEdit", "Bash", "KillShell", "BashOutput"}
 
 
