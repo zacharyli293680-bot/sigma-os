@@ -46,6 +46,23 @@ export type Window_ = {
   known: boolean; percent: number | null; reserved: number | null; note: string;
 };
 
+export type ProgressResult = {
+  ok: boolean; seconds: number; proposals: number; error: string | null;
+};
+export type Progress = {
+  state: "running" | "done";
+  note: string | null;
+  run_started: string;
+  queue: string[];
+  current: string | null;
+  current_started: string | null;
+  current_model: string | null;
+  results: Record<string, ProgressResult>;
+  stopped_early: boolean;
+  finished: string | null;
+  updated: string;
+};
+
 export async function get<T>(path: string): Promise<T> {
   const r = await fetch(`${API}/api/${path}`);
   if (!r.ok) throw new Error(`${path}: ${r.status}`);

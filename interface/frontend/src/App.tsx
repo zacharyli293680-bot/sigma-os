@@ -7,12 +7,13 @@
  * drawer. No router and no state manager on purpose — one view, plain hooks;
  * rail destinations arrive with later phases.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import "./App.css";
-import { get } from "./api";
-import type { Fleet, Health, Projects, Proposals, Tasks, Window_ } from "./api";
+import { API, get } from "./api";
+import type { Fleet, Health, Progress, Projects, Proposals, Tasks, Window_ } from "./api";
 import ChatDrawer from "./chat";
-import { FleetCenter, FleetDetail, Foot, Panel, ProjectsPanel, Rail, TodayPanel, TopStrip, WaitingPanel } from "./panels";
+import { FleetDetail, Foot, Panel, ProjectsPanel, Rail, TodayPanel, TopStrip, WaitingPanel } from "./panels";
+import Reactor, { activityLine, useElapsed } from "./reactor";
 
 const REFRESH_MS = 60_000;
 
@@ -32,6 +33,7 @@ export default function App() {
   const [proposals, setProposals] = useState<Proposals | null>(null);
   const [projects, setProjects] = useState<Projects | null>(null);
   const [window_, setWindow] = useState<Window_ | null>(null);
+  const [progress, setProgress] = useState<Progress | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
   const clock = useClock();
 
@@ -58,6 +60,25 @@ export default function App() {
     return () => clearInterval(t);
   }, [refresh, checkHealth]);
 
+  // The reactor's live feed. EventSource reconnects on its own, and the
+  // endpoint replays the current state on connect, so a mid-run page load
+  // still shows the run.
+  useEffect(() => {
+    const es = new EventSource(`${API}/api/fleet/progress`);
+    es.onmessage = e => {
+      try { setProgress(JSON.parse(e.data)); } catch { /* torn event — keep last */ }
+    };
+    return () => es.close();
+  }, []);
+
+  // When a run finishes, the panels are stale the moment the reactor settles —
+  // refetch immediately rather than waiting out the minute.
+  const prevRunState = useRef<string | null>(null);
+  useEffect(() => {
+    if (prevRunState.current === "running" && progress?.state === "done") refresh();
+    prevRunState.current = progress?.state ?? null;
+  }, [progress, refresh]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.key === "/") { e.preventDefault(); setChatOpen(o => !o); }
@@ -68,13 +89,17 @@ export default function App() {
   }, []);
 
   const vault = health?.vault ? health.vault.split(/[\\/]/).pop() || "" : "Obsidian Vault";
+  const waitingCount = proposals
+    ? proposals.pending.length + proposals.approved.length + proposals.staged.length
+    : 0;
+  const dockElapsed = useElapsed(progress?.state === "running" ? progress.current_started : null);
 
   return (
     <div className="shell">
       <TopStrip health={health} window={window_} block={tasks?.block ?? null}
                 clock={clock} onHealthClick={checkHealth} />
       <Rail />
-      <FleetCenter fleet={fleet} />
+      <Reactor fleet={fleet} progress={progress} waitingCount={waitingCount} />
       <div className="right">
         <WaitingPanel proposals={proposals} vault={vault} />
         <TodayPanel tasks={tasks} vault={vault} />
@@ -83,7 +108,7 @@ export default function App() {
         <ProjectsPanel projects={projects?.projects ?? null} vault={vault} />
         <FleetDetail fleet={fleet} />
       </div>
-      <Foot />
+      <Foot activity={activityLine(fleet, progress, dockElapsed)} />
       <ChatDrawer open={chatOpen} vault={vault} onClose={() => setChatOpen(false)} />
       {!chatOpen && (
         <button className="chat-fab" onClick={() => setChatOpen(true)} title="Ask Sigma (Ctrl+/)">

@@ -79,39 +79,8 @@ export function Rail() {
   );
 }
 
-// ---------------------------------------------------------------- centre
-
-export function FleetCenter({ fleet }: { fleet: Fleet | null }) {
-  if (!fleet) return <Panel label="FLEET" className="center"><p className="dim">loading…</p></Panel>;
-  const due = fleet.specialists.filter(s => s.due);
-  const broken = fleet.specialists.filter(s => s.last_result && s.last_result !== "ok");
-  const word = fleet.stopped_early_at ? "STOPPED EARLY"
-    : broken.length ? "FAULT" : due.length ? "DUE" : "IDLE";
-  const tone = fleet.stopped_early_at || broken.length ? "warn" : due.length ? "due" : "idle";
-  return (
-    <Panel label="FLEET" className="center">
-      <div className="center-body">
-        <div className={`center-word ${tone}`}>{word}</div>
-        <div className="center-sub">
-          {fleet.specialists.length} specialists · last run {rel(fleet.last_run)} ago
-          {fleet.task_installed ? " · scheduled daily 09:00" : " · NOT SCHEDULED"}
-        </div>
-        <div className="center-row">
-          {fleet.specialists.map(s => (
-            <span key={s.key} className="spec" title={`${s.title} — ${s.model}, ${s.cadence}`}>
-              {s.key} {s.last_result === "ok" ? "✓" : s.last_result ? "✗" : "·"} {rel(s.last_ok)}
-              {s.due && <em className="due-tag"> due</em>}
-            </span>
-          ))}
-        </div>
-        {fleet.stopped_early_at && (
-          <p className="warn-line">last run stopped early on a rate limit ({rel(fleet.stopped_early_at)} ago)</p>
-        )}
-        <p className="dim center-note">reactor visual lands in Phase 1 — this is the plain summary</p>
-      </div>
-    </Panel>
-  );
-}
+// The centre panel is the reactor — see reactor.tsx (D1 replaced the Phase 0
+// plain summary that used to live here).
 
 // ---------------------------------------------------------------- right column
 
@@ -226,11 +195,11 @@ export function FleetDetail({ fleet }: { fleet: Fleet | null }) {
 
 // ---------------------------------------------------------------- foot
 
-export function Foot() {
+export function Foot({ activity }: { activity: { text: string; live: boolean } }) {
   return (
     <footer className="foot">
       <span><kbd>Ctrl</kbd>+<kbd>/</kbd> chat · <kbd>Esc</kbd> overview</span>
-      <span className="dim">activity dock — Phase 1</span>
+      <span className={`dock ${activity.live ? "live" : "dim"}`}>{activity.text}</span>
     </footer>
   );
 }
