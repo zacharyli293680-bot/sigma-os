@@ -337,6 +337,118 @@ def api_projects():
 
 
 # --------------------------------------------------------------------------
+# GET /api/graph — the brain's data (dashboard-plan D2)
+# --------------------------------------------------------------------------
+# The link resolver the plan once believed existed. The rules come from the
+# vault contract's "Linking" section and the audit that checked it:
+#   - case-insensitive; a target may be a bare basename or a full vault path
+#   - `[[a\|b]]` (table-escaped pipe) and `[[a|b]]` both alias; `#heading` and
+#     `#^block` anchors are stripped
+#   - fenced code blocks and inline code spans are skipped entirely — a
+#     backticked `[[wikilink]]` is the contract's own way of writing a
+#     NON-link, so counting it would manufacture edges the vault refused
+#   - a bare basename with several matches resolves same-folder first
+#     (Obsidian's precedence, which the vault's in-folder links rely on)
+#   - unresolved targets are dropped, matching graph.json's hideUnresolved
+
+_WIKILINK_RE = re.compile(r"\[\[([^\[\]]+)\]\]")
+_CODESPAN_RE = re.compile(r"`[^`]*`")
+_GRAPH_SKIP_TOPS = {".obsidian", ".claude", ".git", "Excalidraw"}
+
+
+def _bucket_of(rel: str) -> str:
+    """The same nine colour groups as .obsidian/graph.json, so the web brain
+    and Obsidian's graph are one picture of one vault."""
+    if "/" not in rel:
+        return "root"
+    top = rel.split("/", 1)[0]
+    if rel.startswith("02-Areas/Academics"):
+        return "academics"
+    return {"00-Inbox": "inbox", "01-Daily": "daily", "02-Areas": "areas",
+            "03-Projects": "projects", "06-System": "system",
+            "05-Archive": "archive"}.get(top, "meta")
+
+
+def _link_target(raw: str) -> str | None:
+    t = re.split(r"\\\||\|", raw, maxsplit=1)[0]      # alias off, escaped or not
+    t = t.split("#", 1)[0].strip().rstrip("\\").strip()
+    return t or None
+
+
+def _build_graph() -> dict:
+    files = []
+    for p in VAULT.rglob("*.md"):
+        rel = _rel(p)
+        top = rel.split("/", 1)[0]
+        if top in _GRAPH_SKIP_TOPS or top.startswith("."):
+            continue
+        files.append((p, rel))
+    sealed = _gitignored([rel for _, rel in files])
+    files = [(p, rel) for p, rel in files if rel not in sealed]
+
+    nodes, idx_of = [], {}
+    by_path: dict = {}
+    by_base: dict = {}
+    for p, rel in files:
+        idx_of[rel] = len(nodes)
+        by_path[rel[:-3].lower()] = rel                # path without .md
+        by_base.setdefault(p.stem.lower(), []).append(rel)
+        try:
+            mtime = datetime.datetime.fromtimestamp(p.stat().st_mtime)
+            mtime = mtime.isoformat(timespec="seconds")
+        except OSError:
+            mtime = None
+        nodes.append({"id": rel, "label": p.stem, "bucket": _bucket_of(rel),
+                      "inlinks": 0, "mtime": mtime})
+
+    def resolve(target: str, src_rel: str) -> str | None:
+        t = target.replace("\\", "/").strip("/").lower()
+        if t.endswith(".md"):
+            t = t[:-3]
+        if "/" in t:
+            return by_path.get(t)
+        matches = by_base.get(t)
+        if not matches:
+            return None
+        if len(matches) > 1:
+            folder = src_rel.rsplit("/", 1)[0] if "/" in src_rel else ""
+            same = [m for m in matches
+                    if (m.rsplit("/", 1)[0] if "/" in m else "") == folder]
+            if same:
+                return same[0]
+        return sorted(matches)[0]
+
+    links = set()
+    for p, rel in files:
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        in_fence = False
+        for line in text.splitlines():
+            if line.lstrip().startswith("```"):
+                in_fence = not in_fence
+                continue
+            if in_fence:
+                continue
+            for raw in _WIKILINK_RE.findall(_CODESPAN_RE.sub("", line)):
+                target = _link_target(raw)
+                dst = resolve(target, rel) if target else None
+                if dst and dst != rel:
+                    links.add((idx_of[rel], idx_of[dst]))
+
+    for _, dst in links:
+        nodes[dst]["inlinks"] += 1
+    return {"notes": len(nodes), "edges": len(links),
+            "nodes": nodes, "links": sorted(links)}
+
+
+@router.get("/graph")
+def api_graph():
+    return _cached("graph", 300, _build_graph)
+
+
+# --------------------------------------------------------------------------
 # GET /api/window
 # --------------------------------------------------------------------------
 
