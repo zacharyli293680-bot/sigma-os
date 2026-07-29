@@ -142,23 +142,36 @@ def check_reflection(out):
                     "python reflect.py --diff   then --merge <name>"))
 
 
+def _task_fields(task_name: str) -> dict:
+    """`schtasks /query /v` LIST output as {lowercased field: value}; {} on any failure."""
+    try:
+        r = subprocess.run(["schtasks", "/query", "/tn", task_name, "/fo", "LIST", "/v"],
+                           capture_output=True, text=True, timeout=20)
+    except Exception:
+        return {}
+    if r.returncode != 0:
+        return {}
+    fields = {}
+    for line in (r.stdout or "").splitlines():
+        if ":" in line:
+            k, v = line.split(":", 1)
+            fields[k.strip().lower()] = v.strip()
+    return fields
+
+
 def check_schedule(out):
     """The scheduled task can fire and *fail*; 2026-07-26 did exactly that."""
     import reflect as rf
     try:
-        r = subprocess.run(["schtasks", "/query", "/tn", rf.TASK_NAME, "/fo", "LIST", "/v"],
-                           capture_output=True, text=True, timeout=20)
+        r = subprocess.run(["schtasks", "/query", "/tn", rf.TASK_NAME],
+                           capture_output=True, timeout=20)
     except Exception:
         return
     if r.returncode != 0:
         out.append((ALERT, f"scheduled task '{rf.TASK_NAME}' is not installed",
                     "python reflect.py --install-schedule"))
         return
-    fields = {}
-    for line in (r.stdout or "").splitlines():
-        if ":" in line:
-            k, v = line.split(":", 1)
-            fields[k.strip().lower()] = v.strip()
+    fields = _task_fields(rf.TASK_NAME)
     result = fields.get("last result")
 
     if result in (None, "0"):
@@ -307,14 +320,18 @@ def check_fleet(out):
     import specialists as sp
 
     state = fl.load_state()
+
+    # The task check comes first: a fleet that has never run *and* is not
+    # scheduled is "configured but never executes" — the exact failure this
+    # file exists for — and the early return below must not hide it.
+    if not fl._task_installed():
+        out.append((TODO, f"fleet is not scheduled (task '{fl.TASK_NAME}' missing)",
+                    "python fleet.py --install-schedule"))
+
     if not state.get("last_run"):
         out.append((TODO, "the specialist fleet has never run",
                     f"python {fl.HERE / 'fleet.py'} --all"))
         return
-
-    if not fl._task_installed():
-        out.append((TODO, f"fleet is not scheduled (task '{fl.TASK_NAME}' missing)",
-                    "python fleet.py --install-schedule"))
 
     specs = state.get("specialists") or {}
     stale, broken = [], []
@@ -338,6 +355,28 @@ def check_fleet(out):
         out.append((TODO, f"last fleet run stopped early on a rate limit "
                           f"({state['stopped_early_at']}) - some specialists "
                           f"did not run", "python fleet.py"))
+
+    # The fleet task can fire and *fail* before fleet.py ever writes state —
+    # the same blind spot check_schedule covers for the reflection. 0 is
+    # success; 267009 is "currently running"; 267011 is "has not yet run".
+    fields = _task_fields(fl.TASK_NAME)
+    last_result = fields.get("last result")
+    if last_result and last_result not in ("0", "267009", "267011"):
+        fired = fields.get("last run time")
+        recovered = False
+        try:
+            if fired and state.get("last_run"):
+                recovered = (datetime.datetime.fromisoformat(state["last_run"])
+                             > datetime.datetime.strptime(fired, "%Y-%m-%d %I:%M:%S %p"))
+        except Exception:
+            pass
+        if recovered:
+            out.append((OK, f"scheduled fleet run failed {fired} but the fleet "
+                            f"has run since", None))
+        else:
+            out.append((ALERT, f"last scheduled fleet run failed (exit {last_result}, "
+                               f"{fired}) - nothing ran", "tail fleet.log; python fleet.py"))
+
     if not (broken or stale):
         n = len(specs)
         out.append((OK, f"fleet healthy ({n}/{len(sp.FLEET)} specialist(s) "

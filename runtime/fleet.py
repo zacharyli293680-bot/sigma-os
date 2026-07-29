@@ -265,6 +265,12 @@ async def run_one(spec, timeout_s: int = 420) -> dict:
                     result["cost_usd"] = msg.total_cost_usd
                     result["denials"] = len(msg.permission_denials or [])
                     result["ok"] = not msg.is_error
+                    if msg.is_error:
+                        # The CLI's failure text (a rate limit says so here) rides
+                        # the result payload, not an exception — copy it into the
+                        # error channel so _is_rate_limited can see it.
+                        text = " ".join(str(getattr(msg, "result", "") or "").split())
+                        result["error"] = text[:300] or f"result subtype: {msg.subtype}"
 
     try:
         # The timeout has to be *applied*, not just caught. Wrapping the whole
@@ -309,8 +315,15 @@ def _is_rate_limited(result: dict) -> bool:
 
     Worth distinguishing: a rate-limited run should stop the fleet and leave the
     rest for next time, while a broken specialist should not stop the others.
+
+    Keyed on the error channel only. `summary` is the model's own prose, and the
+    vault contains a whole note about rate limits — a specialist that merely
+    *mentions* them must not halt the fleet. A real limit reaches `error` either
+    as an exception or via the ResultMessage error text copied in _converse.
     """
-    blob = f"{result.get('error') or ''} {result.get('summary') or ''}".lower()
+    if result.get("ok"):
+        return False
+    blob = (result.get("error") or "").lower()
     return any(s in blob for s in ("rate limit", "rate_limit", "429",
                                    "usage limit", "quota", "overloaded"))
 
