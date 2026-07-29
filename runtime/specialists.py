@@ -103,6 +103,12 @@ Propose a `note` targeting the file to correct, with the complete corrected file
 as content. If the drift is in `CLAUDE.md` itself — the contract describing
 something the vault no longer does — propose kind `contract` instead.
 
+**A `contract` proposal is appended to `CLAUDE.md`, not merged into it.** So its
+content must be *new, self-contained material under a heading the contract does
+not already have*. Do not restate or re-open an existing section: that gives the
+contract two copies of it. If what you want is an edit to an existing section,
+say so in the rationale and keep the content to just the new lines.
+
 A clean audit is a real result. Say "no drift found" and propose nothing.
 """.strip())
 

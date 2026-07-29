@@ -29,6 +29,7 @@ same frontmatter contract, same `<!-- proposal:content -->` block, same
 `--apply`.
 """
 import datetime
+import re
 import sys
 from pathlib import Path
 
@@ -47,6 +48,20 @@ SCOPES = rf.SCOPES
 def _clean(value, allowed, default):
     v = str(value or "").strip().lower()
     return v if v in allowed else default
+
+
+def _headings_in(text: str) -> set:
+    """Markdown H2/H3 headings, normalised — outside fenced code."""
+    body = re.sub(r"```.*?```", "", text or "", flags=re.S)
+    return {m.group(1).strip().lower()
+            for m in re.finditer(r"^#{2,3}\s+(.+?)\s*$", body, re.M)}
+
+
+def _existing_headings() -> set:
+    try:
+        return _headings_in(rf.CONTRACT.read_text(encoding="utf-8", errors="replace"))
+    except Exception:
+        return set()          # cannot read the contract: do not block on it
 
 
 @tool(
@@ -85,9 +100,30 @@ async def propose_change(args: dict) -> dict:
                                      "real file content, not a description of it."}],
                 "is_error": True}
 
+    kind = _clean(args.get("kind"), KINDS, "note")
+
+    # A `contract` proposal is APPENDED to CLAUDE.md, so its content must be a
+    # self-contained addition. On 2026-07-28 the auditor drafted a copy of the
+    # contract's own "## Frontmatter schemas" section instead, and because the
+    # content block is written literally, CLAUDE.md ended up with a second,
+    # truncated copy of a section it already had — the drift-fixing proposal
+    # introducing drift. Refuse the shape rather than trusting the drafter.
+    if kind == "contract":
+        dupes = _existing_headings() & _headings_in(content)
+        if dupes:
+            return {"content": [{"type": "text",
+                                 "text": (f"Refused: a `contract` proposal is *appended* to "
+                                          f"CLAUDE.md, so its content must be a new, "
+                                          f"self-contained addition. This content re-opens "
+                                          f"{', '.join(sorted(dupes))}, which already exists — "
+                                          f"applying it would give the contract two copies of "
+                                          f"that section. Draft only the new material, under a "
+                                          f"heading that is not already in the contract.")}],
+                    "is_error": True}
+
     pr = {
         "title": title,
-        "kind": _clean(args.get("kind"), KINDS, "note"),
+        "kind": kind,
         "target": str(args.get("target") or "").strip(),
         "content": content,
         "rationale": (str(args.get("rationale") or "").strip()
