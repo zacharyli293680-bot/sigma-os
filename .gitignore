@@ -46,6 +46,7 @@ obsidian-vault/
 runtime/*.config.json
 !runtime/*.config.example.json
 runtime/*.state.json
+runtime/*.progress.json
 runtime/*.log
 runtime/*.lock
 

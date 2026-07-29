@@ -21,7 +21,9 @@ Nothing here writes, and nothing here calls a model. Two boundaries hold:
   deliberately does not (the first unattended 09:00 run had not happened when
   this was written, and you do not rewire the thing you are about to observe).
 """
+import asyncio
 import datetime
+import json
 import re
 import subprocess
 import sys
@@ -29,6 +31,7 @@ import time
 from pathlib import Path
 
 from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
 
 from agent import VAULT
 
@@ -123,6 +126,48 @@ def api_fleet():
             for s in sp.in_run_order()
         ],
     }
+
+
+# --------------------------------------------------------------------------
+# GET /api/fleet/progress — the reactor's live feed (dashboard-plan D1)
+# --------------------------------------------------------------------------
+
+_PROGRESS_PATH = Path(_RUNTIME) / "fleet.progress.json"
+
+
+@router.get("/fleet/progress")
+async def api_fleet_progress():
+    """The progress file fleet.py rewrites at each transition, streamed as SSE.
+
+    A file poll rather than any coupling to the fleet process, because the case
+    that matters is a run this server did not launch — the 09:00 scheduled one.
+    The file is pretty-printed on disk, so each event re-serialises it compact
+    (SSE data must be one line), and a torn mid-write read is skipped rather
+    than forwarded: the browser holds the last good state until the next write.
+    """
+    async def stream():
+        last, quiet = None, 0
+        while True:
+            payload = None
+            try:
+                obj = json.loads(_PROGRESS_PATH.read_text(encoding="utf-8"))
+                payload = json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+            except (OSError, ValueError):
+                pass                        # no file yet, or a torn write
+            if payload is not None and payload != last:
+                last = payload
+                quiet = 0
+                yield f"data: {payload}\n\n"
+            else:
+                quiet += 1
+                if quiet >= 30:             # ~15s — keeps the connection alive
+                    quiet = 0
+                    yield ": ping\n\n"
+            await asyncio.sleep(0.5)
+
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
 
 
 # --------------------------------------------------------------------------

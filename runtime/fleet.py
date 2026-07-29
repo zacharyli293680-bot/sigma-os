@@ -110,6 +110,19 @@ def save_state(state: dict):
     write_state(STATE_PATH, state, on_error=lambda e: log(f"could not write state: {e}"))
 
 
+# The dashboard's live view of a run (dashboard-plan D1): rewritten whole at
+# every transition, streamed to the browser by /api/fleet/progress. Gitignored
+# machine-local state like everything else here. Written best-effort by design —
+# a broken progress write must cost a stale reactor, never the run itself
+# (write_state swallows its own errors).
+PROGRESS_PATH = HERE / "fleet.progress.json"
+
+
+def write_progress(prog: dict):
+    prog["updated"] = datetime.datetime.now().isoformat(timespec="seconds")
+    write_state(PROGRESS_PATH, prog)
+
+
 def _hours_since(stamp) -> float | None:
     try:
         return (datetime.datetime.now()
@@ -353,6 +366,13 @@ async def run_fleet(keys=None, force=False, dry_run=False) -> list:
 
     if not queue:
         log("nothing due")
+        # Still a fact the dashboard should show: the 09:00 run that had
+        # nothing to do looks identical to one that never fired unless it says so.
+        write_progress({"state": "done", "note": "nothing due",
+                        "run_started": now.isoformat(timespec="seconds"),
+                        "queue": [], "current": None, "current_started": None,
+                        "results": {}, "stopped_early": False,
+                        "finished": datetime.datetime.now().isoformat(timespec="seconds")})
         return []
 
     results = []
@@ -362,11 +382,31 @@ async def run_fleet(keys=None, force=False, dry_run=False) -> list:
                 "running two specialists at once")
             return []
 
+        prog = {"state": "running", "note": None,
+                "run_started": now.isoformat(timespec="seconds"),
+                "queue": [s.key for s in queue],
+                "current": None, "current_started": None, "current_model": None,
+                "results": {}, "stopped_early": False, "finished": None}
+        write_progress(prog)
+
         log(f"running {len(queue)} specialist(s): {', '.join(s.key for s in queue)}")
         for spec in queue:
             log(f"-> {spec.key} ({spec.model})")
+            prog["current"] = spec.key
+            prog["current_model"] = spec.model
+            prog["current_started"] = datetime.datetime.now().isoformat(timespec="seconds")
+            write_progress(prog)
+
             r = await run_one(spec)
             results.append(r)
+
+            prog["current"] = None
+            prog["current_model"] = None
+            prog["current_started"] = None
+            prog["results"][spec.key] = {"ok": r["ok"], "seconds": r["seconds"],
+                                         "proposals": r["proposals"],
+                                         "error": r["error"]}
+            write_progress(prog)
 
             rec = state["specialists"].setdefault(spec.key, {})
             rec["last_run"] = r["finished"]
@@ -397,6 +437,11 @@ async def run_fleet(keys=None, force=False, dry_run=False) -> list:
 
         state["last_run"] = datetime.datetime.now().isoformat(timespec="seconds")
         save_state(state)
+
+        prog["state"] = "done"
+        prog["stopped_early"] = bool(state.get("stopped_early_at"))
+        prog["finished"] = state["last_run"]
+        write_progress(prog)
 
     return results
 
@@ -447,10 +492,13 @@ def install_schedule(time_of_day="09:00"):
         print(f"installed '{TASK_NAME}' - daily at {time_of_day}")
         print(f"  runs: {cmd}")
         # -RestartCount is what Phase 2 learned to add after one blip cost a week.
+        # StartWhenAvailable is what the reflection task always had and this one
+        # missed: without it, a machine asleep at 09:00 silently skips the day.
         subprocess.run(["powershell", "-NoProfile", "-Command",
                         f"$s = Get-ScheduledTask -TaskName '{TASK_NAME}'; "
                         f"$s.Settings.RestartCount = 3; "
                         f"$s.Settings.RestartInterval = 'PT10M'; "
+                        f"$s.Settings.StartWhenAvailable = $true; "
                         f"Set-ScheduledTask -TaskName '{TASK_NAME}' "
                         f"-Settings $s.Settings | Out-Null"],
                        capture_output=True, text=True, timeout=30)
