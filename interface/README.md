@@ -4,24 +4,21 @@ Ask the vault a question; get an answer grounded in notes it actually read, with
 working `[[wikilinks]]` back to them.
 
 ```
-backend/    FastAPI + Claude Agent SDK   → localhost:8787
-frontend/   React + Vite                 → localhost:5173 (or the next free port)
+backend/    FastAPI + Claude Agent SDK   → localhost:8787 (serves the built UI too)
+frontend/   React + Vite                 → dist/ built once; npm run dev only for UI work
 ```
 
 ## Running it
 
 ```powershell
-# terminal 1
-cd interface\backend
-.\.venv\Scripts\python.exe -m uvicorn app:app --port 8787
-
-# terminal 2
-cd interface\frontend
-npm run dev
+sigma ui            # one process, one port — backend + built frontend on :8787
 ```
 
+For frontend development only, run the Vite dev server against that backend:
+`cd interface\frontend; npm run dev` (any loopback port is allowed by CORS).
+
 First time only: `python -m venv .venv` then `.\.venv\Scripts\pip install -r requirements.txt`
-in `backend/`, and `npm install` in `frontend/`.
+in `backend/`, and `npm install && npm run build` in `frontend/`.
 
 **No API key.** The Agent SDK is Claude Code packaged as a library — it spawns the same
 CLI and inherits the same login. Verified with `ANTHROPIC_API_KEY` explicitly unset.
@@ -34,8 +31,10 @@ CLI and inherits the same login. Verified with `ANTHROPIC_API_KEY` explicitly un
 - **Streams tokens** as they are written, with a collapsible trail of every lookup.
 - **Surfaces the watchdog.** `/api/health` runs `doctor.py`, so the header shows whether
   Sigma itself is healthy.
-- **Read-only.** Writing would have to obey propose-don't-apply like the rest of Sigma,
-  so it is a deliberate later step rather than something left ajar.
+- **Proposes, never applies** (2026-07-28). Ask it to change something and it files a
+  pending proposal via the `propose_change` tool (`propose.py`) — the backend writes the
+  file, so the agent holds no filesystem write primitive. Same `--apply` gate as the
+  weekly reflection: one approval path in the whole OS.
 
 ## The privacy guard
 
@@ -73,5 +72,9 @@ is the hook.
 ## Next
 
 - Multi-turn continuity is wired (`session_id` round-trips) but untested across long threads.
-- Writing, via the propose-don't-apply path — proposals a human approves, never direct edits.
-- Serve the built frontend from the backend so it is one process, then Tauri.
+- Package as Tauri so it launches like an app rather than a uvicorn command.
+- The dashboard (see the vault's `dashboard-plan` note) grows this backend from two
+  routes into the read API for panels, fleet progress, and the graph.
+
+*(Two former items shipped 2026-07-28: writing via propose-don't-apply, and the backend
+serving its own built UI.)*

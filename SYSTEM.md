@@ -297,7 +297,7 @@ guessing at intent: `sigma fleet` shows status, it does not run anything.
 | Proposals | 11 — 9 applied, 2 rejected, 0 pending |
 | Skills | 3 user-scoped, 1 vault-scoped (`reflect`) |
 | Doctor | `all clear` on all six checks |
-| Tests | 57 across six suites |
+| Tests | 57 across six suites — run from throwaway temp fixtures, **never committed**; the repo contains no test files |
 
 **Both scheduled tasks are installed and `Ready`.** The weekly reflection has run (its 2026-07-26 run
 failed on `ENOTFOUND` and was re-run by hand; next 2026-08-02).
@@ -324,6 +324,9 @@ by hand. Its first unattended firing is **2026-07-29 09:00** — `LastTaskResult
 6. **The auditor and coach can propose contradictory fixes** to the same drift — as they did on
    2026-07-28, one proposing to amend the contract and two to amend the notes. That is a real
    decision for a human, but nothing flags that two proposals conflict.
+7. **The test suites exist only as history.** The 57 tests ran from throwaway temp directories and
+   were never committed, so "extend the tests" today means re-creating them. A committed `tests/`
+   directory is a prerequisite for the dashboard plan's "verified, not reasoned about" bar.
 
 **Accepted, not bugs:**
 

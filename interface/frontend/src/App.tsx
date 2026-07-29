@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import "./App.css";
 
-const API = "http://127.0.0.1:8787";
+// Served by the backend itself in production, so same-origin ("") is correct on
+// any port. The absolute fallback is for `npm run dev`, where Vite serves the UI
+// and the backend lives on its default port.
+const API = import.meta.env.DEV ? "http://127.0.0.1:8787" : "";
 
 type Tool = { name: string; detail: string };
 type Turn = {

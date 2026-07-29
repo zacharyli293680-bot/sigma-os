@@ -164,7 +164,9 @@ async def api_ask(ask: Ask):
 @app.get("/api/health")
 def api_health():
     """Sigma's own watchdog, surfaced to the UI — same checks, same source."""
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "runtime"))
+    runtime = str(Path(__file__).resolve().parents[2] / "runtime")
+    if runtime not in sys.path:                 # once — not once per request
+        sys.path.insert(0, runtime)
     import doctor
     findings = [{"level": lv, "what": w, "fix": f} for lv, w, f in doctor.collect()]
     return {"vault": str(VAULT),
