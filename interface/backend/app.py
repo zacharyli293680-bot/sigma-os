@@ -63,6 +63,10 @@ def describe(tool: str, args: dict) -> str:
         return f"/{args.get('pattern', '')}/"
     if tool == "Glob":
         return str(args.get("pattern", ""))
+    if tool.endswith("propose_change"):
+        # The one call that changes something on disk deserves to be legible in
+        # the trail rather than showing up as a bare tool name.
+        return str(args.get("title") or "").strip()
     return ""
 
 
@@ -166,3 +170,30 @@ def api_health():
     return {"vault": str(VAULT),
             "ok": all(f["level"] == "ok" for f in findings),
             "findings": findings}
+
+
+# --------------------------------------------------------------------------
+# the built UI, served from this same process
+# --------------------------------------------------------------------------
+# Two processes was a development convenience that leaked into being the way you
+# run it: `npm run dev` in one terminal, uvicorn in another, and a thing you have
+# to remember to start twice is a thing that is not running when you want it. The
+# 9 AM planner in Phase 4 is supposed to *surface* here, which only means anything
+# if "here" is somewhere that exists without being assembled by hand first.
+#
+# Mounted last, and only at "/", so every /api/* route above still wins. The Vite
+# dev server remains perfectly usable for frontend work — this is the path for
+# actually using the thing.
+DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
+
+if DIST.is_dir():
+    from fastapi.staticfiles import StaticFiles
+    # html=True serves index.html for unknown paths, so client-side routes work.
+    app.mount("/", StaticFiles(directory=str(DIST), html=True), name="ui")
+else:
+    @app.get("/")
+    def _needs_build():
+        # A blank page with no explanation is how you lose an afternoon.
+        return {"error": "frontend not built",
+                "fix": "cd interface/frontend && npm install && npm run build",
+                "expected_at": str(DIST)}

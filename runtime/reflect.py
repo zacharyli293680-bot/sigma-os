@@ -268,7 +268,7 @@ def write_insight(ins, window, today) -> Path:
             "## What to do about it\n"
             f"{ins.get('action', '').strip() or 'Nothing yet — watch.'}\n\n"
             "## Related\n"
-            "- [[system|🧠 System]] · [[agentic-os]] · [[reflection-loop]]\n")
+            "- [[system|🧠 System]] · [[sigma-os]] · [[reflection-loop]]\n")
     p = unique_path(INSIGHTS, kebab(ins.get("title", "insight"), "insight"))
     p.write_text(fm + body, encoding="utf-8")
     return p

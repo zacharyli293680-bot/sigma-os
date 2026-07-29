@@ -32,6 +32,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # How stale each thing is allowed to get before it is worth interrupting for.
 REFLECT_OVERDUE_DAYS = 8      # weekly job + a day of slack
 CAPTURE_BACKLOG_WARN = 1      # the sweep clears up to sweep_max per session
+AUTH_TTL_HOURS = 12           # how long a good login is taken on trust (see check_auth)
+
+STATE_PATH = Path(__file__).resolve().parent / "doctor.state.json"
+
+# Substrings that say "the login is gone" rather than "the network hiccuped".
+# Getting this wrong in either direction is the whole difficulty: calling a blip
+# an expired login sends Zach to re-authenticate for nothing, and calling an
+# expired login a blip is the silent failure this check exists to end.
+_AUTH_SIGNS = ("login", "log in", "authenticat", "unauthorized", "401",
+               "oauth", "credential", "invalid api key", "not signed in")
+_NET_SIGNS = ("enotfound", "econnrefused", "etimedout", "econnreset",
+              "getaddrinfo", "network", "socket hang up", "proxy")
 
 ALERT, TODO, OK = "alert", "todo", "ok"
 _ICON = {ALERT: "!!", TODO: "->", OK: "OK"}
@@ -158,6 +170,90 @@ def check_schedule(out):
                     "tail reflect.log; python reflect.py"))
 
 
+def _load_state() -> dict:
+    try:
+        return json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _save_state(state: dict):
+    try:
+        STATE_PATH.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    except OSError:
+        pass                                     # state is an optimisation, not a fact
+
+
+def check_auth(out):
+    """Is the one credential Sigma has still live?
+
+    Sigma runs on exactly one credential — this machine's Claude Code login — so
+    every path dies without it: `claude -p` in Phases 1-2, the Agent SDK in Phase
+    3, and this watchdog's own summariser. And it dies *silently*, which is the
+    third costume of the recurring bug here: the unquoted hook path, the shadowed
+    permission callback, and now an expired login all report "configured" while
+    executing nothing.
+
+    Two things make this awkward to check, and both shape the design:
+
+    1. The only honest test is to actually call the model, but under a
+       subscription the budget *is* the rate-limit window. Probing every
+       SessionStart would spend the resource this check protects. So a good
+       result is trusted for AUTH_TTL_HOURS; only failures re-probe every
+       session, and a failing probe is free — it errors before a call is spent.
+
+    2. A dead network looks like a dead login from the outside. The 2026-07-26
+       reflection died on ENOTFOUND, and reporting that as "log in again" would
+       be exactly the crying-wolf that gets a watchdog muted. Transport errors
+       are therefore deliberately silent here: check_schedule already notices a
+       run that failed for any reason.
+    """
+    if os.environ.get("SESSION_LOGGER_ACTIVE") == "1":
+        return                                   # inside the OS's own call; not a session
+
+    state = _load_state()
+    try:
+        hours = (datetime.datetime.now() - datetime.datetime.fromisoformat(
+            state.get("auth_ok_at"))).total_seconds() / 3600
+    except Exception:
+        hours = None
+
+    if hours is not None and hours < AUTH_TTL_HOURS:
+        out.append((OK, f"login verified {int(hours)}h ago", None))
+        return
+
+    env = {**os.environ, "SESSION_LOGGER_ACTIVE": "1"}
+    try:
+        r = subprocess.run(["claude", "-p", "--model", "haiku"], input="ok",
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", env=env, timeout=45)
+    except FileNotFoundError:
+        out.append((ALERT, "the `claude` CLI is not on PATH - every Sigma phase "
+                           "routes through it", "install Claude Code / fix PATH"))
+        return
+    except Exception:
+        return                                   # timeout or spawn failure: not a verdict
+
+    if r.returncode == 0:
+        state["auth_ok_at"] = datetime.datetime.now().isoformat(timespec="seconds")
+        _save_state(state)
+        out.append((OK, "login live (verified just now)", None))
+        return
+
+    blob = f"{r.stderr or ''}\n{r.stdout or ''}".lower()
+    if any(s in blob for s in _NET_SIGNS) and not any(s in blob for s in _AUTH_SIGNS):
+        return                                   # a blip is not a login problem
+    if any(s in blob for s in _AUTH_SIGNS):
+        out.append((ALERT, "Claude Code login has expired - every scheduled Sigma "
+                           "job will fail silently until it is renewed",
+                    "claude login"))
+        return
+
+    snippet = " ".join((r.stderr or r.stdout or "unknown error").split())[:120]
+    out.append((TODO, f"login check inconclusive (exit {r.returncode}): {snippet}",
+                "claude -p --model haiku <<< ok"))
+
+
 def check_privacy(out):
     """Is anything the ignore rules protect actually tracked — and is the guard armed?
 
@@ -187,7 +283,7 @@ def check_privacy(out):
                     "python install_hooks.py"))
 
 
-CHECKS = (check_capture, check_reflection, check_schedule, check_privacy)
+CHECKS = (check_capture, check_reflection, check_schedule, check_auth, check_privacy)
 
 
 def collect():

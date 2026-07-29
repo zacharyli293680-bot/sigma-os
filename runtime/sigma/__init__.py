@@ -140,7 +140,7 @@ def project_hubs(vault: Path) -> dict:
     """{hub basename: normalised `repo:` path or None} for every project hub note.
 
     Only `type: project` notes count, which is what keeps the MOC (`projects.md`)
-    and the design doc (`agentic-os-plan.md`) out of the map.
+    and the design doc (`sigma-os-plan.md`) out of the map.
     """
     hubs = {}
     for pattern in PROJECT_HUB_GLOBS:

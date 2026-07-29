@@ -18,6 +18,7 @@ from pathlib import Path
 from claude_agent_sdk import ClaudeAgentOptions, HookMatcher
 
 from privacy import VaultPrivacy
+from propose import PROPOSE_TOOL, proposal_server
 
 # The shared core is the seam this repo builds on rather than reimplementing —
 # it already knows where the vault is and how to read its frontmatter.
@@ -31,6 +32,11 @@ VAULT = Path(DEFAULT_VAULT)
 # path argument, and Read is vetted because a direct read is the one that would
 # otherwise walk straight into the carve-out.
 READ_ONLY_TOOLS = ["Read", "Glob", "Grep"]
+
+# The one way the agent may affect disk. It is not a filesystem tool: it takes
+# structured fields and the backend writes a *pending proposal*, so the agent
+# holds no primitive that could edit a note directly. See propose.py.
+WRITE_TOOLS = [PROPOSE_TOOL]
 
 ORIENTATION = """
 You are Sigma, answering questions about Zach's Obsidian vault — his single
@@ -58,12 +64,36 @@ Some paths are deliberately private and reading them is refused. If that happens
 say so plainly and answer from what you can legitimately see — do not try to
 reach the same content another way.
 
-You are read-only. You cannot edit the vault, and should not offer to.
+## Changing things
+
+You cannot edit the vault. You have no tool that writes a note. What you have is
+`propose_change`, which drafts a **pending proposal** for Zach to review — the
+same gate the weekly reflection goes through.
+
+- When Zach asks you to change, add, fix, or record something, call
+  `propose_change` and then **say a proposal is waiting**, citing it by wikilink.
+- `content` must be the real file content, exactly as it should be written if
+  approved — not a summary of it. Zach edits that block if he wants it different,
+  so a vague draft makes more work, not less.
+- **Never say you made the change.** You did not. Nothing reaches disk until Zach
+  approves it and runs the apply step. Claiming otherwise would be a lie the
+  vault then contradicts.
+- If a request is better answered than actioned, just answer it. Not every
+  question needs a proposal.
 """.strip()
 
 
-def build_options(allow_writes: bool = False) -> ClaudeAgentOptions:
-    privacy = VaultPrivacy(VAULT, allow_writes=allow_writes)
+def build_options(allow_proposals: bool = True) -> ClaudeAgentOptions:
+    """Options for one question.
+
+    `allow_proposals` toggles the *proposal* tool only. It deliberately does not
+    reach `VaultPrivacy`, which is constructed with `allow_writes=False`
+    unconditionally: `Write`, `Edit` and `Bash` are refused at the PreToolUse
+    boundary no matter how this is called. Wiring one flag to both would mean
+    "let the agent propose" and "let the agent edit notes" were the same switch,
+    and the second is a thing this interface must never do.
+    """
+    privacy = VaultPrivacy(VAULT, allow_writes=False)
     return ClaudeAgentOptions(
         cwd=str(VAULT),
         # `tools` limits which tools EXIST. `allowed_tools` would be a different
@@ -74,8 +104,13 @@ def build_options(allow_writes: bool = False) -> ClaudeAgentOptions:
         # denials. The SDK warns about this (CanUseToolShadowedWarning); the
         # warning is easy to miss, the silence is not obvious, and the failure
         # looks exactly like success. Leave allowed_tools empty.
-        tools=READ_ONLY_TOOLS,
+        tools=READ_ONLY_TOOLS + (WRITE_TOOLS if allow_proposals else []),
         allowed_tools=[],
+        # In-process MCP server: no subprocess, no port, and it inherits this
+        # process's vault paths. Registered even when proposals are off so the
+        # server list does not change shape between modes; the tool is withheld
+        # via `tools` above, which is the switch that actually decides.
+        mcp_servers={"sigma": proposal_server()},
         # Keep Claude Code's tool-use competence, add our framing on top.
         system_prompt={"type": "preset", "preset": "claude_code",
                        "append": ORIENTATION},
