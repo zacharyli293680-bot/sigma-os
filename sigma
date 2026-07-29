@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# sigma — front door for the whole OS. See runtime/cli.py.
+# Uses the system python on purpose: cli.py selects the right interpreter per
+# subcommand, and pre-empting that here would defeat it.
+exec python "$(dirname "$0")/runtime/cli.py" "$@"

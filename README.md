@@ -41,8 +41,35 @@ Five layers, raw → distilled:
 - **1 — Session logging** ✅ `SessionEnd` hook + `SessionStart` sweep + Haiku summarizer → L1 notes
 - **2 — Reflection & skills** ✅ weekly reflection → insights + proposals, propose-and-approve learning
 - **2.5 — Watchdog** ✅ `doctor.py` on `SessionStart` — the phase two silent failures argued for
-- **3 — Interface** ⬜ *next* — local web app: Claude Agent SDK backend + React frontend
-- **4 — Specialist fleet** ⬜ planner / coach / auditor / tracker; git commits as the coordination log
+- **3 — Interface** ✅ local web app: Claude Agent SDK backend + React frontend. Asks the vault a
+  question and cites the notes it read; proposes changes rather than making them; one process
+  serves the API and the built UI.
+- **4 — Specialist fleet** ✅ planner / coach / auditor / tracker, on a daily schedule.
+  **Sequenced, not fanned out** — one subscription means the ceiling is a rate-limit window, so
+  concurrency is the budget and the runner has no parallel option.
+
+## Commands
+
+`sigma` is the front door. Five scripts had five flag vocabularies and needed two different
+interpreters; this picks the interpreter and gives the verbs one shape.
+
+```
+sigma                     what needs your attention right now
+sigma doctor              health check (what SessionStart runs)   --json --quiet
+sigma fleet status        what ran, when, and what it raised
+sigma fleet run           the specialists that are due   --only KEY --all --dry-run
+sigma reflect run         distil insights + proposals    --all --since --dry-run
+sigma reflect apply       execute approved proposals
+sigma reflect diff        review changes staged against existing notes
+sigma reflect merge NAME  apply one staged change to its target
+sigma capture status      session-logging self-check + backlog
+sigma capture sweep       log any session the hook missed   --max N
+sigma install [what]      git hooks and scheduled tasks (all | hooks | schedules)
+sigma ui                  start the interface   --port
+```
+
+On Windows use `sigma.cmd`; the `sigma` shell script is the POSIX equivalent. Neither needs to be
+on `PATH` to work — an absolute path is fine, which is what a scheduled task uses.
 
 ## Design rules
 
@@ -60,17 +87,31 @@ Non-negotiable, and mechanical rather than promised wherever possible:
 ## Layout
 
 ```
-runtime/            Phases 1–2 — driven by Claude Code hooks + a Windows scheduled task
-  sigma/            shared core — settings precedence, frontmatter, `claude -p`, project resolution
-  session_logger.py Phase 1 — transcript → session log.   --status --sweep --dry-run
-  reflect.py        Phase 2 — logs → insights + proposals. --status --apply --install-schedule
-  doctor.py         watchdog — reports Sigma's health into every session.  --quiet --json
+sigma.cmd / sigma   the front door — dispatches to everything below
+runtime/            hooks, scheduled tasks, and the CLI. Pure stdlib except fleet.
+  sigma/            shared core — settings, frontmatter, `claude -p`, state files, UTF-8 output
+  cli.py            the `sigma` command; picks the interpreter each subcommand needs
+  session_logger.py Phase 1 — transcript → session log
+  reflect.py        Phase 2 — logs → insights + proposals; also --diff / --merge for staged changes
+  doctor.py         watchdog — reports Sigma's health into every session
+  fleet.py          Phase 4 — runs the specialists, one at a time, under a lock
+  specialists.py    who the specialists are and what each is briefed to do
+  install_hooks.py  copies the pre-push privacy guard into each repo
+  hooks/pre-push    refuses a push where a tracked file is also gitignored
+interface/          Phase 3 — ask the vault, get a cited answer
+  backend/          FastAPI + Claude Agent SDK; serves the built frontend too
+    privacy.py      the model boundary: if git will not sync it, the model does not see it
+    propose.py      the only way an agent affects disk — writes a *pending* proposal
+  frontend/         React + Vite
 tools/              vault utilities that aren't Sigma (PDF → Markdown converter)
 ```
 
-All three are pure stdlib and self-checking: `--status` reports config, wiring, backlog, and
-skill roots. `doctor.py` exists because those self-checks were green while the system was dead —
-it runs itself, on `SessionStart`, and speaks only when something is wrong.
+Everything in `runtime/` is pure stdlib and self-checking except `fleet.py`, which needs the Agent
+SDK — and only to *run* a specialist, so `fleet status` and `fleet run --dry-run` work without it.
+`sigma` resolves that for you rather than making it a rule to remember.
+
+`doctor.py` exists because the self-checks were green while the system was dead. It runs itself,
+on `SessionStart`, and speaks only when something is wrong.
 
 **Config, state, and logs are gitignored** (`*.config.json`, `*.state.json`, `*.log`) — not
 because they hold secrets, but because they hold *this machine's* operating state, including the
