@@ -10,14 +10,39 @@ backend is the third consumer, so they live here instead.
 Nothing in this module touches the vault except to read it. Writing is the
 caller's job — see [[agent-guardrails]].
 """
-import os, re, json, subprocess, datetime
+import os, re, json, subprocess, datetime, sys
 from pathlib import Path
 
 __all__ = [
     "load_config", "setting_reader", "kebab", "frontmatter", "parse_model_json",
     "call_model", "make_logger", "spawn_detached", "project_hubs",
-    "resolve_project", "DEFAULT_VAULT",
+    "resolve_project", "read_state", "write_state", "DEFAULT_VAULT",
 ]
+
+
+def _enable_utf8_output():
+    """Stop a stray arrow in model output from killing a scheduled run.
+
+    On Windows, stdout is a cp1252 pipe whenever it is redirected — which is
+    exactly the case for a scheduled task and for a detached hook worker. cp1252
+    happens to contain the em-dash, so this hid for a long time; it does not
+    contain `→`, `✅`, or any emoji, and every one of those routinely appears in
+    text a model wrote. Printing one raises UnicodeEncodeError, which in a
+    scheduled context means the job dies with its output going nowhere: the exact
+    silent failure this OS has now been bitten by three times.
+
+    Both halves matter. Reconfiguring gets real UTF-8 out where the consumer can
+    take it; errors="replace" means that even if the console cannot, a character
+    is mangled rather than a process lost.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass                       # Python < 3.7, or a stream that is not a TextIO
+
+
+_enable_utf8_output()
 
 DEFAULT_VAULT = Path(r"C:\Users\tusha\documents\obsidian vault")
 
@@ -103,6 +128,37 @@ def call_model(prompt: str, model: str, timeout: int = 180, extra_env: dict | No
     return (r.stdout or "").strip()
 
 
+def read_state(path, default: dict | None = None) -> dict:
+    """A JSON state file, or `default` if it is missing or unreadable.
+
+    Three scripts had grown their own copy of this and its writer, and they had
+    drifted: two guarded the write against OSError and one did not, so a full
+    disk would crash the weekly reflection *after* it had already written its
+    insights — losing the run while its work sat on disk. One copy, guarded.
+    """
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else dict(default or {})
+    except (OSError, ValueError):
+        return dict(default or {})
+
+
+def write_state(path, state: dict, on_error=None) -> bool:
+    """Persist a JSON state file. Returns False rather than raising.
+
+    State is a cache of what already happened, not the record of it — the notes
+    and the logs are that. Losing it costs a repeated run; raising here would
+    cost the run that just succeeded.
+    """
+    try:
+        Path(path).write_text(json.dumps(state, indent=2), encoding="utf-8")
+        return True
+    except (OSError, TypeError) as e:
+        if on_error:
+            on_error(e)
+        return False
+
+
 def make_logger(log_path: Path, prefix: str, stream=None):
     """An append-only failure log. A detached worker's stdout goes to DEVNULL and
     a scheduled task has nowhere to complain, so without this a failure is silent."""
@@ -113,7 +169,16 @@ def make_logger(log_path: Path, prefix: str, stream=None):
                 f.write(f"{stamp}  {msg}\n")
         except OSError:
             pass
-        print(f"{prefix}: {msg}", file=stream)
+        # The file above is the record and is always UTF-8. The console is best
+        # effort: _enable_utf8_output() usually makes this moot, but a caller can
+        # hand in a stream it did not configure, and losing a scheduled run to a
+        # character in a log line would be an absurd way to fail.
+        try:
+            print(f"{prefix}: {msg}", file=stream)
+        except UnicodeEncodeError:
+            enc = getattr(stream or sys.stdout, "encoding", "ascii") or "ascii"
+            print(f"{prefix}: {msg.encode(enc, 'replace').decode(enc, 'replace')}",
+                  file=stream)
     return log
 
 

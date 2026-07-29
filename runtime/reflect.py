@@ -22,7 +22,7 @@ from pathlib import Path
 
 from sigma import (DEFAULT_VAULT as _VAULT_FALLBACK, call_model, frontmatter,
                    kebab, load_config, make_logger, parse_model_json,
-                   setting_reader)
+                   read_state, setting_reader, write_state)
 
 # --- config: a durable JSON file next to this script, so a scheduled run (which
 #     carries no environment) sees the same settings as an interactive one.
@@ -72,14 +72,14 @@ log = make_logger(LOG_PATH, "reflect")
 
 
 def load_state():
-    try:
-        return json.loads(STATE_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {"last_run": None, "covered": []}
+    return read_state(STATE_PATH, {"last_run": None, "covered": []})
 
 
 def save_state(state):
-    STATE_PATH.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    # Guarded, unlike the copy this replaced: by the time state is written the
+    # insights and proposals are already on disk, so raising here would report a
+    # failed run whose actual work succeeded.
+    write_state(STATE_PATH, state, on_error=lambda e: log(f"could not write state: {e}"))
 
 
 # A weekly job gets one shot a week, so a blip costs seven days of learning.
@@ -502,7 +502,13 @@ def staged_path(target: str, scope: str = "vault") -> Path:
     is proposing to replace. Under `06-System/` it is out of every area query's
     `FROM` clause, which is the difference between a staging area and a mess.
     """
-    rel = target.replace("\\", "/").lstrip("./")
+    # NOT lstrip("./") — that strips *characters*, so a target like
+    # `.claude/skills/x/SKILL.md` loses its leading dot and stages under
+    # `claude/...`, quietly mislabelling where the change belongs.
+    rel = target.replace("\\", "/")
+    while rel.startswith("./"):
+        rel = rel[2:]
+    rel = rel.lstrip("/")
     return STAGED / ("_user" / Path(rel) if scope == "user" else Path(rel))
 
 

@@ -49,7 +49,7 @@ REPO = HERE.parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(REPO / "interface" / "backend"))
 
-from sigma import make_logger                                    # noqa: E402
+from sigma import make_logger, read_state, write_state           # noqa: E402
 import specialists as sp                                         # noqa: E402
 
 STATE_PATH = HERE / "fleet.state.json"
@@ -103,17 +103,11 @@ _quiet_proactor_shutdown()
 # --------------------------------------------------------------------------
 
 def load_state() -> dict:
-    try:
-        return json.loads(STATE_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    return read_state(STATE_PATH)
 
 
 def save_state(state: dict):
-    try:
-        STATE_PATH.write_text(json.dumps(state, indent=2), encoding="utf-8")
-    except OSError as e:
-        log(f"could not write state: {e}")
+    write_state(STATE_PATH, state, on_error=lambda e: log(f"could not write state: {e}"))
 
 
 def _hours_since(stamp) -> float | None:
@@ -245,7 +239,9 @@ async def run_one(spec, timeout_s: int = 420) -> dict:
         yield {"type": "user", "message": {"role": "user", "content": text},
                "parent_tool_use_id": None, "session_id": spec.key}
 
-    try:
+    said = []
+
+    async def _converse():
         opts = build_options(allow_proposals=True,
                              orientation=f"{SHARED_RULES}\n\n## Your brief\n\n{spec.brief}",
                              model=spec.model, effort=spec.effort,
@@ -254,7 +250,6 @@ async def run_one(spec, timeout_s: int = 420) -> dict:
         # need token deltas and they are pure overhead here.
         opts.include_partial_messages = False
 
-        said = []
         async with ClaudeSDKClient(options=opts) as client:
             await client.connect(_stream(f"Run your brief now. Today is "
                                          f"{datetime.date.today().isoformat()}."))
@@ -270,11 +265,21 @@ async def run_one(spec, timeout_s: int = 420) -> dict:
                     result["cost_usd"] = msg.total_cost_usd
                     result["denials"] = len(msg.permission_denials or [])
                     result["ok"] = not msg.is_error
+
+    try:
+        # The timeout has to be *applied*, not just caught. Wrapping the whole
+        # conversation is what makes the except below reachable: a specialist that
+        # hangs would otherwise block the 9 AM run forever while holding the lock,
+        # and nothing downstream would ever report it.
+        await asyncio.wait_for(_converse(), timeout=timeout_s)
         result["summary"] = " ".join(" ".join(said).split())[:400]
-    except asyncio.TimeoutError:
+    except (asyncio.TimeoutError, TimeoutError):
         result["error"] = f"timed out after {timeout_s}s"
+        # Whatever it managed to say before hanging is the only clue about where.
+        result["summary"] = " ".join(" ".join(said).split())[:400]
     except Exception as e:
         result["error"] = f"{type(e).__name__}: {e}"
+        result["summary"] = " ".join(" ".join(said).split())[:400]
 
     # Let the SDK's subprocess transports finish closing before this coroutine
     # returns. Without it, Windows' proactor loop tears down with the CLI's pipes

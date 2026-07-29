@@ -29,6 +29,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+# Imported for its side effect as well as its helper: sigma reconfigures stdout
+# to UTF-8, without which a non-cp1252 character in any finding kills this on a
+# redirected stream. Relying on one of the checks to import it first would make
+# that depend on check order, and this is the script that must not fail quietly.
+from sigma import read_state, write_state  # noqa: E402
+
 # How stale each thing is allowed to get before it is worth interrupting for.
 REFLECT_OVERDUE_DAYS = 8      # weekly job + a day of slack
 CAPTURE_BACKLOG_WARN = 1      # the sweep clears up to sweep_max per session
@@ -182,17 +188,11 @@ def check_schedule(out):
 
 
 def _load_state() -> dict:
-    try:
-        return json.loads(STATE_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    return read_state(STATE_PATH)
 
 
 def _save_state(state: dict):
-    try:
-        STATE_PATH.write_text(json.dumps(state, indent=2), encoding="utf-8")
-    except OSError:
-        pass                                     # state is an optimisation, not a fact
+    write_state(STATE_PATH, state)               # state is an optimisation, not a fact
 
 
 def check_auth(out):
