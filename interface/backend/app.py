@@ -174,6 +174,12 @@ def api_health():
             "findings": findings}
 
 
+# The dashboard's read-only panel endpoints (Phase 0 of the dashboard plan).
+# A separate module so this file stays about one thing: the conversation.
+from panels import router as panels_router  # noqa: E402
+app.include_router(panels_router)
+
+
 # --------------------------------------------------------------------------
 # the built UI, served from this same process
 # --------------------------------------------------------------------------
