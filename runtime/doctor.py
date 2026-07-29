@@ -108,7 +108,7 @@ def check_reflection(out):
     else:
         out.append((OK, f"reflection ran {age}d ago ({fresh} log(s) queued)", None))
 
-    pend = appr = 0
+    pend = appr = staged = 0
     if rf.PROPOSALS.exists():
         for p in rf.PROPOSALS.glob("*.md"):
             try:
@@ -116,13 +116,24 @@ def check_reflection(out):
             except OSError:
                 continue
             pend += st.get("status") == "pending"
-            appr += st.get("status") == "approved"
+            if st.get("status") == "approved":
+                # Staged and approved are different waits: staged means apply has
+                # already done all it can and the change is sitting in
+                # 06-System/proposed/ for a human to diff and merge. Reporting it
+                # as "not yet applied" would point at --apply, which would just
+                # re-stage it — an alert whose suggested fix does nothing is how a
+                # watchdog gets ignored.
+                staged += bool(st.get("staged"))
+                appr += not st.get("staged")
     if pend:
         out.append((TODO, f"{pend} proposal(s) awaiting your review",
                     "open 06-System/proposals/ and set status: approved | rejected"))
     if appr:
         out.append((TODO, f"{appr} approved proposal(s) not yet applied",
                     "python reflect.py --apply"))
+    if staged:
+        out.append((TODO, f"{staged} change(s) to existing notes staged for review",
+                    "python reflect.py --diff   then --merge <name>"))
 
 
 def check_schedule(out):

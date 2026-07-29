@@ -45,6 +45,12 @@ TASK_NAME = "SigmaOS-WeeklyReflection"
 SESSIONS = VAULT / "06-System" / "sessions"
 INSIGHTS = VAULT / "06-System" / "insights"
 PROPOSALS = VAULT / "06-System" / "proposals"
+# Where a change to an EXISTING file waits. `--apply` never overwrites, so a
+# proposal that corrects a note used to skip forever — which meant the two
+# specialists whose whole job is correcting existing notes could never land
+# anything. It now writes the intended file here, mirroring the target's path,
+# for `--diff` and then `--merge`. See stage_change().
+STAGED = VAULT / "06-System" / "proposed"
 CONTRACT = VAULT / "CLAUDE.md"
 CONTENT_MARKER = "<!-- proposal:content -->"
 CONTRACT_SECTION = "## Learned conventions"
@@ -486,6 +492,53 @@ def append_to_contract(content: str, title: str, today: str) -> str:
     return "CLAUDE.md"
 
 
+def staged_path(target: str, scope: str = "vault") -> Path:
+    """Where the proposed version of an existing file waits for review.
+
+    Mirrors the target's path under `06-System/proposed/` rather than sitting
+    beside it as `timeline.proposed.md`. A sibling would carry the target's own
+    frontmatter — `type: resource`, `type: assignment` — and so would show up in
+    the Dataview tables and the graph as a second, phantom copy of the note it
+    is proposing to replace. Under `06-System/` it is out of every area query's
+    `FROM` clause, which is the difference between a staging area and a mess.
+    """
+    rel = target.replace("\\", "/").lstrip("./")
+    return STAGED / ("_user" / Path(rel) if scope == "user" else Path(rel))
+
+
+def stage_change(target: str, scope: str, content: str) -> Path:
+    dest = staged_path(target, scope)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(content.rstrip() + "\n", encoding="utf-8")
+    return dest
+
+
+def mark_staged(path: Path, today: str, target: str, staged_rel: str):
+    """Record that a proposal is staged, WITHOUT calling it applied.
+
+    Status stays `approved`, because nothing has changed at the target yet. The
+    distinction matters for the watchdog: "waiting for you to merge" is an alert
+    that clears when you act, where the old "approved but skipped" could never
+    clear at all.
+    """
+    text = path.read_text(encoding="utf-8")
+    if re.search(r"^staged:", text, re.M):
+        text = re.sub(r"^staged:.*$", f"staged: {staged_rel}", text, count=1, flags=re.M)
+    else:
+        text = re.sub(r"^(applied:.*)$", f"staged: {staged_rel}\n\\1", text,
+                      count=1, flags=re.M)
+    if "**Staged " not in text:
+        text = text.rstrip() + (
+            f"\n\n---\n**Staged {today}** — `{target}` already exists, so the proposed "
+            f"version was written to `{staged_rel}` instead of overwriting it.\n\n"
+            f"Review it:\n\n"
+            f"```\npython reflect.py --diff {path.stem}\n```\n\n"
+            f"Then either merge it (`python reflect.py --merge {path.stem}`), edit the "
+            f"staged file first if you want it different, or set `status: rejected` "
+            f"here and delete the staged file.\n")
+    path.write_text(text, encoding="utf-8")
+
+
 def mark_applied(path: Path, today: str, where: str):
     text = path.read_text(encoding="utf-8")
     text = re.sub(r"^status: approved\s*$", "status: applied", text, count=1, flags=re.M)
@@ -495,12 +548,112 @@ def mark_applied(path: Path, today: str, where: str):
     path.write_text(text, encoding="utf-8")
 
 
+def staged_proposals(name_filter: str = ""):
+    """(proposal path, frontmatter, target path, staged path) for everything staged."""
+    out = []
+    if not PROPOSALS.exists():
+        return out
+    for p in sorted(PROPOSALS.glob("*.md")):
+        fm = frontmatter(p.read_text(encoding="utf-8", errors="replace"))
+        rel = fm.get("staged", "")
+        if fm.get("type") != "proposal" or not rel:
+            continue
+        if name_filter and name_filter.lower() not in p.stem.lower():
+            continue
+        scope = fm.get("scope", DEFAULT_SCOPE if fm.get("kind") == "skill" else "vault")
+        dest = safe_target(fm.get("target", ""), scope if scope in SCOPES else "vault")
+        out.append((p, fm, dest, VAULT / rel))
+    return out
+
+
+def do_diff(a):
+    """Show what each staged change would do to its target."""
+    items = staged_proposals(a.diff if isinstance(a.diff, str) else "")
+    if not items:
+        print("nothing staged.")
+        return 0
+    for p, fm, dest, staged in items:
+        print("=" * 70)
+        print(f"{p.stem}\n  target: {fm.get('target')}\n  staged: "
+              f"{staged.relative_to(VAULT).as_posix()}")
+        print("=" * 70)
+        if not staged.exists():
+            print("  ! the staged file is missing - re-run --apply or reject the proposal")
+            continue
+        if dest is None or not dest.exists():
+            print("  (target does not exist any more - --merge would simply create it)")
+            continue
+        # git diff --no-index works on files outside a repo and gives colour and
+        # context for free; there is no reason to hand-roll a differ here.
+        r = subprocess.run(["git", "diff", "--no-index", "--", str(dest), str(staged)],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=30)
+        body = (r.stdout or "").strip()
+        print(body if body else "  (no difference - the staged file matches the target)")
+    print("=" * 70)
+    print(f"{len(items)} staged. Merge one with: reflect.py --merge <name>")
+    return 0
+
+
+def do_merge(a):
+    """Copy a staged change over its target. The one place Sigma overwrites.
+
+    Deliberately human-only and one-at-a-time: no scheduled job calls this, it
+    takes an explicit name rather than acting on everything, and it refuses
+    anything that is not already `approved` and staged. The never-overwrite
+    guarantee is about what the loop does unattended — this is you, naming a
+    file, after reading its diff.
+    """
+    items = staged_proposals(a.merge)
+    if not items:
+        print(f"no staged proposal matches '{a.merge}'. `--diff` lists them.")
+        return 1
+    if len(items) > 1:
+        print(f"'{a.merge}' matches {len(items)} proposals - name one exactly:")
+        for p, *_ in items:
+            print(f"  {p.stem}")
+        return 1
+
+    p, fm, dest, staged = items[0]
+    if fm.get("status") != "approved":
+        print(f"refusing: {p.stem} is status '{fm.get('status')}', not 'approved'.")
+        return 1
+    if not staged.exists():
+        print(f"refusing: staged file {staged} is missing.")
+        return 1
+    if dest is None:
+        print(f"refusing: target '{fm.get('target')}' does not resolve inside its scope root.")
+        return 1
+
+    today = datetime.date.today().isoformat()
+    content = staged.read_text(encoding="utf-8")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    existed = dest.exists()
+    dest.write_text(content, encoding="utf-8")
+    staged.unlink()
+    for parent in (staged.parent, *staged.parent.parents):   # tidy empty dirs
+        if parent == STAGED or STAGED not in parent.parents:
+            break
+        try:
+            parent.rmdir()
+        except OSError:
+            break
+
+    text = p.read_text(encoding="utf-8")
+    text = re.sub(r"^staged:.*\n", "", text, count=1, flags=re.M)
+    p.write_text(text, encoding="utf-8")
+    mark_applied(p, today, fm.get("target", ""))
+    log(f"merged {p.stem} -> {fm.get('target')} "
+        f"({'overwrote' if existed else 'created'}; git has the previous version)")
+    return 0
+
+
 def do_apply(a):
     if not PROPOSALS.exists():
         log("no proposals folder - nothing to apply.")
         return 0
     today = datetime.date.today().isoformat()
-    n_ok = n_skip = 0
+    n_ok = n_skip = n_stage = 0
     for p in sorted(PROPOSALS.glob("*.md")):
         text = p.read_text(encoding="utf-8", errors="replace")
         fm = frontmatter(text)
@@ -535,8 +688,20 @@ def do_apply(a):
                           if kind == "skill" and (r / dest.parent.name / "SKILL.md").exists()),
                          None)
             if dest.exists() or clash:
-                log(f"SKIP {p.name}: {clash or dest} already exists - apply is additive only.")
-                n_skip += 1
+                # Apply stays additive — it still will not overwrite. But a
+                # proposal that corrects an existing note is the normal case for
+                # the auditor and the coach, so dropping it on the floor made
+                # both of them structurally unable to land anything. Stage it.
+                if a.dry_run:
+                    print(f"[dry-run] would stage {dest} -> "
+                          f"{staged_path(target, scope)} from {p.name}")
+                    continue
+                st = stage_change(target, scope, content)
+                rel = st.relative_to(VAULT).as_posix()
+                mark_staged(p, today, target, rel)
+                log(f"STAGED {p.name} -> {rel} ({(clash or dest)} exists; "
+                    f"review with --diff {p.stem}, then --merge)")
+                n_stage += 1
                 continue
             if a.dry_run:
                 print(f"[dry-run] would create {dest} ({len(content)} chars, scope={scope}) "
@@ -550,7 +715,10 @@ def do_apply(a):
             log(f"applied {p.name} -> {where}")
             n_ok += 1
     if not a.dry_run:
-        log(f"apply finished: {n_ok} applied, {n_skip} skipped")
+        log(f"apply finished: {n_ok} applied, {n_stage} staged, {n_skip} skipped")
+        if n_stage:
+            log(f"  {n_stage} change(s) to existing files are staged in "
+                f"06-System/proposed/ - `reflect.py --diff` to review")
     return 0
 
 
@@ -625,6 +793,10 @@ def status_report():
 def main():
     ap = argparse.ArgumentParser(description="Agentic OS Phase 2: weekly reflection loop.")
     ap.add_argument("--apply", action="store_true", help="execute approved proposals")
+    ap.add_argument("--diff", nargs="?", const="", metavar="NAME",
+                    help="show staged changes to existing files (optionally filtered)")
+    ap.add_argument("--merge", metavar="NAME",
+                    help="copy one staged change over its target and mark it applied")
     ap.add_argument("--status", action="store_true", help="health / self-check report")
     ap.add_argument("--dry-run", action="store_true", help="show what would happen, write nothing")
     ap.add_argument("--stdout", action="store_true", help="print the model's JSON, write nothing")
@@ -639,6 +811,10 @@ def main():
 
     if a.status:
         return status_report()
+    if a.diff is not None:
+        return do_diff(a)
+    if a.merge:
+        return do_merge(a)
     if a.print_schedule:
         print(schedule_cmd()); return 0
     if a.install_schedule:
