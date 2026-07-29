@@ -35,6 +35,10 @@ Five layers, raw → distilled:
 | **L3** | procedural memory — skills + `CLAUDE.md` contract | approved proposals |
 | **L4** | durable insights distilled from L1 | `reflect.py` (Phase 2) |
 
+> **[SYSTEM.md](SYSTEM.md) is the full picture** — every component, how the pieces reach each other,
+> the guarantees and how each is enforced, current state, and the known gaps. Read that if you are
+> picking this up after a break. This file is the introduction.
+
 ## Phases
 
 - **0 — Foundation** ✅ structured vault, frontmatter contract, course study systems
