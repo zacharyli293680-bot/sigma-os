@@ -369,9 +369,11 @@ kbd {
 }
 .drawer-form button:disabled { border-color: var(--muted); color: var(--muted); cursor: default; }
 
+:focus-visible { outline: 1px solid var(--cyan); outline-offset: 2px; }
+
 .chat-fab {
   position: fixed;
-  right: 18px; bottom: 40px;
+  right: 18px; bottom: 52px;
   background: var(--void);
   border: 1px solid var(--panel-line);
   color: var(--cyan);

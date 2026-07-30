@@ -29,12 +29,15 @@ function useClock(): string {
 }
 
 export default function App() {
+  // undefined = not fetched yet, null = the fetch actually failed. The
+  // OFFLINE panel keys on null — it used to key on the initial state and
+  // flashed "backend unreachable" on every cold load.
   const [health, setHealth] = useState<Health | null | undefined>(undefined);
-  const [fleet, setFleet] = useState<Fleet | null>(null);
-  const [tasks, setTasks] = useState<Tasks | null>(null);
-  const [proposals, setProposals] = useState<Proposals | null>(null);
-  const [projects, setProjects] = useState<Projects | null>(null);
-  const [window_, setWindow] = useState<Window_ | null>(null);
+  const [fleet, setFleet] = useState<Fleet | null | undefined>(undefined);
+  const [tasks, setTasks] = useState<Tasks | null | undefined>(undefined);
+  const [proposals, setProposals] = useState<Proposals | null | undefined>(undefined);
+  const [projects, setProjects] = useState<Projects | null | undefined>(undefined);
+  const [window_, setWindow] = useState<Window_ | null | undefined>(undefined);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
   const [brainOpen, setBrainOpen] = useState(false);
@@ -74,6 +77,9 @@ export default function App() {
     es.onmessage = e => {
       try { setProgress(JSON.parse(e.data)); } catch { /* torn event — keep last */ }
     };
+    // A dead feed must not keep narrating: clear on error, and let the
+    // server's replay-on-connect repopulate when the reconnect succeeds.
+    es.onerror = () => setProgress(null);
     return () => es.close();
   }, []);
 
@@ -87,6 +93,7 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.repeat || e.altKey) return;   // held keys flicker; AltGr fakes ctrl
       if (e.ctrlKey && e.key === "/") { e.preventDefault(); setChatOpen(o => !o); }
       else if (e.ctrlKey && (e.key === "k" || e.key === "K")) {
         e.preventDefault();
@@ -112,21 +119,30 @@ export default function App() {
     es.onmessage = e => {
       try { setJob(JSON.parse(e.data)); } catch { /* torn event */ }
     };
+    es.onerror = () => setJob(null);   // a restarted server has no job to claim
     return () => es.close();
   }, []);
   const prevJobState = useRef<string | null>(null);
   useEffect(() => {
     if (prevJobState.current === "running" && job && job.state !== "running") {
       refresh();
-      checkHealth();
+      // Re-run the doctor only after verbs that can change what it measures —
+      // re-probing after `doctor` itself ran it twice in a row.
+      const v = job.verb;
+      if (!v.endsWith("-status") && v !== "doctor" && v !== "status" && v !== "reflect-diff") {
+        checkHealth();
+      }
     }
     prevJobState.current = job?.state ?? null;
   }, [job, refresh, checkHealth]);
 
-  const vault = health?.vault ? health.vault.split(/[\\/]/).pop() || "" : "Obsidian Vault";
-  const waitingCount = proposals
-    ? proposals.pending.length + proposals.approved.length + proposals.staged.length
-    : 0;
+  // The vault's real name arrives with the instant /api/window fetch — the
+  // old source was the 45s health probe, and a hardcoded guess filled the gap.
+  const vault = window_?.vault
+    ?? (health?.vault ? health.vault.split(/[\\/]/).pop() || "" : "");
+  // Held = a loop stalled on Zach. Only *pending* proposals qualify —
+  // counting approved/staged kept every arc amber long after he had acted.
+  const waitingCount = proposals?.pending.length ?? 0;
   const dockElapsed = useElapsed(progress?.state === "running" ? progress.current_started : null);
 
   // Dock priority: a palette job running now, a job finished in the last
@@ -137,21 +153,21 @@ export default function App() {
     ? { text: `⌘ ${job.verb} · ${job.lines[job.lines.length - 1] ?? "starting…"}`, live: true }
     : job && jobRecent
     ? { text: `⌘ ${job.verb} ${job.state === "done" ? "✓" : "✗ failed"} · ${job.lines[job.lines.length - 1] ?? ""}`, live: false }
-    : activityLine(fleet, progress, dockElapsed);
+    : activityLine(fleet ?? null, progress, dockElapsed);
 
   return (
     <div className="shell">
-      <TopStrip health={health} window={window_} block={tasks?.block ?? null}
+      <TopStrip health={health} window={window_ ?? null} block={tasks?.block ?? null}
                 clock={clock} onHealthClick={checkHealth} />
       <Rail brainOpen={brainOpen} onBrain={() => setBrainOpen(o => !o)} />
-      <Reactor fleet={fleet} progress={progress} waitingCount={waitingCount} />
+      <Reactor fleet={fleet ?? null} progress={progress} waitingCount={waitingCount} />
       <div className="right">
-        <WaitingPanel proposals={proposals} vault={vault} />
-        <TodayPanel tasks={tasks} vault={vault} />
+        <WaitingPanel proposals={proposals ?? null} vault={vault} />
+        <TodayPanel tasks={tasks ?? null} vault={vault} />
       </div>
       <div className="lower">
         <ProjectsPanel projects={projects?.projects ?? null} vault={vault} />
-        <FleetDetail fleet={fleet} />
+        <FleetDetail fleet={fleet ?? null} />
       </div>
       <Foot activity={dock}
             onChat={() => setChatOpen(o => !o)}
@@ -168,6 +184,8 @@ export default function App() {
         </button>
       )}
       {fleet === null && tasks === null && proposals === null && (
+        // All three null means all three fetches *failed* — undefined (still
+        // loading) never triggers this.
         <Panel label="OFFLINE" className="offline">
           <p>backend unreachable — start it with <code>sigma ui</code></p>
         </Panel>

@@ -44,15 +44,31 @@ export function useElapsed(sinceIso: string | null): number | null {
   return s >= 0 ? s : null;
 }
 
+/** A progress record is only believed while its heartbeat is fresh: a crashed
+ *  run leaves state:"running" on disk forever, and the reactor must not sweep
+ *  for a ghost. fleet.py rewrites `updated` at every transition. */
+export function progressFresh(progress: Progress | null): boolean {
+  if (!progress) return false;
+  const age = Date.now() - Date.parse(progress.updated);
+  return !isNaN(age) && age < 30 * 60_000;   // > the longest specialist timeout
+}
+
 export default function Reactor({ fleet, progress, waitingCount }: {
   fleet: Fleet | null;
   progress: Progress | null;
   waitingCount: number;
 }) {
-  const running = progress?.state === "running";
+  const fresh = progressFresh(progress);
+  const stalled = progress?.state === "running" && !fresh;
+  const running = progress?.state === "running" && fresh;
   const elapsed = useElapsed(running ? progress!.current_started : null);
 
   if (!fleet) return <Panel label="FLEET" className="center"><p className="dim">loading…</p></Panel>;
+  if (fleet.specialists.length === 0) {
+    return <Panel label="FLEET" className="center">
+      <p className="warn-line">no specialists configured — check specialists.py</p>
+    </Panel>;
+  }
 
   const stateOf = (key: string): ArcState => {
     if (running) {
@@ -65,7 +81,8 @@ export default function Reactor({ fleet, progress, waitingCount }: {
     if (spec?.last_result && spec.last_result !== "ok") return "fault";
     // Held is the loop-stalled-on-you state. Until proposals record which
     // specialist raised them, approximate: this one raised proposals last run
-    // AND something is still sitting in the review queue.
+    // AND something is still PENDING (approved/staged no longer count — they
+    // kept every arc amber long after Zach had acted).
     if ((spec?.last_proposals ?? 0) > 0 && waitingCount > 0) return "held";
     return "idle";
   };
@@ -77,13 +94,15 @@ export default function Reactor({ fleet, progress, waitingCount }: {
   const doneCount = running ? Object.keys(progress!.results).length : 0;
   const anyFault = fleet.specialists.some(s => s.last_result && s.last_result !== "ok");
 
+  const lastRun = fleet.last_run ? `${rel(fleet.last_run)} ago` : "never";
   const sub = running
     ? `running ${Math.min(doneCount + 1, progress!.queue.length)} of ${progress!.queue.length}` +
       (elapsed != null ? ` · ${elapsed}s` : "")
-    : `${fleet.specialists.length} specialists · last run ${rel(fleet.last_run)} ago` +
+    : `${fleet.specialists.length} specialists · last run ${lastRun}` +
       (fleet.task_installed ? " · scheduled daily 09:00" : " · NOT SCHEDULED");
 
   const coreWord = running ? progress!.current ?? "…"
+    : stalled ? "STALLED"
     : fleet.stopped_early_at ? "STOPPED"
     : anyFault ? "FAULT" : "IDLE";
 
@@ -122,6 +141,10 @@ export default function Reactor({ fleet, progress, waitingCount }: {
         {progress?.state === "done" && progress.note && !running && (
           <div className="dim center-note">last scheduled pass: {progress.note} ({rel(progress.finished)} ago)</div>
         )}
+        {stalled && (
+          <p className="warn-line">a run reported "running" but its heartbeat is stale —
+            it likely crashed; check fleet.log</p>
+        )}
         {fleet.stopped_early_at && (
           <p className="warn-line">last run stopped early on a rate limit ({rel(fleet.stopped_early_at)} ago)</p>
         )}
@@ -133,6 +156,9 @@ export default function Reactor({ fleet, progress, waitingCount }: {
 /** The foot's live line — what is happening this second. */
 export function activityLine(fleet: Fleet | null, progress: Progress | null,
                              elapsed: number | null): { text: string; live: boolean } {
+  if (progress?.state === "running" && !progressFresh(progress)) {
+    return { text: "⚠ a fleet run went quiet mid-flight — check fleet.log", live: false };
+  }
   if (progress?.state === "running" && progress.current) {
     return {
       text: `⟳ ${progress.current} · running${elapsed != null ? ` · ${elapsed}s` : ""}` +
@@ -150,5 +176,7 @@ export function activityLine(fleet: Fleet | null, progress: Progress | null,
       live: false,
     };
   }
-  return { text: fleet ? `idle · last run ${rel(fleet.last_run)} ago` : "…", live: false };
+  return { text: fleet
+    ? `idle · last run ${fleet.last_run ? rel(fleet.last_run) + " ago" : "never"}`
+    : "…", live: false };
 }

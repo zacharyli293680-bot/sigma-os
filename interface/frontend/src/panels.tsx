@@ -28,16 +28,22 @@ export function TopStrip({ health, window: win, block, clock, onHealthClick }: {
   // undefined = the doctor is still running (it can take ~30s when the auth
   // probe fires); null = the fetch actually failed. Different words for
   // different facts — "offline" while merely checking would be crying wolf.
-  const alerts = health?.findings.filter(f => f.level !== "ok") ?? [];
+  // "info" findings (standing facts like the model-boundary exemptions) are
+  // shown in the tooltip but never counted as needing review.
+  const alerts = health?.findings.filter(f => f.level === "alert" || f.level === "todo") ?? [];
   const state = health === undefined ? ["◌", "checking…", "down"]
     : health === null ? ["○", "offline", "down"]
     : health.ok ? ["◉", "all clear", "ok"]
     : ["◬", `${alerts.length} to review`, "warn"];
+  const tooltip = health === undefined ? "running the health checks…"
+    : health === null ? "backend unreachable"
+    : health.findings.filter(f => f.level !== "ok")
+        .map(a => `${a.what}${a.fix ? ` — ${a.fix}` : ""}`).join("\n") || "all checks pass";
   return (
     <header className="strip">
       <span className="brand"><span className="sigma">Σ</span> SIGMA</span>
       <button className={`health ${state[2]}`} onClick={onHealthClick}
-              title={health ? alerts.map(a => `${a.what}${a.fix ? ` — ${a.fix}` : ""}`).join("\n") || "all six checks pass" : "backend unreachable"}>
+              title={tooltip}>
         <span className="glyph">{state[0]}</span> {state[1]}
       </button>
       <span className="meter" title={win?.note ?? "window meter"}>
@@ -159,7 +165,8 @@ export function ProjectsPanel({ projects, vault }: { projects: Project[] | null;
               <span className="name">{p.name}</span>
               {p.git ? (
                 <span className={`repo ${p.git.dirty ? "dirty" : ""}`}>
-                  {p.git.dirty ? `● ${p.git.dirty} dirty` : "○ clean"}
+                  {p.git.dirty == null ? "? unreadable"      /* git failed ≠ clean */
+                    : p.git.dirty ? `● ${p.git.dirty} dirty` : "○ clean"}
                   {p.git.unpushed ? ` · ↑${p.git.unpushed}` : ""}
                   {" · "}{rel(p.git.last_commit)}
                 </span>

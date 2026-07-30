@@ -450,4 +450,7 @@ def api_window():
     shape is fixed now so the top strip does not change when the Phase 4 spike
     fills it in; until then the meter renders the absence, not a guess."""
     return {"known": False, "percent": None, "reserved": None,
-            "note": "no data source yet — metering is the Phase 4 spike"}
+            "note": "no data source yet — metering is the Phase 4 spike",
+            # The UI's obsidian:// links need the vault's real name; guessing
+            # it from a 45s health probe left links dead on first paint.
+            "vault": VAULT.name}

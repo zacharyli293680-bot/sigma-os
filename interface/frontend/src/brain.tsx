@@ -65,10 +65,10 @@ function layout(g: Graph): Float32Array {
         const dz = pos[i * 3 + 2] - pos[j * 3 + 2];
         const d2 = dx * dx + dy * dy + dz * dz + 1;
         if (d2 > 62500) continue;
-        const f = 620 / d2;
-        vel[i * 3] += dx * f / Math.sqrt(d2); vel[j * 3] -= dx * f / Math.sqrt(d2);
-        vel[i * 3 + 1] += dy * f / Math.sqrt(d2); vel[j * 3 + 1] -= dy * f / Math.sqrt(d2);
-        vel[i * 3 + 2] += dz * f / Math.sqrt(d2); vel[j * 3 + 2] -= dz * f / Math.sqrt(d2);
+        const g = 620 / (d2 * Math.sqrt(d2));   // one sqrt, not six
+        vel[i * 3] += dx * g; vel[j * 3] -= dx * g;
+        vel[i * 3 + 1] += dy * g; vel[j * 3 + 1] -= dy * g;
+        vel[i * 3 + 2] += dz * g; vel[j * 3 + 2] -= dz * g;
       }
     }
     for (const [a, b] of g.links) {
@@ -96,7 +96,8 @@ function layout(g: Graph): Float32Array {
 type World = {
   g: Graph;
   pos: Float32Array;
-  byBase: Map<string, number>;
+  byId: Map<string, number>;           // full vault-relative path (no .md, lower)
+  byBase: Map<string, number>;         // basename fallback — ambiguous, last wins
   edgesOf: Map<number, [number, number][]>;
   fires: Map<number, number>;          // node idx -> performance.now() of firing
   lastTouched: string;
@@ -114,11 +115,17 @@ export default function Brain({ open, vault, fireRef }: {
   const mouse = useRef({ x: 0, y: 0 });
   const hover = useRef<number | null>(null);
 
+  const fetching = useRef(false);      // StrictMode double-invokes effects
   useEffect(() => {
-    if (!open || graph) return;
+    if (!open || graph || fetching.current) return;
+    fetching.current = true;
     get<Graph>("graph").then(g => {
+      const byId = new Map<string, number>();
       const byBase = new Map<string, number>();
-      g.nodes.forEach((n, i) => byBase.set(n.label.toLowerCase(), i));
+      g.nodes.forEach((n, i) => {
+        byId.set(n.id.toLowerCase().replace(/\.md$/, ""), i);
+        byBase.set(n.label.toLowerCase(), i);
+      });
       const edgesOf = new Map<number, [number, number][]>();
       for (const [a, b] of g.links) {
         (edgesOf.get(a) ?? edgesOf.set(a, []).get(a)!).push([a, b]);
@@ -127,21 +134,25 @@ export default function Brain({ open, vault, fireRef }: {
       const touched = [...g.nodes].sort((a, b) =>
         (b.mtime ?? "").localeCompare(a.mtime ?? ""))[0];
       world.current = {
-        g, pos: layout(g), byBase, edgesOf, fires: new Map(),
+        g, pos: layout(g), byId, byBase, edgesOf, fires: new Map(),
         lastTouched: touched?.label ?? "—",
       };
       setGraph(g);
-    }).catch(() => setGraph(null));
+    }).catch(() => setGraph(null))
+      .finally(() => { fetching.current = false; });
   }, [open, graph]);
 
-  // The firing hook the chat drawer calls through App: a Read's basename
-  // lights its node. Grep/Glob details don't name a note and simply miss.
+  // The firing hook the chat drawer calls through App. Reads now arrive as
+  // vault-relative paths (describe() in app.py), so the exact node fires even
+  // when basenames collide; bare basenames remain a fallback. Grep/Glob
+  // details don't name a note and simply miss.
   useEffect(() => {
     fireRef.current = (detail: string) => {
       const w = world.current;
       if (!w) return;
-      const key = detail.replace(/\.md$/i, "").toLowerCase().trim();
-      const idx = w.byBase.get(key);
+      const key = detail.replace(/\\/g, "/").replace(/\.md$/i, "").toLowerCase().trim();
+      const idx = w.byId.get(key)
+        ?? w.byBase.get(key.split("/").pop() ?? key);
       if (idx !== undefined) w.fires.set(idx, performance.now());
     };
     return () => { fireRef.current = null; };
@@ -158,7 +169,12 @@ export default function Brain({ open, vault, fireRef }: {
       const w = world.current!;
       const W = canvas.clientWidth, H = canvas.clientHeight;
       const dpr = window.devicePixelRatio || 1;
-      if (canvas.width !== W * dpr) { canvas.width = W * dpr; canvas.height = H * dpr; }
+      // Round before comparing: canvas.width truncates its setter, so at
+      // fractional DPR (Windows 125%/150%) an un-rounded comparison is true
+      // every frame — the backing store reallocates 60×/s, frame time blows
+      // the budget, and the sky degrades to static "randomly".
+      const cw = Math.round(W * dpr), ch = Math.round(H * dpr);
+      if (canvas.width !== cw) { canvas.width = cw; canvas.height = ch; }
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, W, H);
 

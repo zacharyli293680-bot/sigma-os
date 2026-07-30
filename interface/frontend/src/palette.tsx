@@ -31,23 +31,31 @@ export default function Palette({ open, onClose, onLaunched }: {
   open: boolean; onClose: () => void; onLaunched: () => void;
 }) {
   const [verbs, setVerbs] = useState<CommandInfo[] | null>(null);
+  const [listFailed, setListFailed] = useState(false);
   const [query, setQuery] = useState("");
   const [sel, setSel] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const launching = useRef(false);
 
+  // Two effects on purpose: the fetch keys on [open, verbs], but the reset
+  // must key on [open] alone — sharing one effect meant the verb list
+  // arriving re-ran it and wiped whatever the user had already typed.
   useEffect(() => {
     if (open && !verbs) {
-      get<{ verbs: CommandInfo[] }>("commands").then(r => setVerbs(r.verbs))
-        .catch(() => setVerbs(null));
+      get<{ verbs: CommandInfo[] }>("commands")
+        .then(r => { setVerbs(r.verbs); setListFailed(false); })
+        .catch(() => setListFailed(true));
     }
+  }, [open, verbs]);
+  useEffect(() => {
     if (open) {
       setQuery("");
       setSel(0);
       setNotice(null);
       setTimeout(() => inputRef.current?.focus(), 30);
     }
-  }, [open, verbs]);
+  }, [open]);
 
   const rows = useMemo(() => {
     if (!verbs) return [];
@@ -61,7 +69,8 @@ export default function Palette({ open, onClose, onLaunched }: {
   useEffect(() => { if (sel >= rows.length) setSel(0); }, [rows, sel]);
 
   async function run(v: CommandInfo) {
-    if (!v.enabled) return;
+    if (!v.enabled || launching.current) return;
+    launching.current = true;
     try {
       const r = await fetch(`${API}/api/commands/${v.verb}`, { method: "POST" });
       if (r.status === 409) {
@@ -74,6 +83,8 @@ export default function Palette({ open, onClose, onLaunched }: {
       onClose();
     } catch {
       setNotice("backend unreachable");
+    } finally {
+      launching.current = false;
     }
   }
 
@@ -114,7 +125,12 @@ export default function Palette({ open, onClose, onLaunched }: {
             </li>
           ))}
           {verbs && rows.length === 0 && <li className="off"><span className="p-title">no match</span></li>}
-          {!verbs && <li className="off"><span className="p-title">loading…</span></li>}
+          {!verbs && !listFailed && <li className="off"><span className="p-title">loading…</span></li>}
+          {!verbs && listFailed && (
+            <li className="off"><span className="p-title">
+              command list unavailable — is the backend up?
+            </span></li>
+          )}
         </ul>
         <div className="palette-foot dim">
           ↑↓ choose · Enter run · Esc close — output streams into the dock

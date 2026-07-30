@@ -64,7 +64,16 @@ def sse(event: dict) -> str:
 def describe(tool: str, args: dict) -> str:
     """One short line naming what the agent is doing, for the activity trail."""
     if tool == "Read":
-        return Path(str(args.get("file_path", ""))).name
+        # Vault-relative, not basename: the brain fires the node this names,
+        # and two notes can share a basename (three do). The trail reads
+        # better with the path anyway.
+        fp = str(args.get("file_path", ""))
+        try:
+            p = Path(fp)
+            p = (p if p.is_absolute() else VAULT / p).resolve()
+            return p.relative_to(VAULT).as_posix()
+        except Exception:
+            return Path(fp).name
     if tool == "Grep":
         return f"/{args.get('pattern', '')}/"
     if tool == "Glob":

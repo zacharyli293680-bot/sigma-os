@@ -44,6 +44,7 @@ export type Projects = { projects: Project[] };
 
 export type Window_ = {
   known: boolean; percent: number | null; reserved: number | null; note: string;
+  vault: string;   // the vault's real name — obsidian:// links must not guess it
 };
 
 export type GraphNode = {
@@ -84,7 +85,8 @@ export type Progress = {
 };
 
 export async function get<T>(path: string): Promise<T> {
-  const r = await fetch(`${API}/api/${path}`);
+  // A hung endpoint must fail, not stack: refresh() refires every 60s.
+  const r = await fetch(`${API}/api/${path}`, { signal: AbortSignal.timeout(20_000) });
   if (!r.ok) throw new Error(`${path}: ${r.status}`);
   return r.json();
 }
@@ -94,6 +96,7 @@ export function rel(iso: string | null | undefined): string {
   if (!iso) return "never";
   const ms = Date.now() - new Date(iso).getTime();
   if (isNaN(ms)) return iso;
+  if (ms < 0) return "soon";     // clock skew must not read as "just happened"
   const m = Math.floor(ms / 60000);
   if (m < 1) return "now";
   if (m < 60) return `${m}m`;

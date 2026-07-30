@@ -77,16 +77,22 @@ export default function ChatDrawer({ open, vault, onClose, onTool }: {
   const [session, setSession] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // React state is async — two clicks in one tick both read busy===false and
+  // stream into each other's bubble. The ref is checked and set synchronously.
+  const inFlight = useRef(false);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [turns]);
   useEffect(() => { if (open) inputRef.current?.focus(); }, [open]);
 
   async function ask(question: string) {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setTurns(t => [...t, { q: question, a: "", tools: [], blocked: [] }]);
     const patch = (fn: (t: Turn) => Turn) =>
       setTurns(ts => ts.map((t, i) => (i === ts.length - 1 ? fn(t) : t)));
 
+    let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
     try {
       const res = await fetch(`${API}/api/ask`, {
         method: "POST",
@@ -95,19 +101,20 @@ export default function ChatDrawer({ open, vault, onClose, onTool }: {
       });
       if (!res.body) throw new Error("no response body");
 
-      const reader = res.body.getReader();
+      reader = res.body.getReader();
       const dec = new TextDecoder();
       let buf = "";
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
         buf += dec.decode(value, { stream: true });
-        const chunks = buf.split("\n\n");
+        const chunks = buf.split(/\r?\n\r?\n/);
         buf = chunks.pop() ?? "";
         for (const chunk of chunks) {
-          const line = chunk.split("\n").find(l => l.startsWith("data: "));
+          const line = chunk.split(/\r?\n/).find(l => l.startsWith("data: "));
           if (!line) continue;
-          const e = JSON.parse(line.slice(6));
+          let e;
+          try { e = JSON.parse(line.slice(6)); } catch { continue; }  // skip a torn frame, keep the stream
           if (e.type === "token") patch(t => ({ ...t, a: t.a + e.text }));
           else if (e.type === "tool") {
             patch(t => ({ ...t, tools: [...t.tools, { name: e.name, detail: e.detail }] }));
@@ -115,7 +122,12 @@ export default function ChatDrawer({ open, vault, onClose, onTool }: {
           }
           else if (e.type === "denied")
             patch(t => ({ ...t, blocked: [...t.blocked, e.message] }));
-          else if (e.type === "error") patch(t => ({ ...t, error: e.message }));
+          else if (e.type === "error") {
+            patch(t => ({ ...t, error: e.message }));
+            // A dead session id fails every subsequent question identically —
+            // drop it so the next ask starts a fresh conversation.
+            setSession(null);
+          }
           else if (e.type === "done") {
             setSession(e.session_id);
             patch(t => ({ ...t, stats: { turns: e.turns, cost: e.cost_usd } }));
@@ -124,7 +136,12 @@ export default function ChatDrawer({ open, vault, onClose, onTool }: {
       }
     } catch (err) {
       patch(t => ({ ...t, error: String(err) }));
+      setSession(null);
     } finally {
+      // Without the cancel, an aborted stream leaves the backend agent
+      // running to completion with nothing consuming it.
+      try { await reader?.cancel(); } catch { /* already closed */ }
+      inFlight.current = false;
       setBusy(false);
     }
   }
