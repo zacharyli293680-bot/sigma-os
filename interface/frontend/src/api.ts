@@ -19,6 +19,7 @@ export type Fleet = {
 export type VaultTask = {
   text: string; due: string; priority: number | null;
   overdue: boolean; file: string; line: number;
+  raw: string;   // the exact line — handed back to toggle as the staleness check
 };
 export type Tasks = { today: string; block: string | null; tasks: VaultTask[] };
 
@@ -43,9 +44,25 @@ export type Project = {
 export type Projects = { projects: Project[] };
 
 export type Window_ = {
-  known: boolean; percent: number | null; reserved: number | null; note: string;
+  // "proxy" since Phase 4: observed spend + the last rate-limit event. Never
+  // true — real headroom is not exposed by anything, and the UI must not
+  // render a proxy as a percentage.
+  known: boolean | "proxy"; percent: number | null;
+  calls?: number; cost_usd?: number | null;
+  last_rate_limit?: string | null;
+  paused?: boolean; resume_at?: string | null;
+  reserved: string | number | null; note: string;
   vault: string;   // the vault's real name — obsidian:// links must not guess it
 };
+
+export type LedgerEntry = {
+  ts: string; actor: string;
+  action: "create" | "update" | "toggle" | "revert" | "append";
+  target: string; sha: string | null; summary: string;
+  reverted: boolean;
+  extra?: { proposal?: string; reverts?: string; line?: number; absorbed?: boolean };
+};
+export type Activity = { entries: LedgerEntry[] };
 
 export type GraphNode = {
   id: string; label: string; bucket: string;
@@ -69,9 +86,10 @@ export type Job = {
 
 export type ProgressResult = {
   ok: boolean; seconds: number; proposals: number; error: string | null;
+  applied?: number; held?: number;
 };
 export type Progress = {
-  state: "running" | "done";
+  state: "running" | "done" | "paused";
   note: string | null;
   run_started: string;
   queue: string[];
@@ -82,6 +100,8 @@ export type Progress = {
   stopped_early: boolean;
   finished: string | null;
   updated: string;
+  degraded?: boolean;       // running on Haiku — the arcs render hollow
+  resume_at?: string | null;
 };
 
 export async function get<T>(path: string): Promise<T> {
@@ -89,6 +109,30 @@ export async function get<T>(path: string): Promise<T> {
   const r = await fetch(`${API}/api/${path}`, { signal: AbortSignal.timeout(20_000) });
   if (!r.ok) throw new Error(`${path}: ${r.status}`);
   return r.json();
+}
+
+/** The mutation layer (Phase 4). A failed write carries the server's error
+ *  word — "stale", "busy", "conflict", "sealed path" — so a row can react
+ *  precisely instead of showing one generic failure. */
+export class ApiError extends Error {
+  status: number; code: string; detail?: string;
+  constructor(status: number, code: string, detail?: string) {
+    super(detail || code);
+    this.status = status; this.code = code; this.detail = detail;
+  }
+}
+
+export async function post<T>(path: string, body: unknown): Promise<T> {
+  const r = await fetch(`${API}/api/${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(30_000),
+  });
+  let data: { error?: string; detail?: string } | null = null;
+  try { data = await r.json(); } catch { /* empty body */ }
+  if (!r.ok) throw new ApiError(r.status, data?.error ?? String(r.status), data?.detail);
+  return data as T;
 }
 
 /** "9h" / "3d" / "now" — panel rows want age, not timestamps. */

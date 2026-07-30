@@ -5,8 +5,9 @@
  * colour, and text wears ink tokens rather than accent colours. The window
  * meter renders its own ignorance honestly (§8 — no data source yet).
  */
-import { obsidianHref, rel } from "./api";
-import type { Fleet, Health, Project, Proposals, Tasks, Window_ } from "./api";
+import { useState } from "react";
+import { ApiError, obsidianHref, post, rel } from "./api";
+import type { Fleet, Health, Project, Proposals, Tasks, VaultTask, Window_ } from "./api";
 
 export function Panel({ label, children, className = "" }: {
   label: string; children: React.ReactNode; className?: string;
@@ -46,9 +47,16 @@ export function TopStrip({ health, window: win, block, clock, onHealthClick }: {
               title={tooltip}>
         <span className="glyph">{state[0]}</span> {state[1]}
       </button>
-      <span className="meter" title={win?.note ?? "window meter"}>
-        <span className="meter-bar unknown" aria-hidden="true" />
-        window {win?.known && win.percent != null ? `${win.percent}%` : "— unknown"}
+      <span className={`meter ${win?.paused || win?.last_rate_limit ? "warn" : ""}`}
+            title={[win?.note,
+                    win?.cost_usd != null ? `~$${win.cost_usd} notional this window` : null,
+                    win?.reserved ? `reserved: ${win.reserved}` : null]
+                   .filter(Boolean).join("\n") || "window meter"}>
+        {!win ? "window —"
+          : win.paused ? `window PAUSED${win.resume_at ? ` · resumes ~${win.resume_at.slice(11, 16)}` : ""}`
+          : win.last_rate_limit ? `window limited · hit ${rel(win.last_rate_limit)} ago`
+          : win.known === "proxy" ? `window ok · ${win.calls ?? 0} calls/5h`
+          : "window — unknown"}
       </span>
       <span className="block" title="from today's daily note">
         {block ?? "no daily note yet"}
@@ -127,20 +135,59 @@ export function WaitingPanel({ proposals, vault }: { proposals: Proposals | null
   );
 }
 
-export function TodayPanel({ tasks, vault }: { tasks: Tasks | null; vault: string }) {
+export function TodayPanel({ tasks, vault, onMutate }: {
+  tasks: Tasks | null; vault: string; onMutate: () => void;
+}) {
+  // Optimistic, with rollback: ☐ → ◌ while the write is in flight, ☑ on
+  // success (the refetch then drops the row — done tasks live in the notes,
+  // not here), back to ☐ with the reason on failure. "stale" also refetches:
+  // the note moved underneath the panel, so the panel is what must change.
+  const [state, setState] = useState<Record<string, "busy" | "done">>({});
+  const [errs, setErrs] = useState<Record<string, string>>({});
   if (!tasks) return <Panel label="TODAY"><p className="dim">loading…</p></Panel>;
+  const keyOf = (t: VaultTask) => `${t.file}:${t.line}`;
+
+  async function tick(t: VaultTask) {
+    const k = keyOf(t);
+    if (state[k]) return;
+    setState(s => ({ ...s, [k]: "busy" }));
+    setErrs(({ [k]: _drop, ...rest }) => rest);
+    try {
+      await post("tasks/toggle", { file: t.file, line: t.line, raw: t.raw, done: true });
+      setState(s => ({ ...s, [k]: "done" }));
+      onMutate();
+    } catch (e) {
+      setState(({ [k]: _drop, ...rest }) => rest);
+      const msg = e instanceof ApiError
+        ? (e.code === "stale" ? "the note changed — list refreshed" : e.detail || e.code)
+        : "backend unreachable";
+      setErrs(prev => ({ ...prev, [k]: msg }));
+      if (e instanceof ApiError && e.code === "stale") onMutate();
+    }
+  }
+
   const soon = tasks.tasks.filter(t => t.overdue || t.due <= tasks.today);
   const upcoming = tasks.tasks.filter(t => !soon.includes(t)).slice(0, 6);
   const hidden = tasks.tasks.length - soon.length - upcoming.length;
-  const row = (t: Tasks["tasks"][number]) => (
-    <li key={`${t.file}:${t.line}`} className={t.overdue ? "overdue" : ""}>
-      <a href={obsidianHref(vault, t.file.replace(/\.md$/, ""))}
-         title={`${t.file}:${t.line} — checkbox ticking arrives in Phase 4`}>
-        <span className="box">☐</span>
-        <span className="due-date">{t.due.slice(5)}{t.overdue ? " !" : ""}</span> {t.text}
-      </a>
-    </li>
-  );
+  const row = (t: VaultTask) => {
+    const k = keyOf(t);
+    const st = state[k];
+    return (
+      <li key={k} className={`task-row ${t.overdue ? "overdue" : ""}`}>
+        <button className={`box ${st ?? ""}`} disabled={!!st} onClick={() => tick(t)}
+                title={st === "done"
+                  ? "ticked — one commit of its own, revertible in the ledger (Ctrl+J)"
+                  : "tick it — writes to the note as its own revertible commit"}>
+          {st === "done" ? "☑" : st === "busy" ? "◌" : "☐"}
+        </button>
+        <a href={obsidianHref(vault, t.file.replace(/\.md$/, ""))}
+           title={`${t.file}:${t.line}`}>
+          <span className="due-date">{t.due.slice(5)}{t.overdue ? " !" : ""}</span> {t.text}
+        </a>
+        {errs[k] && <span className="row-err">{errs[k]}</span>}
+      </li>
+    );
+  };
   return (
     <Panel label="TODAY" className="today">
       {soon.length === 0 && <p className="allclear">✓ nothing due today</p>}
@@ -209,21 +256,24 @@ export function FleetDetail({ fleet }: { fleet: Fleet | null }) {
 
 // ---------------------------------------------------------------- foot
 
-export function Foot({ activity, onChat, onBrain, onPalette }: {
+export function Foot({ activity, onChat, onBrain, onPalette, onLedger }: {
   activity: { text: string; live: boolean };
-  onChat: () => void; onBrain: () => void; onPalette: () => void;
+  onChat: () => void; onBrain: () => void; onPalette: () => void; onLedger: () => void;
 }) {
   // The hints are also the buttons — Chrome sometimes eats Ctrl+G/Ctrl+K, so
-  // every keystroke has a clickable twin.
+  // every keystroke has a clickable twin. The dock is a door too: clicking
+  // what-is-happening opens the full ledger of what happened.
   return (
     <footer className="foot">
       <span className="foot-keys">
         <button onClick={onPalette}><kbd>Ctrl</kbd>+<kbd>K</kbd> palette</button> ·{" "}
         <button onClick={onChat}><kbd>Ctrl</kbd>+<kbd>/</kbd> chat</button> ·{" "}
         <button onClick={onBrain}><kbd>Ctrl</kbd>+<kbd>G</kbd> brain</button> ·{" "}
+        <button onClick={onLedger}><kbd>Ctrl</kbd>+<kbd>J</kbd> ledger</button> ·{" "}
         <kbd>Esc</kbd> back
       </span>
-      <span className={`dock ${activity.live ? "live" : "dim"}`}>{activity.text}</span>
+      <button className={`dock ${activity.live ? "live" : "dim"}`} onClick={onLedger}
+              title="open the activity ledger (Ctrl+J)">{activity.text}</button>
     </footer>
   );
 }

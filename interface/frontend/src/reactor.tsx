@@ -61,6 +61,8 @@ export default function Reactor({ fleet, progress, waitingCount }: {
   const fresh = progressFresh(progress);
   const stalled = progress?.state === "running" && !fresh;
   const running = progress?.state === "running" && fresh;
+  const paused = progress?.state === "paused";
+  const degraded = !!progress?.degraded && (running || paused);
   const elapsed = useElapsed(running ? progress!.current_started : null);
 
   if (!fleet) return <Panel label="FLEET" className="center"><p className="dim">loading…</p></Panel>;
@@ -102,6 +104,7 @@ export default function Reactor({ fleet, progress, waitingCount }: {
       (fleet.task_installed ? " · scheduled daily 09:00" : " · NOT SCHEDULED");
 
   const coreWord = running ? progress!.current ?? "…"
+    : paused ? "PAUSED"
     : stalled ? "STALLED"
     : fleet.stopped_early_at ? "STOPPED"
     : anyFault ? "FAULT" : "IDLE";
@@ -118,7 +121,9 @@ export default function Reactor({ fleet, progress, waitingCount }: {
             const mid = (a0 + a1) / 2;
             const [lx, ly] = polar(130, 130, 116, mid);
             return (
-              <g key={key} className={`arc ${st}`}>
+              // `hollow` renders the §8 degrade visibly: still working, but on
+              // Haiku — a quality drop you can see while it happens.
+              <g key={key} className={`arc ${st} ${degraded ? "hollow" : ""}`}>
                 <path d={arcPath(130, 130, 92, a0, a1)} className="arc-base" />
                 {st === "running" && (
                   <path d={arcPath(130, 130, 92, a0, a1)} className="arc-sweep"
@@ -141,11 +146,19 @@ export default function Reactor({ fleet, progress, waitingCount }: {
         {progress?.state === "done" && progress.note && !running && (
           <div className="dim center-note">last scheduled pass: {progress.note} ({rel(progress.finished)} ago)</div>
         )}
+        {degraded && running && (
+          <p className="warn-line">running degraded (haiku) — the window is tight</p>
+        )}
+        {paused && (
+          <p className="warn-line">paused — window exhausted
+            {progress?.resume_at ? ` · resumes ~${progress.resume_at.slice(11, 16)}` : ""};
+            the rest stay due</p>
+        )}
         {stalled && (
           <p className="warn-line">a run reported "running" but its heartbeat is stale —
             it likely crashed; check fleet.log</p>
         )}
-        {fleet.stopped_early_at && (
+        {!paused && fleet.stopped_early_at && (
           <p className="warn-line">last run stopped early on a rate limit ({rel(fleet.stopped_early_at)} ago)</p>
         )}
       </div>
@@ -166,9 +179,18 @@ export function activityLine(fleet: Fleet | null, progress: Progress | null,
       live: true,
     };
   }
+  if (progress?.state === "paused") {
+    return {
+      text: `⏸ paused — window exhausted` +
+            (progress.resume_at ? ` · resumes ~${progress.resume_at.slice(11, 16)}` : ""),
+      live: false,
+    };
+  }
   if (progress?.state === "done") {
     const bits = Object.entries(progress.results)
-      .map(([k, r]) => `${k} ${r.ok ? "✓" : "✗"}${r.proposals ? ` +${r.proposals}` : ""}`);
+      .map(([k, r]) => `${k} ${r.ok ? "✓" : "✗"}` +
+                       (r.applied ? ` ✎${r.applied}` : r.proposals ? ` +${r.proposals}` : "") +
+                       (r.held ? ` ⚠${r.held} held` : ""));
     return {
       text: `last run ${rel(progress.finished)} ago · ` +
             (bits.length ? bits.join(" · ") : progress.note ?? "done") +

@@ -13,6 +13,7 @@ import { API, get } from "./api";
 import type { Fleet, Health, Job, Progress, Projects, Proposals, Tasks, Window_ } from "./api";
 import Brain from "./brain";
 import ChatDrawer from "./chat";
+import Ledger from "./ledger";
 import Palette from "./palette";
 import { FleetDetail, Foot, Panel, ProjectsPanel, Rail, TodayPanel, TopStrip, WaitingPanel } from "./panels";
 import Reactor, { activityLine, useElapsed } from "./reactor";
@@ -42,6 +43,7 @@ export default function App() {
   const [chatOpen, setChatOpen] = useState(false);
   const [brainOpen, setBrainOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [ledgerOpen, setLedgerOpen] = useState(false);
   const [job, setJob] = useState<Job | null>(null);
   const fireRef = useRef<((detail: string) => void) | null>(null);
   const clock = useClock();
@@ -87,7 +89,8 @@ export default function App() {
   // refetch immediately rather than waiting out the minute.
   const prevRunState = useRef<string | null>(null);
   useEffect(() => {
-    if (prevRunState.current === "running" && progress?.state === "done") refresh();
+    if (prevRunState.current === "running" &&
+        (progress?.state === "done" || progress?.state === "paused")) refresh();
     prevRunState.current = progress?.state ?? null;
   }, [progress, refresh]);
 
@@ -101,16 +104,20 @@ export default function App() {
       } else if (e.ctrlKey && (e.key === "g" || e.key === "G")) {
         e.preventDefault();
         setBrainOpen(o => !o);
+      } else if (e.ctrlKey && (e.key === "j" || e.key === "J")) {
+        e.preventDefault();
+        setLedgerOpen(o => !o);
       } else if (e.key === "Escape") {
-        // Esc peels one layer: palette, then the drawer, then the brain.
+        // Esc peels one layer: palette, ledger, the drawer, then the brain.
         if (paletteOpen) setPaletteOpen(false);
+        else if (ledgerOpen) setLedgerOpen(false);
         else if (chatOpen) setChatOpen(false);
         else setBrainOpen(false);
       }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [paletteOpen, chatOpen]);
+  }, [paletteOpen, ledgerOpen, chatOpen]);
 
   // Palette jobs stream here and take over the dock while they run; when one
   // finishes, the panels it may have changed refetch immediately.
@@ -163,7 +170,7 @@ export default function App() {
       <Reactor fleet={fleet ?? null} progress={progress} waitingCount={waitingCount} />
       <div className="right">
         <WaitingPanel proposals={proposals ?? null} vault={vault} />
-        <TodayPanel tasks={tasks ?? null} vault={vault} />
+        <TodayPanel tasks={tasks ?? null} vault={vault} onMutate={refresh} />
       </div>
       <div className="lower">
         <ProjectsPanel projects={projects?.projects ?? null} vault={vault} />
@@ -172,8 +179,11 @@ export default function App() {
       <Foot activity={dock}
             onChat={() => setChatOpen(o => !o)}
             onBrain={() => setBrainOpen(o => !o)}
-            onPalette={() => setPaletteOpen(o => !o)} />
+            onPalette={() => setPaletteOpen(o => !o)}
+            onLedger={() => setLedgerOpen(o => !o)} />
       <Brain open={brainOpen} vault={vault} fireRef={fireRef} />
+      <Ledger open={ledgerOpen} vault={vault} onClose={() => setLedgerOpen(false)}
+              onMutate={refresh} />
       <Palette open={paletteOpen} onClose={() => setPaletteOpen(false)}
                onLaunched={() => {}} />
       <ChatDrawer open={chatOpen} vault={vault} onClose={() => setChatOpen(false)}
