@@ -446,11 +446,22 @@ def _ledger_commit(rel: str, message: str, action: str, title: str, proposal: st
         return None
 
 def proposal_content(text: str) -> str:
-    """The exact payload to write: the first fenced block after the marker."""
+    """The exact payload to write: the fenced block after the marker.
+
+    Greedy to the LAST fence close before "## How to approve", not lazy to the
+    first: proposed notes legitimately contain fences of their own (the first
+    real daily-note proposal embedded a ```dataview block), and the lazy match
+    silently truncated the payload at the nested fence — an auto-applied note
+    would have been gutted mid-section. Bounded at the approve heading so the
+    stamps appended below a proposal never leak into the payload."""
     i = text.find(CONTENT_MARKER)
     if i == -1:
         return ""
-    m = re.search(r"```[a-z]*\n(.*?)\n```", text[i:], re.S)
+    seg = text[i:]
+    j = seg.find("## How to approve")
+    if j != -1:
+        seg = seg[:j]
+    m = re.search(r"```[a-z]*\n(.*)\n```", seg, re.S)
     return m.group(1) if m else ""
 
 

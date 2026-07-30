@@ -99,7 +99,8 @@ VERBS: dict = {
 
 DISABLED = [
     {"verb": "reflect-merge", "title": "Reflect — merge a staged change",
-     "reason": "the one operation that overwrites a note — Phase 4 brings the diff UI"},
+     "reason": "overwrites a note; stays in the terminal (reflect-diff first) — "
+               "merges now land in the ledger, revertible like everything else"},
     {"verb": "install", "title": "Install hooks & schedules",
      "reason": "system configuration stays in the terminal"},
     {"verb": "ui", "title": "Start the interface",

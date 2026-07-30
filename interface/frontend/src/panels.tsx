@@ -54,7 +54,9 @@ export function TopStrip({ health, window: win, block, clock, onHealthClick }: {
                    .filter(Boolean).join("\n") || "window meter"}>
         {!win ? "window —"
           : win.paused ? `window PAUSED${win.resume_at ? ` · resumes ~${win.resume_at.slice(11, 16)}` : ""}`
-          : win.last_rate_limit ? `window limited · hit ${rel(win.last_rate_limit)} ago`
+          : win.last_rate_limit ? (rel(win.last_rate_limit) === "now"
+              ? "window limited · just hit"
+              : `window limited · hit ${rel(win.last_rate_limit)} ago`)
           : win.known === "proxy" ? `window ok · ${win.calls ?? 0} calls/5h`
           : "window — unknown"}
       </span>

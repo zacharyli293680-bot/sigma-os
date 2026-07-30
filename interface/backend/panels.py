@@ -227,7 +227,8 @@ def _scan_tasks() -> dict:
     try:
         for line in daily.read_text(encoding="utf-8").splitlines():
             if line.startswith(">") and "📚" in line:
-                block = line.lstrip("> ").strip("* ").strip()
+                # bold markers render literally in a <span>, so they go
+                block = line.lstrip("> ").replace("**", "").strip("* ").strip()
                 break
     except OSError:
         pass
