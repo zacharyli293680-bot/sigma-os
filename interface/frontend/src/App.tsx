@@ -10,9 +10,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./App.css";
 import { API, get } from "./api";
-import type { Fleet, Health, Progress, Projects, Proposals, Tasks, Window_ } from "./api";
+import type { Fleet, Health, Job, Progress, Projects, Proposals, Tasks, Window_ } from "./api";
 import Brain from "./brain";
 import ChatDrawer from "./chat";
+import Palette from "./palette";
 import { FleetDetail, Foot, Panel, ProjectsPanel, Rail, TodayPanel, TopStrip, WaitingPanel } from "./panels";
 import Reactor, { activityLine, useElapsed } from "./reactor";
 
@@ -37,6 +38,8 @@ export default function App() {
   const [progress, setProgress] = useState<Progress | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
   const [brainOpen, setBrainOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [job, setJob] = useState<Job | null>(null);
   const fireRef = useRef<((detail: string) => void) | null>(null);
   const clock = useClock();
 
@@ -85,26 +88,56 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.key === "/") { e.preventDefault(); setChatOpen(o => !o); }
-      else if (e.ctrlKey && (e.key === "g" || e.key === "G")) {
+      else if (e.ctrlKey && (e.key === "k" || e.key === "K")) {
+        e.preventDefault();
+        setPaletteOpen(o => !o);
+      } else if (e.ctrlKey && (e.key === "g" || e.key === "G")) {
         e.preventDefault();
         setBrainOpen(o => !o);
       } else if (e.key === "Escape") {
-        // Esc peels one layer: the drawer first, then the brain, then overview.
-        setChatOpen(open => {
-          if (!open) setBrainOpen(false);
-          return false;
-        });
+        // Esc peels one layer: palette, then the drawer, then the brain.
+        if (paletteOpen) setPaletteOpen(false);
+        else if (chatOpen) setChatOpen(false);
+        else setBrainOpen(false);
       }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
+  }, [paletteOpen, chatOpen]);
+
+  // Palette jobs stream here and take over the dock while they run; when one
+  // finishes, the panels it may have changed refetch immediately.
+  useEffect(() => {
+    const es = new EventSource(`${API}/api/commands/events`);
+    es.onmessage = e => {
+      try { setJob(JSON.parse(e.data)); } catch { /* torn event */ }
+    };
+    return () => es.close();
   }, []);
+  const prevJobState = useRef<string | null>(null);
+  useEffect(() => {
+    if (prevJobState.current === "running" && job && job.state !== "running") {
+      refresh();
+      checkHealth();
+    }
+    prevJobState.current = job?.state ?? null;
+  }, [job, refresh, checkHealth]);
 
   const vault = health?.vault ? health.vault.split(/[\\/]/).pop() || "" : "Obsidian Vault";
   const waitingCount = proposals
     ? proposals.pending.length + proposals.approved.length + proposals.staged.length
     : 0;
   const dockElapsed = useElapsed(progress?.state === "running" ? progress.current_started : null);
+
+  // Dock priority: a palette job running now, a job finished in the last
+  // minute-and-a-half, then the fleet's own line.
+  const jobRecent = job?.finished
+    && Date.now() - new Date(job.finished).getTime() < 90_000;
+  const dock = job && job.state === "running"
+    ? { text: `⌘ ${job.verb} · ${job.lines[job.lines.length - 1] ?? "starting…"}`, live: true }
+    : job && jobRecent
+    ? { text: `⌘ ${job.verb} ${job.state === "done" ? "✓" : "✗ failed"} · ${job.lines[job.lines.length - 1] ?? ""}`, live: false }
+    : activityLine(fleet, progress, dockElapsed);
 
   return (
     <div className="shell">
@@ -120,8 +153,13 @@ export default function App() {
         <ProjectsPanel projects={projects?.projects ?? null} vault={vault} />
         <FleetDetail fleet={fleet} />
       </div>
-      <Foot activity={activityLine(fleet, progress, dockElapsed)} />
+      <Foot activity={dock}
+            onChat={() => setChatOpen(o => !o)}
+            onBrain={() => setBrainOpen(o => !o)}
+            onPalette={() => setPaletteOpen(o => !o)} />
       <Brain open={brainOpen} vault={vault} fireRef={fireRef} />
+      <Palette open={paletteOpen} onClose={() => setPaletteOpen(false)}
+               onLaunched={() => {}} />
       <ChatDrawer open={chatOpen} vault={vault} onClose={() => setChatOpen(false)}
                   onTool={d => fireRef.current?.(d)} />
       {!chatOpen && (

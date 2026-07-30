@@ -55,6 +55,17 @@ export type Graph = {
   nodes: GraphNode[]; links: [number, number][];
 };
 
+export type CommandInfo = {
+  verb: string; title: string; hint: string;
+  writes: boolean; model: boolean; enabled: boolean;
+};
+export type Job = {
+  verb: string; title: string;
+  state: "running" | "done" | "failed";
+  started: string; finished: string | null;
+  exit: number | null; lines: string[];
+};
+
 export type ProgressResult = {
   ok: boolean; seconds: number; proposals: number; error: string | null;
 };

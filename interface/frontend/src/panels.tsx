@@ -202,10 +202,20 @@ export function FleetDetail({ fleet }: { fleet: Fleet | null }) {
 
 // ---------------------------------------------------------------- foot
 
-export function Foot({ activity }: { activity: { text: string; live: boolean } }) {
+export function Foot({ activity, onChat, onBrain, onPalette }: {
+  activity: { text: string; live: boolean };
+  onChat: () => void; onBrain: () => void; onPalette: () => void;
+}) {
+  // The hints are also the buttons — Chrome sometimes eats Ctrl+G/Ctrl+K, so
+  // every keystroke has a clickable twin.
   return (
     <footer className="foot">
-      <span><kbd>Ctrl</kbd>+<kbd>/</kbd> chat · <kbd>Ctrl</kbd>+<kbd>G</kbd> brain · <kbd>Esc</kbd> overview</span>
+      <span className="foot-keys">
+        <button onClick={onPalette}><kbd>Ctrl</kbd>+<kbd>K</kbd> palette</button> ·{" "}
+        <button onClick={onChat}><kbd>Ctrl</kbd>+<kbd>/</kbd> chat</button> ·{" "}
+        <button onClick={onBrain}><kbd>Ctrl</kbd>+<kbd>G</kbd> brain</button> ·{" "}
+        <kbd>Esc</kbd> back
+      </span>
       <span className={`dock ${activity.live ? "live" : "dim"}`}>{activity.text}</span>
     </footer>
   );
