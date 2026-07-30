@@ -1,0 +1,7 @@
+{
+  "_comment": "Model-boundary exceptions. Vault-relative path prefixes that are gitignored (never sync) but that the model MAY read - use when an agreement permits AI tools on material you still keep off your remote. Case-insensitive prefix match. Empty list = the original rule: if git will not sync it, the model does not see it.",
+  "model_allow": [
+    "02-Areas/ClientName/",
+    "03-Projects/clientname-project/"
+  ]
+}

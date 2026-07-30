@@ -306,6 +306,21 @@ def check_privacy(out):
         out.append((TODO, "vault pre-push privacy guard is not installed",
                     "python install_hooks.py"))
 
+    # Option B (2026-07-30): the model boundary can carry explicit exemptions
+    # for gitignored paths. That list is exactly the kind of second declaration
+    # that drifts, so it is surfaced in every session rather than trusted —
+    # if this line ever names something unexpected, that is the drift.
+    try:
+        cfg = json.loads(Path(__file__).resolve().with_name("privacy.config.json")
+                         .read_text(encoding="utf-8"))
+        allow = [str(p) for p in cfg.get("model_allow", []) if str(p).strip()]
+        if allow:
+            out.append((OK, f"model boundary: {len(allow)} gitignored path(s) "
+                            f"exempted for the model ({', '.join(allow)}) - "
+                            f"none of them sync", None))
+    except Exception:
+        pass                      # no config or unreadable = no exemptions
+
 
 def check_fleet(out):
     """Phase 4: is each specialist still running, and did any of them stall?

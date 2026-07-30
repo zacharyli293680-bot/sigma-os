@@ -34,6 +34,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from agent import VAULT
+from privacy import is_model_allowed
 
 # The runtime modules own the facts these panels display; recomputing them here
 # would be a second copy that can disagree (the watchdog's cardinal rule).
@@ -77,11 +78,14 @@ def _git(args: list, cwd: Path) -> str | None:
 
 
 def _gitignored(paths: list) -> set:
-    """Which of these vault-relative paths are gitignored — one subprocess for
-    the whole batch. Fails closed: if git cannot answer, everything is treated
-    as ignored, because the unsafe direction is showing sealed material."""
+    """Which of these vault-relative paths are *sealed* — gitignored and not
+    exempted at the model boundary (privacy.config.json, Option B 2026-07-30).
+    One subprocess for the whole batch. Fails closed: if git cannot answer,
+    everything non-exempt is treated as sealed, because the unsafe direction
+    is showing sealed material."""
     if not paths:
         return set()
+    ignored = set(paths)
     try:
         # -z (NUL-separated) is not cosmetic: in text mode Windows rewrites
         # "\n" to "\r\n" on stdin, so newline-separated paths reach git with a
@@ -91,10 +95,10 @@ def _gitignored(paths: list) -> set:
                            text=True, timeout=15)
         # exit 0 = some ignored, 1 = none ignored; anything else is failure
         if r.returncode in (0, 1):
-            return {s for s in r.stdout.split("\0") if s}
+            ignored = {s for s in r.stdout.split("\0") if s}
     except Exception:
         pass
-    return set(paths)
+    return {s for s in ignored if not is_model_allowed(s)}
 
 
 def _rel(p: Path) -> str:

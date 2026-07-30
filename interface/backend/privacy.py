@@ -7,21 +7,49 @@ carve-out that keeps internship notes off GitHub is written there, and the
 pre-push hook enforces it at the *push* boundary. This module enforces the same
 declaration at the *model* boundary.
 
-One rule, stated once, holds in both directions:
+The original rule, stated once, held in both directions:
 
     if git will not sync it, the model does not see it.
 
-That matters because the two boundaries are not the same. Those notes sit on
-disk, readable, inside the very folder the agent is pointed at — so a question
-like "what am I working on?" would happily read them and ship them to the API,
-quietly undoing a decision that cost a history rewrite to make. Reusing
-`.gitignore` rather than keeping a second list is the point: a list that has to
-be maintained in parallel is a list that drifts, and this one would drift
-silently and in the unsafe direction.
+**Amended 2026-07-30 (Option B):** the two boundaries are now deliberately
+decoupled. Zach's internship agreement permits AI tools, so the ProCertus
+material may reach the model — but it still must never reach his personal
+GitHub, so it stays gitignored and the push boundary is untouched. The
+exception is an explicit `model_allow` prefix list in
+`runtime/privacy.config.json` (gitignored, like every config that names the
+client). Everything gitignored and *not* listed stays refused, fail-closed.
+
+That list is exactly the "second list that can drift" the original design
+refused, so the drift is made visible instead of trusted: the watchdog reports
+the active exemptions in every session's context, and an unreadable config
+means no exemptions at all — the failure direction is over-blocking, which is
+loud, never under-blocking, which is silent.
 """
+import json
 import subprocess
 from functools import lru_cache
 from pathlib import Path
+
+_RUNTIME = Path(__file__).resolve().parents[2] / "runtime"
+
+
+@lru_cache(maxsize=1)
+def model_allow_prefixes() -> tuple:
+    """The model-boundary exemptions, loaded once per process. A missing or
+    broken config yields no exemptions — never a wider opening."""
+    try:
+        cfg = json.loads((_RUNTIME / "privacy.config.json").read_text(encoding="utf-8"))
+        return tuple(str(p).replace("\\", "/").strip("/").lower()
+                     for p in cfg.get("model_allow", []) if str(p).strip())
+    except Exception:
+        return ()
+
+
+def is_model_allowed(rel_posix: str) -> bool:
+    """May this vault-relative (gitignored) path reach the model / the panels?
+    Exact file match, or anything under a listed directory."""
+    r = rel_posix.replace("\\", "/").strip("/").lower()
+    return any(r == p or r.startswith(p + "/") for p in model_allow_prefixes())
 
 # Tools whose arguments name a path we must vet before the model sees the result.
 PATH_ARGS = {
@@ -79,6 +107,11 @@ class VaultPrivacy:
             return "that path is outside the vault"
 
         if self._git_ignored(str(self.vault), rel.as_posix()):
+            if is_model_allowed(rel.as_posix()):
+                # Option B (2026-07-30): explicitly exempted at the model
+                # boundary while staying gitignored — it may be read, and it
+                # still never syncs.
+                return None
             return ("that path is excluded from the vault's git repo, which marks "
                     "it as local-only material that must not be sent to a model")
         return None
