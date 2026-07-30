@@ -27,6 +27,12 @@ from pydantic import BaseModel
 
 from agent import VAULT, build_options
 
+# Module scope, not per-request: the old in-handler insert ran on a threadpool
+# and could double-insert under concurrent calls.
+_RUNTIME_DIR = str(Path(__file__).resolve().parents[2] / "runtime")
+if _RUNTIME_DIR not in sys.path:
+    sys.path.insert(0, _RUNTIME_DIR)
+
 # The SDK warns (CanUseToolShadowedWarning) when an option would bypass the
 # permission callback. That warning is the difference between a privacy guard
 # and the appearance of one — make it impossible to miss.
@@ -161,17 +167,31 @@ async def api_ask(ask: Ask):
     )
 
 
+_health_cache = {"at": 0.0, "value": None}
+
+
 @app.get("/api/health")
 def api_health():
-    """Sigma's own watchdog, surfaced to the UI — same checks, same source."""
-    runtime = str(Path(__file__).resolve().parents[2] / "runtime")
-    if runtime not in sys.path:                 # once — not once per request
-        sys.path.insert(0, runtime)
+    """Sigma's own watchdog, surfaced to the UI — same checks, same source.
+
+    Cached for 60s: doctor.collect() spawns schtasks and git subprocesses and
+    may spend a real model call on the auth probe, so it must not run once per
+    browser event (the UI re-checks after palette jobs, and each check was
+    running the whole suite again).
+    """
+    import time as _time
+    now = _time.monotonic()
+    if _health_cache["value"] is not None and now - _health_cache["at"] < 60:
+        return _health_cache["value"]
     import doctor
     findings = [{"level": lv, "what": w, "fix": f} for lv, w, f in doctor.collect()]
-    return {"vault": str(VAULT),
-            "ok": all(f["level"] == "ok" for f in findings),
-            "findings": findings}
+    # "info" findings (e.g. the standing model-boundary exemptions) are facts,
+    # not problems — only alert/todo may cost the all-clear.
+    result = {"vault": str(VAULT),
+              "ok": not any(f["level"] in ("alert", "todo") for f in findings),
+              "findings": findings}
+    _health_cache.update(at=now, value=result)
+    return result
 
 
 # The dashboard's read-only panel endpoints (Phase 0 of the dashboard plan).
@@ -180,8 +200,15 @@ from panels import router as panels_router  # noqa: E402
 app.include_router(panels_router)
 
 # The palette's whitelisted command runner (Phase 3).
-from commands import router as commands_router  # noqa: E402
-app.include_router(commands_router)
+import commands  # noqa: E402
+app.include_router(commands.router)
+
+
+@app.on_event("shutdown")
+async def _shutdown_job():
+    # A dying server must not orphan a live job's process tree (the claude
+    # CLI would keep spending window with nothing recording the result).
+    commands.kill_current_job("server shut down while this job was running")
 
 
 # --------------------------------------------------------------------------

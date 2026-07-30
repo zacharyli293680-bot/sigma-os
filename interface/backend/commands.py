@@ -23,6 +23,7 @@ boundary, a missing one leaves you guessing. Same doctrine as the sealed lane.
 import asyncio
 import datetime
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -55,7 +56,9 @@ VERBS: dict = {
                         "argv": _script("fleet.py", "--status"), "timeout": 60},
     "fleet-run":       {"title": "Fleet — run everything due",
                         "hint": "sequenced; the reactor shows it live",
-                        "argv": _script("fleet.py"), "timeout": 1800, "model": True},
+                        # 4 specialists × 420s + SDK cold starts; 1800 left a
+                        # legitimate full run ~2 minutes from being killed.
+                        "argv": _script("fleet.py"), "timeout": 2400, "model": True},
     "fleet-run-planner": {"title": "Fleet — run the planner now",
                           "hint": "today's plan as a daily-note proposal",
                           "argv": _script("fleet.py", "--only", "planner"),
@@ -106,9 +109,14 @@ DISABLED = [
 MAX_LINES = 400
 
 # The single job slot. `_rev` bumps on every mutation so the SSE feed knows
-# when to emit without diffing the whole record.
+# when to emit without diffing the whole record. `_task` is held on purpose:
+# a fire-and-forget task swallows its own exceptions, and a runner that dies
+# unseen leaves `_job` at "running" forever — every later POST 409s until
+# the server restarts. `_proc` is held so shutdown can kill a live job.
 _job: dict | None = None
 _rev = 0
+_task: asyncio.Task | None = None
+_proc = None
 
 
 def _bump():
@@ -116,10 +124,53 @@ def _bump():
     _rev += 1
 
 
-async def _run(verb: str, spec: dict):
+def _kill_tree(proc):
+    """Kill the job's whole process tree. proc.kill() alone reaches only the
+    direct child — the actual work (cli.py → fleet.py → the claude CLI) kept
+    running and, for fleet runs, kept the fleet.lock stranded."""
+    if proc is None or proc.returncode is not None:
+        return
+    try:
+        subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                       capture_output=True, timeout=15)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
+def kill_current_job(reason: str):
+    """Called from the server's shutdown hook so a dying uvicorn does not
+    orphan a live job's process tree."""
+    global _job
+    _kill_tree(_proc)
+    if _job and _job["state"] == "running":
+        _job.update(state="failed", exit=None,
+                    finished=datetime.datetime.now().isoformat(timespec="seconds"))
+        _job["lines"].append(reason)
+        _bump()
+
+
+def _finalise(task: asyncio.Task):
+    """Done-callback: whatever happens to the runner, `_job` must leave
+    "running" — a wedged slot is a wedged palette."""
     global _job
     try:
-        proc = await asyncio.create_subprocess_exec(
+        exc = task.exception()
+    except (asyncio.CancelledError, asyncio.InvalidStateError):
+        exc = None
+    if _job and _job["state"] == "running":
+        _job.update(state="failed", exit=None,
+                    finished=datetime.datetime.now().isoformat(timespec="seconds"))
+        _job["lines"].append(f"runner died: {exc!r}" if exc else "runner cancelled")
+        _bump()
+
+
+async def _run(spec: dict):
+    global _job, _proc
+    try:
+        _proc = proc = await asyncio.create_subprocess_exec(
             *spec["argv"], cwd=str(RUNTIME),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
     except Exception as e:
@@ -146,9 +197,9 @@ async def _run(verb: str, spec: dict):
         _job.update(state="done" if proc.returncode == 0 else "failed",
                     exit=proc.returncode)
     except asyncio.TimeoutError:
-        proc.kill()
+        _kill_tree(proc)
         _job.update(state="failed", exit=None)
-        _job["lines"].append(f"timed out after {spec['timeout']}s — killed")
+        _job["lines"].append(f"timed out after {spec['timeout']}s — process tree killed")
     _job["finished"] = datetime.datetime.now().isoformat(timespec="seconds")
     _bump()
 
@@ -176,11 +227,13 @@ async def api_run(verb: str):
     if _job and _job["state"] == "running":
         return JSONResponse({"error": "busy", "running": _job["verb"]},
                             status_code=409)
+    global _task
     _job = {"verb": verb, "title": spec["title"], "state": "running",
             "started": datetime.datetime.now().isoformat(timespec="seconds"),
             "finished": None, "exit": None, "lines": []}
     _bump()
-    asyncio.get_running_loop().create_task(_run(verb, spec))
+    _task = asyncio.get_running_loop().create_task(_run(spec))
+    _task.add_done_callback(_finalise)
     return {"started": verb}
 
 

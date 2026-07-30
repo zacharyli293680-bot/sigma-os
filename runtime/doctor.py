@@ -51,8 +51,11 @@ _AUTH_SIGNS = ("login", "log in", "authenticat", "unauthorized", "401",
 _NET_SIGNS = ("enotfound", "econnrefused", "etimedout", "econnreset",
               "getaddrinfo", "network", "socket hang up", "proxy")
 
-ALERT, TODO, OK = "alert", "todo", "ok"
-_ICON = {ALERT: "!!", TODO: "->", OK: "OK"}
+ALERT, TODO, INFO, OK = "alert", "todo", "info", "ok"
+_ICON = {ALERT: "!!", TODO: "->", INFO: "--", OK: "OK"}
+# INFO: shown even in --quiet (a standing fact worth seeing every session)
+# but not "actionable" — it must not make health read as needs-attention,
+# or the one colour that means act gets trained away.
 
 
 def _days_since(stamp: str):
@@ -300,7 +303,7 @@ def check_privacy(out):
             cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
             allow = [str(p) for p in cfg.get("model_allow", []) if str(p).strip()]
             if allow:
-                out.append((TODO, f"model boundary: {len(allow)} gitignored "
+                out.append((INFO, f"model boundary: {len(allow)} gitignored "
                                   f"path(s) exempted for the model "
                                   f"({', '.join(allow)}) - they never sync",
                             None))
@@ -433,14 +436,16 @@ def main():
                          indent=2))
         return 0
 
-    actionable = [f for f in findings if f[0] != OK]
+    actionable = [f for f in findings if f[0] not in (OK, INFO)]
+    notices = [f for f in findings if f[0] == INFO]
     if a.quiet:
-        if not actionable:
+        if not actionable and not notices:
             return 0
-        n_alert = sum(1 for l, _, _ in actionable if l == ALERT)
-        print(f"Sigma health: {n_alert} alert(s), "
-              f"{len(actionable) - n_alert} item(s) waiting on you.")
-        for level, what, fix in actionable:
+        if actionable:
+            n_alert = sum(1 for l, _, _ in actionable if l == ALERT)
+            print(f"Sigma health: {n_alert} alert(s), "
+                  f"{len(actionable) - n_alert} item(s) waiting on you.")
+        for level, what, fix in actionable + notices:
             print(f"  {_ICON[level]} {what}" + (f"   -> {fix}" if fix else ""))
         return 0
 

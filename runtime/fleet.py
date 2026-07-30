@@ -95,7 +95,10 @@ def _quiet_proactor_shutdown():
     _T.__del__ = _safe_del
 
 
-_quiet_proactor_shutdown()
+# Applied in main(), NOT at import: panels.py imports this module for facts,
+# and patching the proactor inside the uvicorn server would also silence the
+# Agent SDK's own transport errors on /api/ask — a silent failure installed
+# into the one process whose thesis is that silent failures are the enemy.
 
 
 # --------------------------------------------------------------------------
@@ -161,20 +164,31 @@ class Lock:
         self.path, self.stale_hours, self.held = path, stale_hours, False
 
     def __enter__(self):
-        if self.path.exists():
-            age = _hours_since((self._read() or {}).get("at"))
-            if age is not None and age < self.stale_hours:
-                return self                       # held elsewhere; held stays False
-            log(f"taking over a stale lock ({age:.1f}h old)" if age is not None
-                else "taking over an unreadable lock")
-        try:
-            self.path.write_text(json.dumps(
-                {"pid": os.getpid(),
-                 "at": datetime.datetime.now().isoformat(timespec="seconds")}),
-                encoding="utf-8")
-            self.held = True
-        except OSError as e:
-            log(f"could not take lock: {e}")
+        # Exclusive create ("x") is the actual mutual exclusion. The previous
+        # check-then-write left a window in which the 09:00 scheduled run and
+        # a palette-launched run could both pass the check — two concurrent
+        # fleets, the one thing this class exists to prevent.
+        for _attempt in (1, 2):
+            try:
+                with self.path.open("x", encoding="utf-8") as f:
+                    f.write(json.dumps(
+                        {"pid": os.getpid(),
+                         "at": datetime.datetime.now().isoformat(timespec="seconds")}))
+                self.held = True
+                return self
+            except FileExistsError:
+                age = _hours_since((self._read() or {}).get("at"))
+                if age is not None and age < self.stale_hours:
+                    return self               # genuinely held elsewhere
+                log(f"taking over a stale lock ({age:.1f}h old)" if age is not None
+                    else "taking over an unreadable lock")
+                try:
+                    self.path.unlink()        # then retry the exclusive create;
+                except OSError:               # losing that race means someone
+                    return self               # else took over — defer to them
+            except OSError as e:
+                log(f"could not take lock: {e}")
+                return self
         return self
 
     def _read(self):
@@ -337,6 +351,14 @@ def _is_rate_limited(result: dict) -> bool:
     if result.get("ok"):
         return False
     blob = (result.get("error") or "").lower()
+    # The SDK can error with no result text, leaving only the bare-subtype
+    # fallback, which names nothing — a rate limit would sail through and the
+    # fleet would burn the remaining specialists against a spent window. In
+    # that opaque case only, consult the model's own words too: an *errored*
+    # run's summary is evidence, an ok run's summary is prose (the earlier
+    # false-halt bug this function was fixed for).
+    if blob.startswith("result subtype:"):
+        blob += " " + (result.get("summary") or "").lower()
     return any(s in blob for s in ("rate limit", "rate_limit", "429",
                                    "usage limit", "quota", "overloaded"))
 
@@ -364,22 +386,23 @@ async def run_fleet(keys=None, force=False, dry_run=False) -> list:
             print(f"  (not due: {', '.join(skipped)})")
         return []
 
-    if not queue:
-        log("nothing due")
-        # Still a fact the dashboard should show: the 09:00 run that had
-        # nothing to do looks identical to one that never fired unless it says so.
-        write_progress({"state": "done", "note": "nothing due",
-                        "run_started": now.isoformat(timespec="seconds"),
-                        "queue": [], "current": None, "current_started": None,
-                        "results": {}, "stopped_early": False,
-                        "finished": datetime.datetime.now().isoformat(timespec="seconds")})
-        return []
-
     results = []
     with Lock(LOCK_PATH) as lock:
         if not lock.held:
             log("another fleet run is in progress - exiting rather than "
                 "running two specialists at once")
+            return []
+
+        if not queue:
+            log("nothing due")
+            # Still a fact the dashboard should show — but written INSIDE the
+            # lock: a nothing-due invocation racing a live run must not
+            # overwrite the live run's progress file mid-flight.
+            write_progress({"state": "done", "note": "nothing due",
+                            "run_started": now.isoformat(timespec="seconds"),
+                            "queue": [], "current": None, "current_started": None,
+                            "results": {}, "stopped_early": False,
+                            "finished": datetime.datetime.now().isoformat(timespec="seconds")})
             return []
 
         prog = {"state": "running", "note": None,
@@ -508,6 +531,7 @@ def install_schedule(time_of_day="09:00"):
 
 
 def main():
+    _quiet_proactor_shutdown()      # CLI/scheduled runs only — never on import
     ap = argparse.ArgumentParser(description="Run Sigma's specialist fleet, sequenced.")
     ap.add_argument("--only", action="append", metavar="KEY",
                     help=f"run just this specialist ({', '.join(sp.BY_KEY)}); repeatable")
