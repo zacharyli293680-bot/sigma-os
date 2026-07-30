@@ -51,6 +51,32 @@ def is_model_allowed(rel_posix: str) -> bool:
     r = rel_posix.replace("\\", "/").strip("/").lower()
     return any(r == p or r.startswith(p + "/") for p in model_allow_prefixes())
 
+
+def sealed_paths(vault: Path, rels: list) -> set:
+    """Batch form of the same boundary, for the dashboard panels: gitignored
+    minus the model-boundary exemptions. The single implementation — panels
+    must not grow their own copy with different failure semantics (they did
+    once, and the two disagreed about git exit 128).
+
+    utf-8 is explicit because the default is cp1252 on Windows, where one
+    emoji in a *filename* would raise on encode and silently seal everything.
+    NUL separation because text-mode newline translation broke this once.
+    Fails closed: if git cannot answer, everything non-exempt is sealed.
+    """
+    if not rels:
+        return set()
+    ignored = set(rels)
+    try:
+        r = subprocess.run(["git", "-C", str(vault), "check-ignore", "--stdin", "-z"],
+                           input="\0".join(rels), capture_output=True,
+                           text=True, encoding="utf-8", errors="replace",
+                           timeout=15)
+        if r.returncode in (0, 1):        # 0 = some ignored, 1 = none
+            ignored = {s for s in r.stdout.split("\0") if s}
+    except Exception:
+        pass
+    return {s for s in ignored if not is_model_allowed(s)}
+
 # Tools whose arguments name a path we must vet before the model sees the result.
 PATH_ARGS = {
     "Read": ("file_path",),
@@ -84,7 +110,14 @@ class VaultPrivacy:
             r = subprocess.run(
                 ["git", "-C", vault_str, "check-ignore", "-q", "--", rel],
                 capture_output=True, timeout=15)
-            return r.returncode == 0          # 0 = ignored, 1 = not, 128 = error
+            if r.returncode == 0:
+                return True                   # ignored
+            if r.returncode == 1:
+                return False                  # a normal, syncable path
+            # 128 etc: git could not answer — and obsidian-git touches this
+            # repo every 15 minutes, so "could not answer" is routine, not
+            # exotic. Fail closed, matching the promise below.
+            return True
         except Exception:
             # Fail closed. A privacy control that opens up when git hiccups is
             # not a privacy control.
@@ -105,6 +138,13 @@ class VaultPrivacy:
             rel = p.relative_to(self.vault)
         except ValueError:
             return "that path is outside the vault"
+
+        # NTFS alternate data streams: "note.md::$DATA" resolves and opens
+        # exactly like the note, but git check-ignore does not match the
+        # suffixed name — a verified bypass of the sealed boundary. No
+        # legitimate vault-relative path contains a colon, so refuse them all.
+        if ":" in rel.as_posix():
+            return "that path carries an NTFS stream or drive qualifier"
 
         if self._git_ignored(str(self.vault), rel.as_posix()):
             if is_model_allowed(rel.as_posix()):

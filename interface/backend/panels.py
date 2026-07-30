@@ -12,11 +12,12 @@ Five endpoints, all read-only, all serving panels in the web dashboard:
 
 Nothing here writes, and nothing here calls a model. Two boundaries hold:
 
-- **The sealed carve-out stays sealed.** Gitignored notes never appear in these
-  responses, even though this process could read them — the dashboard's Today
-  and Projects panels are general surfaces, and sealed material gets its own
-  deliberate lane in Phase 5. Same rule as everywhere else: if git will not
-  sync it, it does not show up here.
+- **Sealed material stays sealed.** Gitignored notes do not appear in these
+  responses — *except* the model-boundary exemptions in privacy.config.json
+  (Option B, 2026-07-30): those are readable by the agent and shown by the
+  panels while still never syncing. Everything gitignored and unlisted stays
+  hidden, fail-closed. (Asymmetry worth knowing: the old ProCertus session
+  logs remain sealed even though the material they summarize is exempt.)
 - **`fleet.py` is imported, never invoked.** Phase 1 touches the fleet; Phase 0
   deliberately does not (the first unattended 09:00 run had not happened when
   this was written, and you do not rewire the thing you are about to observe).
@@ -34,7 +35,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from agent import VAULT
-from privacy import is_model_allowed
+from privacy import sealed_paths
 
 # The runtime modules own the facts these panels display; recomputing them here
 # would be a second copy that can disagree (the watchdog's cardinal rule).
@@ -71,7 +72,8 @@ def _cached(key: str, ttl: float, compute):
 def _git(args: list, cwd: Path) -> str | None:
     try:
         r = subprocess.run(["git", "-C", str(cwd), *args],
-                           capture_output=True, text=True, timeout=10)
+                           capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=10)
         return r.stdout.strip() if r.returncode == 0 else None
     except Exception:
         return None
@@ -79,26 +81,11 @@ def _git(args: list, cwd: Path) -> str | None:
 
 def _gitignored(paths: list) -> set:
     """Which of these vault-relative paths are *sealed* — gitignored and not
-    exempted at the model boundary (privacy.config.json, Option B 2026-07-30).
-    One subprocess for the whole batch. Fails closed: if git cannot answer,
-    everything non-exempt is treated as sealed, because the unsafe direction
-    is showing sealed material."""
-    if not paths:
-        return set()
-    ignored = set(paths)
-    try:
-        # -z (NUL-separated) is not cosmetic: in text mode Windows rewrites
-        # "\n" to "\r\n" on stdin, so newline-separated paths reach git with a
-        # trailing \r and match nothing — which silently un-seals everything.
-        r = subprocess.run(["git", "-C", str(VAULT), "check-ignore", "--stdin", "-z"],
-                           input="\0".join(paths), capture_output=True,
-                           text=True, timeout=15)
-        # exit 0 = some ignored, 1 = none ignored; anything else is failure
-        if r.returncode in (0, 1):
-            ignored = {s for s in r.stdout.split("\0") if s}
-    except Exception:
-        pass
-    return {s for s in ignored if not is_model_allowed(s)}
+    exempted at the model boundary. Delegates to privacy.sealed_paths, the
+    single implementation of the boundary; a second copy here once disagreed
+    with it about git's failure exit codes, which is exactly the drift the
+    one-implementation rule exists to prevent."""
+    return sealed_paths(VAULT, paths)
 
 
 def _rel(p: Path) -> str:
@@ -202,7 +189,7 @@ def _scan_tasks() -> dict:
     tasks = []
     for p, rel in zip(files, rels):
         if rel in sealed:
-            continue                      # the sealed lane is Phase 5, not Today
+            continue                      # gitignored and not exempted — hidden
         try:
             lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError:
@@ -319,7 +306,7 @@ def _scan_projects() -> dict:
     projects = []
     for p, rel in zip(hubs, rels):
         if rel in sealed:
-            continue        # the internship hub renders in its own lane, Phase 5
+            continue        # gitignored and not exempted — hidden
         try:
             fm = frontmatter(p.read_text(encoding="utf-8", errors="replace"))
         except OSError:

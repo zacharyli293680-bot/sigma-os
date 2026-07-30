@@ -288,6 +288,28 @@ def check_privacy(out):
     import session_logger as sl
     vault = sl.DEFAULT_VAULT
 
+    # Option B (2026-07-30): the model boundary can carry explicit exemptions
+    # for gitignored paths. That list is exactly the kind of second declaration
+    # that drifts, so it is surfaced in every session rather than trusted.
+    # Deliberately TODO, not OK: --quiet (the SessionStart mode) drops OK
+    # lines, and a visibility guarantee that is silent in the automatic path
+    # is not a guarantee. First, before any git call that might early-return.
+    cfg_path = Path(__file__).resolve().with_name("privacy.config.json")
+    if cfg_path.exists():
+        try:
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+            allow = [str(p) for p in cfg.get("model_allow", []) if str(p).strip()]
+            if allow:
+                out.append((TODO, f"model boundary: {len(allow)} gitignored "
+                                  f"path(s) exempted for the model "
+                                  f"({', '.join(allow)}) - they never sync",
+                            None))
+        except Exception:
+            out.append((ALERT, "privacy.config.json exists but cannot be parsed "
+                               "- model exemptions are OFF (fail closed), which "
+                               "may not be what you expect",
+                        "fix or delete runtime/privacy.config.json"))
+
     r = subprocess.run(["git", "-C", str(vault), "ls-files", "-i", "-c",
                         "--exclude-standard"], capture_output=True, text=True, timeout=30)
     if r.returncode != 0:
@@ -305,21 +327,6 @@ def check_privacy(out):
     if not (Path(vault) / ".git" / "hooks" / "pre-push").exists():
         out.append((TODO, "vault pre-push privacy guard is not installed",
                     "python install_hooks.py"))
-
-    # Option B (2026-07-30): the model boundary can carry explicit exemptions
-    # for gitignored paths. That list is exactly the kind of second declaration
-    # that drifts, so it is surfaced in every session rather than trusted —
-    # if this line ever names something unexpected, that is the drift.
-    try:
-        cfg = json.loads(Path(__file__).resolve().with_name("privacy.config.json")
-                         .read_text(encoding="utf-8"))
-        allow = [str(p) for p in cfg.get("model_allow", []) if str(p).strip()]
-        if allow:
-            out.append((OK, f"model boundary: {len(allow)} gitignored path(s) "
-                            f"exempted for the model ({', '.join(allow)}) - "
-                            f"none of them sync", None))
-    except Exception:
-        pass                      # no config or unreadable = no exemptions
 
 
 def check_fleet(out):
