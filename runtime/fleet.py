@@ -23,9 +23,11 @@ What it deliberately does NOT do:
 - **No fan-out.** There is no concurrency option to turn on later. The one design
   constraint the vault settled for Phase 4 is that the specialists are sequenced,
   and an option is a constraint you have already decided to break.
-- **No applying.** Specialists propose; `reflect.py --apply` applies, after Zach
-  approves. The fleet inherits that gate by using the same `propose_change` tool
-  the interface uses, so there is one approval path in the whole OS.
+- **No model-driven writes.** Specialists propose through the same
+  `propose_change` tool the interface uses. Since dashboard Phase 4 the *runner*
+  applies each fresh note proposal itself — deterministic code in applier.py,
+  one revertible commit per change, recorded in the ledger — while contract,
+  skill and routine proposals still wait for Zach and `reflect.py --apply`.
 - **No privacy of its own.** It reuses `VaultPrivacy` through
   `interface.backend.agent.build_options`. A scheduled agent reading the vault
   unguarded would walk into the carved-out internship notes on its first
@@ -236,18 +238,23 @@ logged.
 """.strip()
 
 
-async def run_one(spec, timeout_s: int = 420) -> dict:
-    """Run a single specialist to completion. Never raises."""
+async def run_one(spec, timeout_s: int = 420, model_override: str | None = None) -> dict:
+    """Run a single specialist to completion. Never raises.
+
+    model_override is the degrade path: after a rate limit the sequencer re-runs
+    the remaining Sonnet specialists on Haiku, and the reactor renders the drop.
+    """
     from claude_agent_sdk import (AssistantMessage, ClaudeSDKClient, ResultMessage,
                                   TextBlock, ToolUseBlock)
     from agent import build_options
 
     import reflect as rf
 
+    model = model_override or spec.model
     started = datetime.datetime.now()
     result = {"key": spec.key, "started": started.isoformat(timespec="seconds"),
               "ok": False, "proposals": 0, "attempts": 0, "denials": 0,
-              "cost_usd": None, "summary": "", "error": None}
+              "cost_usd": None, "summary": "", "error": None, "model": model}
 
     # Ground truth for "what did this specialist actually raise". Counting
     # `propose_change` *calls* instead would count refused ones too — and a run
@@ -271,7 +278,7 @@ async def run_one(spec, timeout_s: int = 420) -> dict:
     async def _converse():
         opts = build_options(allow_proposals=True,
                              orientation=f"{SHARED_RULES}\n\n## Your brief\n\n{spec.brief}",
-                             model=spec.model, effort=spec.effort,
+                             model=model, effort=spec.effort,
                              max_turns=spec.max_turns)
         # include_partial_messages is for the browser; a headless run does not
         # need token deltas and they are pure overhead here.
@@ -405,29 +412,63 @@ async def run_fleet(keys=None, force=False, dry_run=False) -> list:
                             "finished": datetime.datetime.now().isoformat(timespec="seconds")})
             return []
 
+        from sigma import spend
+        import applier
+
+        # The window policy (dashboard-plan section 8): a rate limit inside the
+        # last hour means the window is tight, so Sonnet specialists run on
+        # Haiku — visibly, via the reactor's hollow arcs. A rate limit while
+        # ALREADY degraded means Haiku was not enough: pause cleanly with a
+        # resume point rather than burning the rest of the window.
+        degraded = spend.rate_limited_within(60)
+        if degraded:
+            log("window: rate-limited within the last hour - degrading to haiku")
+        state.pop("paused", None)                # this run supersedes any old pause
+
         prog = {"state": "running", "note": None,
                 "run_started": now.isoformat(timespec="seconds"),
                 "queue": [s.key for s in queue],
                 "current": None, "current_started": None, "current_model": None,
-                "results": {}, "stopped_early": False, "finished": None}
+                "results": {}, "stopped_early": False, "finished": None,
+                "degraded": degraded, "resume_at": None}
         write_progress(prog)
 
         log(f"running {len(queue)} specialist(s): {', '.join(s.key for s in queue)}")
-        for spec in queue:
-            log(f"-> {spec.key} ({spec.model})")
+        paused = False
+        for i, spec in enumerate(queue):
+            model = "haiku" if degraded else spec.model
+            log(f"-> {spec.key} ({model}{' [degraded]' if model != spec.model else ''})")
             prog["current"] = spec.key
-            prog["current_model"] = spec.model
+            prog["current_model"] = model
             prog["current_started"] = datetime.datetime.now().isoformat(timespec="seconds")
+            prog["degraded"] = degraded
             write_progress(prog)
 
-            r = await run_one(spec)
+            r = await run_one(spec, model_override=model if model != spec.model else None)
             results.append(r)
+
+            limited = _is_rate_limited(r)
+            spend.record_spend(actor=spec.key, model=model, cost_usd=r.get("cost_usd"),
+                               seconds=r.get("seconds"), rate_limited=limited,
+                               note=r.get("error"))
+
+            # Auto-apply what this run raised (Phase 4). Deterministic code in
+            # applier.py — one commit per change, ledgered, revertible; anything
+            # outside the rules is held and stays a pending proposal.
+            applied = []
+            if r["ok"] and r.get("files"):
+                applied = applier.apply_run(r["files"], actor=spec.key)
+                r["applied"] = applied
 
             prog["current"] = None
             prog["current_model"] = None
             prog["current_started"] = None
             prog["results"][spec.key] = {"ok": r["ok"], "seconds": r["seconds"],
                                          "proposals": r["proposals"],
+                                         "applied": sum(1 for a in applied
+                                                        if a["action"] != "held"),
+                                         "held": sum(1 for a in applied
+                                                     if a["action"] == "held"),
                                          "error": r["error"]}
             write_progress(prog)
 
@@ -447,24 +488,41 @@ async def run_fleet(keys=None, force=False, dry_run=False) -> list:
             if r["summary"]:
                 log(f"   {r['summary'][:200]}")
 
-            if _is_rate_limited(r):
-                # The window is the budget. Burning the rest of it on retries
-                # would take the whole fleet down instead of one specialist.
-                log("rate limit reached - stopping here; the rest stay due and "
-                    "will run on the next invocation")
-                state["stopped_early_at"] = r["finished"]
-                save_state(state)
-                break
+            if limited:
+                if degraded:
+                    # Haiku was not enough. Stop cleanly, say when work resumes,
+                    # and leave the rest due — never silent, never retrying.
+                    est = spend.resume_estimate()
+                    state["stopped_early_at"] = r["finished"]
+                    state["paused"] = {"at": r["finished"], "resume_at": est,
+                                       "remaining": [s.key for s in queue[i + 1:]]}
+                    save_state(state)
+                    prog.update({"state": "paused", "note": "window exhausted",
+                                 "resume_at": est, "stopped_early": True,
+                                 "finished": datetime.datetime.now()
+                                 .isoformat(timespec="seconds")})
+                    write_progress(prog)
+                    log(f"window exhausted even degraded - pausing; the rest stay "
+                        f"due (resumes ~{est or 'when the window rolls'})")
+                    paused = True
+                    break
+                # First hit: degrade and keep going. The failed specialist made
+                # no progress, so it stays due and retries on the next run.
+                degraded = True
+                log("rate limit reached - degrading to haiku and continuing; "
+                    "this specialist stays due and retries next run")
         else:
             state.pop("stopped_early_at", None)
+            state.pop("paused", None)
 
         state["last_run"] = datetime.datetime.now().isoformat(timespec="seconds")
         save_state(state)
 
-        prog["state"] = "done"
-        prog["stopped_early"] = bool(state.get("stopped_early_at"))
-        prog["finished"] = state["last_run"]
-        write_progress(prog)
+        if not paused:
+            prog["state"] = "done"
+            prog["stopped_early"] = bool(state.get("stopped_early_at"))
+            prog["finished"] = state["last_run"]
+            write_progress(prog)
 
     return results
 
@@ -561,11 +619,18 @@ def main():
         return 0
 
     total = sum(r["proposals"] for r in results)
+    done = [a for r in results for a in (r.get("applied") or [])]
+    n_ap = sum(1 for a in done if a["action"] != "held")
+    n_held = len(done) - n_ap
     failed = [r["key"] for r in results if not r["ok"]]
-    print(f"fleet: ran {len(results)}, raised {total} proposal(s)"
+    print(f"fleet: ran {len(results)}, raised {total} proposal(s), "
+          f"applied {n_ap}, held {n_held}"
           + (f", failed: {', '.join(failed)}" if failed else ""))
-    if total:
-        print("review them in 06-System/proposals/, then `reflect.py --apply`")
+    if n_ap:
+        print("applied changes are in the activity ledger - any of them can be "
+              "reverted from the dashboard (Ctrl+J)")
+    if n_held:
+        print("held proposals wait in 06-System/proposals/ with the reason stamped")
     return 0
 
 

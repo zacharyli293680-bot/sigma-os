@@ -49,6 +49,9 @@ runtime/*.state.json
 runtime/*.progress.json
 runtime/*.log
 runtime/*.lock
+# the ledger and spend log are Phase 4's runtime records: the ledger's targets
+# can name carved-out paths, so it must never sync anywhere.
+runtime/*.jsonl
 
 # --- Phase 3 interface
 interface/backend/.venv/
