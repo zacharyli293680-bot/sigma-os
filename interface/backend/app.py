@@ -179,6 +179,10 @@ def api_health():
 from panels import router as panels_router  # noqa: E402
 app.include_router(panels_router)
 
+# The palette's whitelisted command runner (Phase 3).
+from commands import router as commands_router  # noqa: E402
+app.include_router(commands_router)
+
 
 # --------------------------------------------------------------------------
 # the built UI, served from this same process
