@@ -105,7 +105,7 @@ def call_with_retry(prompt: str):
     out = ""
     for i, wait in enumerate((*RETRY_WAITS, None)):
         out = call_model(prompt, MODEL, timeout=900,
-                         extra_env={"REFLECT_ACTIVE": "1"})
+                         extra_env={"REFLECT_ACTIVE": "1"}, actor="reflect")
         parsed = parse_model_json(out)
         if parsed:
             if i:
@@ -429,6 +429,22 @@ def do_reflect(a):
 # apply: execute approved proposals. Additive only, never overwrites.
 # --------------------------------------------------------------------------
 
+def _ledger_commit(rel: str, message: str, action: str, title: str, proposal: str):
+    """Phase 4: --apply is a ledger consumer. Each change it lands becomes its
+    own path-scoped commit with its SHA in the activity ledger, revertible from
+    the dashboard like every autonomous change. The write itself happened just
+    above; the interleaved-backup-commit case is gitops's absorbed handling."""
+    try:
+        from sigma import gitops, ledger
+        with gitops.vault_write(VAULT) as w:
+            res = w.commit(rel, message)
+        ledger.record("reflect", action, rel, res["sha"], title,
+                      extra={"proposal": proposal})
+        return res["sha"]
+    except Exception as e:
+        log(f"ledger commit failed for {rel}: {e}")
+        return None
+
 def proposal_content(text: str) -> str:
     """The exact payload to write: the first fenced block after the marker."""
     i = text.find(CONTENT_MARKER)
@@ -645,6 +661,14 @@ def do_merge(a):
         except OSError:
             break
 
+    try:
+        rel = dest.resolve().relative_to(Path(VAULT).resolve()).as_posix()
+    except ValueError:
+        rel = None                       # a user-scoped skill: outside the repo
+    if rel:
+        _ledger_commit(rel, f"sigma(reflect): merge staged change into {rel}",
+                       "update", p.stem, p.stem)
+
     text = p.read_text(encoding="utf-8")
     text = re.sub(r"^staged:.*\n", "", text, count=1, flags=re.M)
     p.write_text(text, encoding="utf-8")
@@ -681,6 +705,9 @@ def do_apply(a):
                 print(f"[dry-run] would append {len(content)} chars to CLAUDE.md from {p.name}")
                 continue
             where = append_to_contract(content, title, today)
+            _ledger_commit("CLAUDE.md",
+                           f"sigma(reflect): append to CLAUDE.md - {title[:60]}",
+                           "append", title, p.stem)
         else:                                     # skill | note → create a new file
             dest = safe_target(target, scope)
             if dest is None:
@@ -716,6 +743,16 @@ def do_apply(a):
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text(content.rstrip() + "\n", encoding="utf-8")
             where = f"{target} ({scope})" if kind == "skill" else target
+            if scope == "vault":
+                rel = dest.resolve().relative_to(Path(VAULT).resolve()).as_posix()
+                _ledger_commit(rel, f"sigma(reflect): create {rel} - {title[:60]}",
+                               "create", title, p.stem)
+            else:
+                # a user-scoped skill lands outside the vault repo: no commit
+                # exists to revert, but the ledger still records that it happened
+                from sigma import ledger
+                ledger.record("reflect", "create", target, None, title,
+                              extra={"proposal": p.stem, "scope": scope})
         if not a.dry_run:
             mark_applied(p, today, where)
             log(f"applied {p.name} -> {where}")

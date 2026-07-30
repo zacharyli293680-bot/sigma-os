@@ -162,6 +162,18 @@ async def run(ask: Ask):
                     yield sse({"type": "done", "session_id": msg.session_id,
                                "cost_usd": msg.total_cost_usd, "turns": msg.num_turns,
                                "denials": len(denials), "is_error": msg.is_error})
+                    # Phase 4 spike: chat was one of the four sites computing
+                    # cost and discarding it. Metering must never break the ask.
+                    try:
+                        from sigma import spend
+                        blob = str(getattr(msg, "result", "") or "").lower()
+                        spend.record_spend(
+                            actor="ask", cost_usd=msg.total_cost_usd,
+                            rate_limited=bool(msg.is_error) and any(
+                                s in blob for s in ("rate limit", "rate_limit", "429",
+                                                    "usage limit", "quota", "overloaded")))
+                    except Exception:
+                        pass
     except asyncio.CancelledError:
         raise
     except Exception as e:                       # surface, never swallow
@@ -211,6 +223,10 @@ app.include_router(panels_router)
 # The palette's whitelisted command runner (Phase 3).
 import commands  # noqa: E402
 app.include_router(commands.router)
+
+# The write API (Phase 4): checkbox toggle, the activity ledger, revert.
+import writes  # noqa: E402
+app.include_router(writes.router)
 
 
 @app.on_event("shutdown")

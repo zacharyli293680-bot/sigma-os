@@ -115,17 +115,35 @@ def parse_model_json(out: str):
 # model + process
 # --------------------------------------------------------------------------
 
-def call_model(prompt: str, model: str, timeout: int = 180, extra_env: dict | None = None) -> str:
+def call_model(prompt: str, model: str, timeout: int = 180,
+               extra_env: dict | None = None, actor: str = "cli") -> str:
     """Run `claude -p` headlessly.
 
     SESSION_LOGGER_ACTIVE=1 is always set: it is the recursion guard that stops
     Phase 1 from logging the OS's own model calls as if they were work sessions.
+
+    Every call is also recorded in the spend log (Phase 4's window proxies) —
+    this is the chokepoint for the two `claude -p` consumers, so neither needs
+    its own metering. `claude -p` reports no cost, so cost stays None; the
+    rate-limited flag keys on a FAILED call whose error names the limit, never
+    on the model merely mentioning rate limits in its answer (the false-halt
+    bug the fleet already fixed once).
     """
     env = {**os.environ, "SESSION_LOGGER_ACTIVE": "1", **(extra_env or {})}
     r = subprocess.run(["claude", "-p", "--model", model], input=prompt,
                        capture_output=True, text=True, encoding="utf-8",
                        errors="replace", env=env, timeout=timeout)
-    return (r.stdout or "").strip()
+    out = (r.stdout or "").strip()
+    try:
+        from .spend import record_spend
+        blob = (out + " " + (r.stderr or "")).lower()
+        record_spend(actor=actor, model=model,
+                     rate_limited=r.returncode != 0 and any(
+                         s in blob for s in ("rate limit", "rate_limit", "429",
+                                             "usage limit", "quota", "overloaded")))
+    except Exception:
+        pass
+    return out
 
 
 def read_state(path, default: dict | None = None) -> dict:

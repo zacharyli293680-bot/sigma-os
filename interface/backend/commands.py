@@ -108,6 +108,29 @@ DISABLED = [
 
 MAX_LINES = 400
 
+
+def _window_hold() -> str | None:
+    """Why model verbs are unavailable right now, or None (dashboard-plan §8).
+
+    Two reasons, both proxies because true headroom is not exposed anywhere:
+    a rate limit inside the last 45 minutes means the window is spent enough
+    that ad-hoc runs would burn what the fleet needs; and 08:40–09:00 is the
+    reservation — ad-hoc work must not starve the scheduled run about to fire.
+    Enforced at POST too, not just greyed in the listing: the listing is a
+    courtesy, the refusal is the policy.
+    """
+    try:
+        sys.path.insert(0, str(RUNTIME)) if str(RUNTIME) not in sys.path else None
+        from sigma import spend
+        if spend.rate_limited_within(45):
+            return "window: rate-limited in the last 45 min — resumes when it rolls"
+    except Exception:
+        pass                       # metering failure must not disable the palette
+    now = datetime.datetime.now()
+    if now.hour == 8 and now.minute >= 40:
+        return "reserved for the 09:00 fleet run"
+    return None
+
 # The single job slot. `_rev` bumps on every mutation so the SSE feed knows
 # when to emit without diffing the whole record. `_task` is held on purpose:
 # a fire-and-forget task swallows its own exceptions, and a runner that dies
@@ -208,10 +231,12 @@ async def _run(spec: dict):
 def api_commands():
     """The palette renders from this — the server's own whitelist is the single
     source of truth, so the UI cannot drift ahead of what is invokable."""
+    hold = _window_hold()
     return {"verbs": [
-        {"verb": v, "title": s["title"], "hint": s["hint"],
+        {"verb": v, "title": s["title"],
+         "hint": hold if (hold and s.get("model")) else s["hint"],
          "writes": bool(s.get("writes")), "model": bool(s.get("model")),
-         "enabled": True}
+         "enabled": not (hold and s.get("model"))}
         for v, s in VERBS.items()
     ] + [{**d, "hint": d["reason"], "writes": False, "model": False,
           "enabled": False} for d in DISABLED]}
@@ -224,6 +249,10 @@ async def api_run(verb: str):
     if spec is None:
         # The adversarial case the done-when names: anything off-list bounces.
         return JSONResponse({"error": f"unknown verb: {verb!r}"}, status_code=404)
+    if spec.get("model"):
+        hold = _window_hold()
+        if hold:
+            return JSONResponse({"error": "window", "reason": hold}, status_code=409)
     if _job and _job["state"] == "running":
         return JSONResponse({"error": "busy", "running": _job["verb"]},
                             status_code=409)

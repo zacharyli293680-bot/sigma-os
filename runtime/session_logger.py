@@ -452,7 +452,7 @@ def do_log(hook, a):
         print("\n----- PROMPT -----\n" + prompt[:1600] + "\n…")
         return 0
 
-    model_out = call_model(prompt, MODEL, timeout=180)
+    model_out = call_model(prompt, MODEL, timeout=180, actor="capture")
     parsed = parse_model_json(model_out)
     if parsed:
         task = str(parsed.get("task", data["title"] or "session"))[:90]

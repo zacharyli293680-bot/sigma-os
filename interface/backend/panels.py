@@ -210,9 +210,12 @@ def _scan_tasks() -> dict:
                 continue                  # the Today panel shows dated work only
             text = _META_RE.sub("", m.group(2)).strip()
             prio = next((v for e, v in _PRIORITY.items() if e in m.group(2)), None)
+            # `raw` is the staleness token for POST /api/tasks/toggle: the
+            # client hands back the exact line it saw, and the toggle refuses
+            # if the note moved underneath it.
             tasks.append({"text": text, "due": due.group(1), "priority": prio,
                           "overdue": due.group(1) < today,
-                          "file": rel, "line": i})
+                          "file": rel, "line": i, "raw": line})
 
     tasks.sort(key=lambda t: (t["due"], -(t["priority"] if t["priority"] is not None else -1)))
 
@@ -445,12 +448,25 @@ def api_graph():
 
 @router.get("/window")
 def api_window():
-    """Honestly unknown. Nothing in the system meters the subscription window
-    today and no documented API exposes headroom — see dashboard-plan §8. The
-    shape is fixed now so the top strip does not change when the Phase 4 spike
-    fills it in; until then the meter renders the absence, not a guess."""
-    return {"known": False, "percent": None, "reserved": None,
-            "note": "no data source yet — metering is the Phase 4 spike",
-            # The UI's obsidian:// links need the vault's real name; guessing
-            # it from a 45s health probe left links dead on first paint.
-            "vault": VAULT.name}
+    """Proxies, honestly labelled. The Phase 4 spike concluded no documented
+    API exposes subscription headroom, so a percentage would be a guess dressed
+    as a fact. What CAN be known is persisted by sigma/spend.py — observed
+    calls, notional cost where the SDK reports one, and the load-bearing
+    signal: when a call last hit the rate limit. `known` is the string "proxy"
+    rather than True, so the UI can never mistake this for a real meter."""
+    def compute():
+        from sigma import spend
+        win = spend.window()
+        paused = (fl.load_state() or {}).get("paused") or None
+        return {"known": "proxy", "percent": None,
+                "calls": win["calls"], "cost_usd": win["cost_usd"],
+                "last_rate_limit": win["last_rate_limit"],
+                "paused": bool(paused),
+                "resume_at": (paused or {}).get("resume_at"),
+                "reserved": "the daily 09:00 fleet run",
+                "note": "observed spend + last rate-limit event; "
+                        "true headroom is not exposed by anything",
+                # The UI's obsidian:// links need the vault's real name; guessing
+                # it from a 45s health probe left links dead on first paint.
+                "vault": VAULT.name}
+    return _cached("window", 15, compute)
