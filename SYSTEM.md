@@ -298,8 +298,8 @@ guessing at intent: `sigma fleet` shows status, it does not run anything.
 | Insights | 8 |
 | Proposals | 13 — 11 applied, 2 rejected, 0 pending, 0 staged |
 | Skills | 3 user-scoped, 1 vault-scoped (`reflect`) |
-| Doctor | `all clear` on all six checks |
-| Tests | **66 across seven committed suites in `tests/`, green 2026-07-31** (41 + 11 for the Phase 5 boundary + 14 for study intake). Stdlib `unittest`, no pytest: `interface\backend\.venv\Scripts\python -m unittest discover -s tests -t tests`. Both halves matter — the backend venv supplies `fastapi`/`httpx`, and `-t tests` is required because `tests/` is not a package (a bare `discover` dies on *"Start directory is not importable"*). |
+| Doctor | `all clear` on all **seven** checks (backup added 2026-07-31) |
+| Tests | **78 across nine committed suites in `tests/`, green 2026-07-31** (41 + 11 Phase 5 boundary + 14 study intake + 6 backup check + 6 fleet cadence). Stdlib `unittest`, no pytest: `interface\backend\.venv\Scripts\python -m unittest discover -s tests -t tests`. Both halves matter — the backend venv supplies `fastapi`/`httpx`, and `-t tests` is required because `tests/` is not a package (a bare `discover` dies on *"Start directory is not importable"*). |
 
 **Both scheduled tasks are installed and `Ready`.** The weekly reflection's 2026-07-26 run failed on
 `ENOTFOUND` and was re-run by hand; it has not been due since, and `LastTaskResult` is still `1` from
@@ -316,17 +316,13 @@ invoked by hand. See gap 1 for why, which is a live design question rather than 
 
 **Not yet done, in rough priority order:**
 
-1. **A hand-run silently suppresses the next morning's scheduled run.** Cadence is measured from the
-   last *success*, not from the schedule: `_due()` asks whether `last_ok` is at least
-   `cadence_days × 24 − 1` hours old. So running the planner by hand at 13:56 on 07-30 left it 19.1h
-   old at 09:00 on 07-31 — under the 23h bar, so the scheduled run logged `nothing due` and wrote no
-   daily note. Correct by the code and defensible by intent (it exists to stop a specialist being
-   skipped for a week after an error), but it means the 09:00 run is quietly weakest on exactly the
-   days you were most active the afternoon before. Anchoring daily cadences to the calendar day
-   rather than a rolling 23h would fix it; that is a design call, not a patch.
-   *(Superseded gap, kept for the lesson: this entry used to read "the fleet's first scheduled run
-   has not happened — watch it." It has now fired three times. Watching it is what surfaced the
-   above, which no self-check would have reported: every run was a green `nothing due`.)*
+1. ~~**A hand-run silently suppresses the next morning's scheduled run.**~~ **Fixed 2026-07-31.**
+   `is_due()` now compares calendar days rather than a rolling `cadence_days × 24 − 1` hours, so an
+   afternoon hand-run no longer costs the next morning's plan. Six tests pin it.
+   *(Kept for the lesson, twice over. This entry first read "the fleet's first scheduled run has not
+   happened — watch it." Watching it is what surfaced the cadence bug, which no self-check would ever
+   have reported: three consecutive 09:00 runs did nothing and each reported success. A green run and
+   a correct run are not the same thing, and only the calendar could tell them apart.)*
 2. **Scheduled tasks still hardcode interpreter paths.** Repointing them at `sigma` would leave one
    path per task instead of two, surviving a venv rebuild or Python upgrade. Both shims are verified
    working when called by absolute path from an unrelated cwd. Deliberately deferred until after (1),

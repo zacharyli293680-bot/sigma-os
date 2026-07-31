@@ -49,7 +49,7 @@ VERBS: dict = {
                         "hint": "doctor + fleet + waiting proposals",
                         "argv": _script("cli.py", "status"), "timeout": 180},
     "doctor":          {"title": "Doctor — run the health checks",
-                        "hint": "the six watchdog checks, on demand",
+                        "hint": "the seven watchdog checks, on demand",
                         "argv": _script("doctor.py"), "timeout": 180},
     "fleet-status":    {"title": "Fleet — status",
                         "hint": "who ran, when, what they raised",

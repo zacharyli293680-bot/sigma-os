@@ -142,12 +142,29 @@ def is_due(spec, state: dict, now: datetime.datetime) -> bool:
     Keyed on the last success rather than the last attempt: a specialist that
     errored should be retried on the next run, not skipped for a week because
     something touched its timestamp.
+
+    **Calendar days, not a rolling window (changed 2026-07-31).** This used to
+    ask whether `cadence_days × 24 − 1` hours had passed, which quietly made the
+    scheduled run weakest on exactly the days Zach had been most active. Running
+    the planner by hand at 13:56 left it 19.1h old at 09:00 the next morning —
+    under the 23h bar — so the 09:00 run logged `nothing due` and wrote no daily
+    note. Three consecutive scheduled runs did nothing for this reason, each one
+    reporting success, which is precisely the shape of failure this project
+    keeps having to dig out.
+
+    A daily specialist should run once per day, and "day" means the calendar
+    day, not "at least 23 hours since whenever you last poked it". An afternoon
+    hand-run should not cost you the next morning's plan.
     """
     rec = (state.get("specialists") or {}).get(spec.key) or {}
-    hours = _hours_since(rec.get("last_ok"))
-    if hours is None:
+    last_ok = rec.get("last_ok")
+    if not last_ok:
         return True
-    return hours >= CADENCE_DAYS.get(spec.cadence, 1) * 24 - 1   # an hour of slack
+    try:
+        last_day = datetime.datetime.fromisoformat(str(last_ok)).date()
+    except (TypeError, ValueError):
+        return True                       # unreadable timestamp = run it
+    return (now.date() - last_day).days >= CADENCE_DAYS.get(spec.cadence, 1)
 
 
 # --------------------------------------------------------------------------

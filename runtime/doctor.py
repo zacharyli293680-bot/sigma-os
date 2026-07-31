@@ -408,8 +408,99 @@ def check_fleet(out):
                         f"reporting, last run {state.get('last_run')})", None))
 
 
+BACKUP_STALE_HOURS = 2        # obsidian-git pushes every 30 minutes
+
+
+def check_backup(out):
+    """Is the vault actually *reaching* its remote?
+
+    Added 2026-07-31, after the vault went 19 hours without a successful push
+    and nothing said so. The GitHub credential had expired, and because git
+    blocks on a username prompt rather than erroring, obsidian-git's auto-push
+    hung silently every 30 minutes — eighteen orphaned git processes deep — with
+    a day of work sitting on one disk. Every other check was green throughout,
+    because none of them asked this question.
+
+    **The cheap signal is local.** Unpushed commits and their age need no
+    network at all, and that alone would have caught this: obsidian-git pushes
+    every 30 minutes, so a backlog older than a couple of hours means pushing is
+    failing, whatever the reason. Only when there *is* a stale backlog does this
+    spend a bounded network call to tell "you have not pushed yet" apart from
+    "you cannot push".
+
+    Non-interactive env throughout, and deliberately so: this runs on every
+    SessionStart, and a doctor that inherits the very credential prompt it is
+    diagnosing would hang the thing it was meant to protect.
+    """
+    import session_logger as sl
+    from sigma.gitops import _NONINTERACTIVE
+    vault = str(sl.DEFAULT_VAULT)
+    env = {**os.environ, **_NONINTERACTIVE}
+
+    def git(*args, timeout=15):
+        return subprocess.run(["git", "-C", vault, *args], capture_output=True,
+                              text=True, encoding="utf-8", errors="replace",
+                              timeout=timeout, env=env, stdin=subprocess.DEVNULL)
+
+    try:
+        r = git("remote")
+        if r.returncode != 0:
+            return                                # not a repo; not this check's business
+        if not (r.stdout or "").strip():
+            out.append((INFO, "vault has no git remote - nothing is backed up off "
+                              "this machine, by configuration", None))
+            return
+
+        ahead = git("rev-list", "--count", "@{u}..HEAD")
+        if ahead.returncode != 0:
+            out.append((TODO, "vault branch has no upstream - pushes will not "
+                              "happen automatically",
+                        "git -C <vault> push -u origin <branch>"))
+            return
+        n = int((ahead.stdout or "0").strip() or 0)
+        if n == 0:
+            out.append((OK, "vault is pushed (nothing waiting to back up)", None))
+            return
+
+        # Oldest unpushed commit: how long has the backlog actually been stuck?
+        log = git("log", "--format=%cI", "@{u}..HEAD")
+        stamps = [s for s in (log.stdout or "").splitlines() if s.strip()]
+        hours = None
+        if stamps:
+            try:
+                oldest = datetime.datetime.fromisoformat(stamps[-1].strip())
+                if oldest.tzinfo:
+                    oldest = oldest.replace(tzinfo=None)
+                hours = (datetime.datetime.now() - oldest).total_seconds() / 3600
+            except ValueError:
+                pass
+
+        if hours is not None and hours < BACKUP_STALE_HOURS:
+            out.append((OK, f"{n} commit(s) not yet pushed, oldest {hours:.1f}h "
+                            f"- obsidian-git pushes every 30 min", None))
+            return
+
+        age = f"{hours:.0f}h" if hours is not None else "unknown age"
+        probe = git("ls-remote", "origin", "HEAD", timeout=20)
+        if probe.returncode == 0:
+            out.append((TODO, f"{n} vault commit(s) unpushed for {age}, but the "
+                              f"remote is reachable - the push is simply not happening",
+                        "git -C <vault> push (check obsidian-git's settings)"))
+        else:
+            why = " ".join(((probe.stderr or probe.stdout) or "").split())[:160]
+            out.append((ALERT, f"{n} vault commit(s) unpushed for {age} and the "
+                               f"remote cannot be reached - nothing is backed up: {why}",
+                        "gh auth login (or refresh the git credential), then push"))
+    except subprocess.TimeoutExpired:
+        out.append((ALERT, "git did not answer while checking the vault backup - "
+                           "it is most likely blocked on a credential prompt",
+                    "gh auth login, then push"))
+    except Exception as e:
+        out.append((TODO, f"backup check could not run: {type(e).__name__}: {e}", None))
+
+
 CHECKS = (check_capture, check_reflection, check_schedule, check_auth,
-          check_privacy, check_fleet)
+          check_privacy, check_backup, check_fleet)
 
 
 def collect():
