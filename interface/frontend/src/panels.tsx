@@ -81,8 +81,9 @@ const RAIL: [string, string, boolean][] = [
   ["SY", "System — Phase 6", false],
 ];
 
-export function Rail({ brainOpen, onBrain }: {
+export function Rail({ brainOpen, onBrain, noSyncOpen, onNoSync, noSyncCount }: {
   brainOpen: boolean; onBrain: () => void;
+  noSyncOpen: boolean; onNoSync: () => void; noSyncCount: number | null;
 }) {
   return (
     <nav className="rail">
@@ -97,8 +98,34 @@ export function Rail({ brainOpen, onBrain }: {
         );
       })}
       <div className="rail-gap" />
-      <button className="seal" disabled title="Sealed lane — Phase 5">▦ SEAL</button>
+      {/* Phase 5. Live now, and a lens rather than a room: everything it lists
+          also appears elsewhere, marked. What it adds is the total. */}
+      <button className={`seal ${noSyncOpen ? "active" : ""}`} onClick={onNoSync}
+              title={`No-sync — everything that never leaves this machine (Ctrl+.)${
+                noSyncCount ? `\n${noSyncCount} files, on one disk only` : ""}`}>
+        ⊘ SEAL{noSyncCount ? <span className="seal-n">{noSyncCount}</span> : null}
+      </button>
     </nav>
+  );
+}
+
+/** The mark itself. One glyph, one colour, one meaning — and the same tooltip
+ *  everywhere it appears, because a marker that explains itself differently in
+ *  two panels teaches two different boundaries.
+ *
+ *  **⊘, not ▦.** The first draft used ▦, which live rendering immediately
+ *  disproved: `🏁` (U+1F3C1, on every milestone task in the study timelines)
+ *  has no glyph in this font stack and falls back to a hatched box almost
+ *  identical to it. A confidentiality marker that random tofu can imitate is
+ *  worse than none, and telling them apart by colour alone would break the
+ *  dashboard's own rule that status is never colour alone. ⊘ also rhymes with
+ *  the bronze ring the brain draws for the same fact. */
+export function NoSyncMark() {
+  return (
+    <span className="nosync-mark"
+          title="never leaves this machine — gitignored, so it has no off-machine backup">
+      ⊘
+    </span>
   );
 }
 
@@ -185,7 +212,8 @@ export function TodayPanel({ tasks, vault, onMutate }: {
         </button>
         <a href={obsidianHref(vault, t.file.replace(/\.md$/, ""))}
            title={`${t.file}:${t.line}`}>
-          <span className="due-date">{t.due.slice(5)}{t.overdue ? " !" : ""}</span> {t.text}
+          <span className="due-date">{t.due.slice(5)}{t.overdue ? " !" : ""}</span>
+          {t.no_sync && <NoSyncMark />} {t.text}
         </a>
         {errs[k] && <span className="row-err">{errs[k]}</span>}
       </li>
@@ -212,7 +240,7 @@ export function ProjectsPanel({ projects, vault }: { projects: Project[] | null;
         {projects.map(p => (
           <li key={p.name} className="project">
             <a href={obsidianHref(vault, `03-Projects/${p.name}`)} title={p.repo ?? "no repo"}>
-              <span className="name">{p.name}</span>
+              <span className="name">{p.no_sync && <NoSyncMark />}{p.name}</span>
               {p.git ? (
                 <span className={`repo ${p.git.dirty ? "dirty" : ""}`}>
                   {p.git.dirty == null ? "? unreadable"      /* git failed ≠ clean */
@@ -237,9 +265,10 @@ export function ProjectsPanel({ projects, vault }: { projects: Project[] | null;
 
 // ---------------------------------------------------------------- foot
 
-export function Foot({ activity, onChat, onBrain, onPalette, onLedger }: {
+export function Foot({ activity, onChat, onBrain, onPalette, onLedger, onNoSync }: {
   activity: { text: string; live: boolean };
-  onChat: () => void; onBrain: () => void; onPalette: () => void; onLedger: () => void;
+  onChat: () => void; onBrain: () => void; onPalette: () => void;
+  onLedger: () => void; onNoSync: () => void;
 }) {
   // The hints are also the buttons — Chrome sometimes eats Ctrl+G/Ctrl+K, so
   // every keystroke has a clickable twin. The dock is a door too: clicking
@@ -251,6 +280,7 @@ export function Foot({ activity, onChat, onBrain, onPalette, onLedger }: {
         <button onClick={onChat}><kbd>Ctrl</kbd>+<kbd>/</kbd> chat</button> ·{" "}
         <button onClick={onBrain}><kbd>Ctrl</kbd>+<kbd>G</kbd> brain</button> ·{" "}
         <button onClick={onLedger}><kbd>Ctrl</kbd>+<kbd>J</kbd> ledger</button> ·{" "}
+        <button onClick={onNoSync}><kbd>Ctrl</kbd>+<kbd>.</kbd> no-sync</button> ·{" "}
         <kbd>Esc</kbd> back
       </span>
       <button className={`dock ${activity.live ? "live" : "dim"}`} onClick={onLedger}

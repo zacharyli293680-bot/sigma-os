@@ -19,6 +19,7 @@ export type Fleet = {
 export type VaultTask = {
   text: string; due: string; priority: number | null;
   overdue: boolean; file: string; line: number;
+  no_sync: boolean;   // gitignored but model-exempt — never leaves this machine
   raw: string;   // the exact line — handed back to toggle as the staleness check
 };
 export type Tasks = { today: string; block: string | null; tasks: VaultTask[] };
@@ -39,9 +40,22 @@ export type RepoState = {
 export type Project = {
   name: string; status: string | null; area: string | null;
   started: string | null; due: string | null; repo: string | null;
+  no_sync: boolean;
   git: RepoState | null;
 };
 export type Projects = { projects: Project[] };
+
+/** The Phase 5 audit view: everything that never leaves this machine. */
+export type NoSyncGroup = {
+  prefix: string; count: number; bytes: number; newest: string | null;
+};
+export type NoSyncFile = { path: string; mtime: string | null; bytes: number | null };
+export type NoSync = {
+  ok: boolean;          // false = git could not answer; the boundary is unverified
+  total: number; bytes: number;
+  groups: NoSyncGroup[]; files: NoSyncFile[];
+  truncated: number;    // rows beyond the cap — never silently dropped
+};
 
 export type Window_ = {
   // "proxy" since Phase 4: observed spend + the last rate-limit event. Never
@@ -66,6 +80,7 @@ export type Activity = { entries: LedgerEntry[] };
 
 export type GraphNode = {
   id: string; label: string; bucket: string;
+  no_sync: boolean;   // drawn as a bronze ring, never as a colour — bucket owns colour
   inlinks: number; mtime: string | null;
 };
 export type Graph = {

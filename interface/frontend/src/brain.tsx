@@ -39,6 +39,10 @@ const BUCKETS: [string, string][] = [
 ];
 const FIRE_MS = 1900;
 const FIRE_COLOR = "#9BEFFC";
+/** Phase 5. A *ring*, never a fill: colour in this view belongs to the eight
+ *  bucket groups, and repainting a node bronze would make the brain disagree
+ *  with Obsidian's own graph (dashboard-plan §2). */
+const NOSYNC_COLOR = "#C77D2E";
 /** Fraction of FIRE_MS an axon pulse takes to cross its edge. */
 const AXON = 0.42;
 
@@ -357,6 +361,23 @@ export default function Brain({ open, vault, fireRef }: {
       ctx.globalAlpha = 1;
       ctx.globalCompositeOperation = "source-over";
 
+      // The no-sync ring, drawn after the additive pass so it outlines a star
+      // rather than adding to its bloom. Same fact as the ▦ in Today and
+      // Projects, rendered in the only way this view has room for.
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = NOSYNC_COLOR;
+      for (let i = 0; i < n; i++) {
+        if (!w.g.nodes[i].no_sync) continue;
+        const depth = Math.max(0, Math.min(1, (pp[i] - 0.42) / 0.9));
+        const dim = hi !== null && i !== hi ? 0.35 : 1;
+        const r = (1.7 + Math.sqrt(w.g.nodes[i].inlinks) * 1.05) * pp[i];
+        ctx.globalAlpha = Math.min(0.85, (0.30 + 0.55 * depth) * dim);
+        ctx.beginPath();
+        ctx.arc(px[i], py[i], Math.max(r, 1.2) + 2.8, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+
       if (hi !== null) {
         ctx.font = "12px 'JetBrains Mono', Consolas, monospace";
         ctx.lineWidth = 3;
@@ -428,6 +449,7 @@ export default function Brain({ open, vault, fireRef }: {
 
   const counts: Record<string, number> = {};
   graph?.nodes.forEach(n => { counts[n.bucket] = (counts[n.bucket] ?? 0) + 1; });
+  const noSyncCount = graph?.nodes.filter(n => n.no_sync).length ?? 0;
 
   return (
     <div className="brain-overlay">
@@ -446,6 +468,16 @@ export default function Brain({ open, vault, fireRef }: {
               <span>{label}</span><b>{counts[k] ?? 0}</b>
             </div>
           ))}
+          {noSyncCount > 0 && (
+            // Listed apart from the buckets because it is not one: a node has
+            // exactly one bucket and may *also* be no-sync.
+            // `nosync-key`, not `nosync`: the overlay in nosync.tsx owns the
+            // bare class and sizes itself to 760px, which this row inherited.
+            <div className="legend-row nosync-key" title="never leaves this machine (Ctrl+.)">
+              <i style={{ background: "transparent", boxShadow: `inset 0 0 0 1px ${NOSYNC_COLOR}` }} />
+              <span>no-sync</span><b>{noSyncCount}</b>
+            </div>
+          )}
         </div>
         <p className="dim brain-hint">
           click a star to open the note · <kbd>Esc</kbd> back

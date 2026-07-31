@@ -10,10 +10,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./App.css";
 import { API, get } from "./api";
-import type { Fleet, Health, Job, Progress, Projects, Proposals, Tasks, Window_ } from "./api";
+import type { Fleet, Health, Job, NoSync, Progress, Projects, Proposals, Tasks, Window_ } from "./api";
 import Brain from "./brain";
 import ChatDrawer from "./chat";
 import Ledger from "./ledger";
+import NoSyncView from "./nosync";
 import Palette from "./palette";
 import { Foot, Panel, ProjectsPanel, Rail, TodayPanel, TopStrip, WaitingPanel } from "./panels";
 import Reactor, { activityLine, useElapsed } from "./reactor";
@@ -44,6 +45,9 @@ export default function App() {
   const [brainOpen, setBrainOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [ledgerOpen, setLedgerOpen] = useState(false);
+  const [noSyncOpen, setNoSyncOpen] = useState(false);
+  // Fetched once for the rail's count badge; the view refetches on open.
+  const [noSync, setNoSync] = useState<NoSync | null>(null);
   const [job, setJob] = useState<Job | null>(null);
   const fireRef = useRef<((detail: string) => void) | null>(null);
   const clock = useClock();
@@ -54,6 +58,7 @@ export default function App() {
     get<Proposals>("proposals").then(setProposals).catch(() => setProposals(null));
     get<Projects>("projects").then(setProjects).catch(() => setProjects(null));
     get<Window_>("window").then(setWindow).catch(() => setWindow(null));
+    get<NoSync>("nosync").then(setNoSync).catch(() => setNoSync(null));
   }, []);
 
   // Health is separate and fetched once: doctor may probe auth with a real
@@ -107,9 +112,13 @@ export default function App() {
       } else if (e.ctrlKey && (e.key === "j" || e.key === "J")) {
         e.preventDefault();
         setLedgerOpen(o => !o);
+      } else if (e.ctrlKey && e.key === ".") {
+        e.preventDefault();
+        setNoSyncOpen(o => !o);
       } else if (e.key === "Escape") {
-        // Esc peels one layer: palette, ledger, the drawer, then the brain.
+        // Esc peels one layer: palette, no-sync, ledger, the drawer, then the brain.
         if (paletteOpen) setPaletteOpen(false);
+        else if (noSyncOpen) setNoSyncOpen(false);
         else if (ledgerOpen) setLedgerOpen(false);
         else if (chatOpen) setChatOpen(false);
         else setBrainOpen(false);
@@ -117,7 +126,7 @@ export default function App() {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [paletteOpen, ledgerOpen, chatOpen]);
+  }, [paletteOpen, ledgerOpen, chatOpen, noSyncOpen]);
 
   // Palette jobs stream here and take over the dock while they run; when one
   // finishes, the panels it may have changed refetch immediately.
@@ -168,7 +177,9 @@ export default function App() {
       <div className="haze" aria-hidden="true" />
       <TopStrip health={health} window={window_ ?? null} block={tasks?.block ?? null}
                 clock={clock} onHealthClick={checkHealth} />
-      <Rail brainOpen={brainOpen} onBrain={() => setBrainOpen(o => !o)} />
+      <Rail brainOpen={brainOpen} onBrain={() => setBrainOpen(o => !o)}
+            noSyncOpen={noSyncOpen} onNoSync={() => setNoSyncOpen(o => !o)}
+            noSyncCount={noSync?.ok ? noSync.total : null} />
       <Reactor fleet={fleet ?? null} progress={progress} waitingCount={waitingCount} />
       <div className="right">
         <WaitingPanel proposals={proposals ?? null} vault={vault} />
@@ -181,10 +192,12 @@ export default function App() {
             onChat={() => setChatOpen(o => !o)}
             onBrain={() => setBrainOpen(o => !o)}
             onPalette={() => setPaletteOpen(o => !o)}
-            onLedger={() => setLedgerOpen(o => !o)} />
+            onLedger={() => setLedgerOpen(o => !o)}
+            onNoSync={() => setNoSyncOpen(o => !o)} />
       <Brain open={brainOpen} vault={vault} fireRef={fireRef} />
       <Ledger open={ledgerOpen} vault={vault} onClose={() => setLedgerOpen(false)}
               onMutate={refresh} />
+      <NoSyncView open={noSyncOpen} vault={vault} onClose={() => setNoSyncOpen(false)} />
       <Palette open={paletteOpen} onClose={() => setPaletteOpen(false)}
                onLaunched={() => {}} />
       <ChatDrawer open={chatOpen} vault={vault} onClose={() => setChatOpen(false)}

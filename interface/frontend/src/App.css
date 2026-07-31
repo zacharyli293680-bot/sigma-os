@@ -762,3 +762,84 @@ button.led-undo:disabled { cursor: progress; opacity: 0.6; }
 .led-row.reverted .led-what,
 .led-row.reverted .led-actor { text-decoration: line-through; opacity: 0.55; }
 .led-row.led-revert .led-glyph { color: var(--amber); }
+
+/* ------------------------------------------------- Phase 5: the no-sync mark */
+
+/* The inline mark. Bronze is reserved for exactly this fact across the whole
+   app — it is never decoration, and nothing else may borrow it. Shape carries
+   the meaning as well as colour: ⊘ was chosen over ▦ because an unrenderable
+   🏁 in a task's own text falls back to a hatched box (see NoSyncMark). */
+.nosync-mark {
+  color: var(--bronze);
+  font-size: 11.5px;
+  margin-right: 3px;
+  cursor: help;
+  font-weight: 600;
+}
+
+/* The rail button is live now (it was a disabled Phase 5 placeholder). Its
+   count is the whole pitch: how much of the vault exists on one disk only. */
+.rail .seal { color: var(--bronze); opacity: 0.72; cursor: pointer; }
+/* Beats `.rail button.active`, which would repaint this cyan — the one thing
+   bronze must never do is stop meaning "never leaves this machine". */
+.rail .seal:hover,
+.rail button.seal.active { color: var(--bronze); opacity: 1; border-color: rgba(199, 125, 46, 0.5); }
+.seal-n {
+  display: block; font-size: 9px; opacity: 0.75; letter-spacing: 0;
+  margin-top: 1px;
+}
+
+/* The brain's legend key. Deliberately NOT `.nosync` — that class belongs to
+   the audit overlay below, which sets its own 760px width, and a legend row
+   wearing it inherited the whole box. */
+.legend-row.nosync-key i { background: transparent; }
+
+/* the audit view — the ledger's shell, bronze instead of cyan */
+.nosync {
+  margin-top: 9vh;
+  width: min(760px, 94vw);
+  height: fit-content;
+  max-height: 74vh;
+  background: var(--void);
+  border: 1px solid rgba(199, 125, 46, 0.42);
+  box-shadow: 0 0 40px rgba(199, 125, 46, 0.10);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.nosync-head {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(199, 125, 46, 0.28);
+}
+.nosync-head .label { color: var(--bronze); letter-spacing: 0.16em; font-size: 11px; }
+.nosync .claim {
+  margin: 0; padding: 10px 14px;
+  font-size: 12px; line-height: 1.55; color: var(--ink-2);
+  border-bottom: 1px solid var(--panel-line-dim);
+}
+.nosync .claim b { color: var(--bronze); font-weight: 600; }
+.nosync .err {
+  margin: 0; padding: 10px 14px;
+  color: var(--amber); font-size: 12px; line-height: 1.5;
+}
+.nosync .allclear { margin: 0; padding: 14px; }
+.nosync .groups {
+  list-style: none; margin: 0; padding: 8px 14px;
+  border-bottom: 1px solid var(--panel-line-dim);
+}
+.nosync .groups li {
+  display: flex; justify-content: space-between; gap: 12px;
+  padding: 3px 0; font-size: 12px;
+}
+.nosync .groups code { color: var(--bronze); }
+.nosync .files {
+  list-style: none; margin: 0; padding: 8px 14px 14px;
+  overflow-y: auto; flex: 1; min-height: 0;
+}
+.nosync .files li {
+  display: flex; justify-content: space-between; gap: 12px;
+  padding: 2px 0; font-size: 11.5px;
+}
+.nosync .files a { color: var(--ink-2); text-decoration: none; }
+.nosync .files a:hover { color: var(--bronze); }
+.nosync > .dim { padding: 0 14px 12px; font-size: 11.5px; }
