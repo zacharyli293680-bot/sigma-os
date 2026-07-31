@@ -85,6 +85,14 @@ Nothing drifting? Say so and propose nothing.
 AUDITOR = Specialist(
     key="auditor", title="Contract auditor", cadence="weekly",
     model="haiku", effort="medium", order=40,
+    # 24 (the default) stopped being enough somewhere between 157 and 175 notes.
+    # On 2026-07-31 the auditor found real drift, wrote a correct proposal for
+    # it, and then died on error_max_turns before finishing — and because the
+    # fleet applies proposals only from a *successful* run, that finding sat
+    # unapplied while the specialist reported FAILED. The work was good; it ran
+    # out of room to finish saying so. This budget has to scale with the vault,
+    # which grows, not with the number of checks, which does not.
+    max_turns=40,
     brief="""
 Police drift from the vault contract. `CLAUDE.md` is the contract; you enforce it.
 
