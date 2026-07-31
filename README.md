@@ -75,6 +75,16 @@ sigma ui                  start the interface   --port
 On Windows use `sigma.cmd`; the `sigma` shell script is the POSIX equivalent. Neither needs to be
 on `PATH` to work — an absolute path is fine, which is what a scheduled task uses.
 
+**Tests** are stdlib `unittest`, not pytest, and there is no `sigma` verb for them:
+
+```
+interface\backend\.venv\Scripts\python -m unittest discover -s tests -t tests
+```
+
+Both halves of that are load-bearing. The backend venv supplies `fastapi`/`httpx`, which the endpoint
+suites import; `-t tests` is required because `tests/` deliberately has no `__init__.py`, and a bare
+`discover` fails with *"Start directory is not importable"* rather than anything that names the cause.
+
 ## Design rules
 
 Non-negotiable, and mechanical rather than promised wherever possible:

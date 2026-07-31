@@ -290,21 +290,25 @@ guessing at intent: `sigma fleet` shows status, it does not run anything.
 
 | | |
 |---|---|
-| Code repo | `sigma-os`, private, 12 commits |
-| Vault repo | `sigma-vault`, private, 76 commits, 157 notes |
-| Session logs | 24, backlog 0 |
+*(Refreshed 2026-07-31 during the Phase 5 readiness check.)*
+
+| Code repo | `sigma-os`, private, 34 commits |
+| Vault repo | `sigma-vault`, private, 105 commits, 140 tracked notes (165 on disk — the carve-out) |
+| Session logs | 27, backlog 0 |
 | Insights | 8 |
-| Proposals | 11 — 9 applied, 2 rejected, 0 pending |
+| Proposals | 13 — 11 applied, 2 rejected, 0 pending, 0 staged |
 | Skills | 3 user-scoped, 1 vault-scoped (`reflect`) |
 | Doctor | `all clear` on all six checks |
-| Tests | 57 across six suites — run from throwaway temp fixtures, **never committed**; the repo contains no test files |
+| Tests | **41 across five committed suites in `tests/`, green 2026-07-31.** Stdlib `unittest`, no pytest: `interface\backend\.venv\Scripts\python -m unittest discover -s tests -t tests`. Both halves matter — the backend venv supplies `fastapi`/`httpx`, and `-t tests` is required because `tests/` is not a package (a bare `discover` dies on *"Start directory is not importable"*). |
 
-**Both scheduled tasks are installed and `Ready`.** The weekly reflection has run (its 2026-07-26 run
-failed on `ENOTFOUND` and was re-run by hand; next 2026-08-02).
+**Both scheduled tasks are installed and `Ready`.** The weekly reflection's 2026-07-26 run failed on
+`ENOTFOUND` and was re-run by hand; it has not been due since, and `LastTaskResult` is still `1` from
+that failure. Next 2026-08-02 — worth watching rather than assuming.
 
-**The fleet has never run on a schedule.** Every specialist has run, but only because it was invoked
-by hand. Its first unattended firing is **2026-07-29 09:00** — `LastTaskResult` is still
-`267011` (*has not yet run*). Until that completes, "the fleet runs daily" is a prediction.
+**The fleet runs on a schedule — verified.** `SigmaOS-DailyFleet` fired 2026-07-29, 07-30 and 07-31,
+each at 09:00:0x with result `0`. What has *not* happened unattended is a specialist actually
+working: all three scheduled runs logged `nothing due`, and every real specialist run to date was
+invoked by hand. See gap 1 for why, which is a live design question rather than a bug.
 
 ---
 
@@ -312,8 +316,17 @@ by hand. Its first unattended firing is **2026-07-29 09:00** — `LastTaskResult
 
 **Not yet done, in rough priority order:**
 
-1. **The fleet's first scheduled run has not happened.** Watch it. This is exactly how Phases 1 and 2
-   each failed once — green self-checks, nothing running them.
+1. **A hand-run silently suppresses the next morning's scheduled run.** Cadence is measured from the
+   last *success*, not from the schedule: `_due()` asks whether `last_ok` is at least
+   `cadence_days × 24 − 1` hours old. So running the planner by hand at 13:56 on 07-30 left it 19.1h
+   old at 09:00 on 07-31 — under the 23h bar, so the scheduled run logged `nothing due` and wrote no
+   daily note. Correct by the code and defensible by intent (it exists to stop a specialist being
+   skipped for a week after an error), but it means the 09:00 run is quietly weakest on exactly the
+   days you were most active the afternoon before. Anchoring daily cadences to the calendar day
+   rather than a rolling 23h would fix it; that is a design call, not a patch.
+   *(Superseded gap, kept for the lesson: this entry used to read "the fleet's first scheduled run
+   has not happened — watch it." It has now fired three times. Watching it is what surfaced the
+   above, which no self-check would have reported: every run was a green `nothing due`.)*
 2. **Scheduled tasks still hardcode interpreter paths.** Repointing them at `sigma` would leave one
    path per task instead of two, surviving a venv rebuild or Python upgrade. Both shims are verified
    working when called by absolute path from an unrelated cwd. Deliberately deferred until after (1),
@@ -324,9 +337,9 @@ by hand. Its first unattended firing is **2026-07-29 09:00** — `LastTaskResult
 6. **The auditor and coach can propose contradictory fixes** to the same drift — as they did on
    2026-07-28, one proposing to amend the contract and two to amend the notes. That is a real
    decision for a human, but nothing flags that two proposals conflict.
-7. **The test suites exist only as history.** The 57 tests ran from throwaway temp directories and
-   were never committed, so "extend the tests" today means re-creating them. A committed `tests/`
-   directory is a prerequisite for the dashboard plan's "verified, not reasoned about" bar.
+7. ~~**The test suites exist only as history.**~~ **Closed.** `tests/` is committed — five suites,
+   41 tests, green on 2026-07-31 (see §10 for the exact command, which is the part that was
+   genuinely missing: the suite was runnable all along and nothing recorded how).
 
 **Accepted, not bugs:**
 
