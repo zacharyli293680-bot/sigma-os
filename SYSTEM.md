@@ -337,6 +337,24 @@ invoked by hand. See gap 1 for why, which is a live design question rather than 
    41 tests, green on 2026-07-31 (see §10 for the exact command, which is the part that was
    genuinely missing: the suite was runnable all along and nothing recorded how).
 
+8. **The auditor cannot finish a run, and raising its turn budget does not fix it.**
+   Three runs on 2026-07-31, all `error_max_turns`: 24 turns/1 proposal/138.7s, then 40 turns/3
+   proposals/139.6s, then 40 turns/**0 proposals**/129.2s. The third is the diagnostic one — with no
+   drift left to find it still exhausted 40 turns, so the *search* alone does not fit. That also
+   rules out "tell it to stop after the first finding": there was nothing to stop at. Per-turn cost
+   differs (5.8s when drafting a proposal, 3.2s when only grepping), which is why the wall-clock
+   times look suspiciously alike and are not evidence of a hidden time limit — `max_turns` does
+   reach the SDK (`fleet.py` → `build_options` → `ClaudeAgentOptions`).
+   The brief asks Haiku to sweep 175 notes across five classes of check by Grep. The fix is probably
+   not a bigger number but a cheaper search: **precompute the frontmatter inventory in script code
+   and hand it to the model**, the way intake hands over extracted text instead of making the model
+   read PDFs. That turns ~40 search turns into zero and leaves the model doing the part it is
+   actually for — judging a schema against its notes. Not attempted yet; two guesses were already
+   wrong here, and this one deserves measuring rather than assuming.
+   *Consequence while it stands:* the auditor still finds real drift (it caught a contract rule
+   twenty minutes old), but the fleet applies proposals only from successful runs, so its findings
+   never land unattended.
+
 **Accepted, not bugs:**
 
 - `CLAUDE.md` has no frontmatter, deliberately — it is the contract, read as instructions.
