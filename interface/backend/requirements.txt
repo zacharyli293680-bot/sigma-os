@@ -2,3 +2,10 @@ claude-agent-sdk==0.2.128
 fastapi==0.140.0
 pydantic==2.13.4
 uvicorn==0.51.0
+# Study intake reads lecture slides. Deliberately python-pptx rather than
+# markitdown[pptx]: markitdown drags in magika/onnxruntime/numpy/protobuf — an
+# ML content-type sniffer — to determine a file type we already know from its
+# extension. 18 packages against 4, and none of the heavy ones belong in the
+# venv that serves the dashboard. python-pptx also exposes slide structure
+# (title, body, speaker notes) that a flat text conversion throws away.
+python-pptx==1.0.2

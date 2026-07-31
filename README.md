@@ -81,8 +81,13 @@ on `PATH` to work — an absolute path is fine, which is what a scheduled task u
 verb stays a dictionary key with nothing user-supplied in it:
 
 ```
-00-Inbox/intake/<COURSE>/<anything>.pdf|.md|.txt
+00-Inbox/intake/<COURSE>/<anything>.pdf|.pptx|.md|.txt
 ```
+
+Slides keep their structure — slide number, title, bullets, and the speaker
+notes, which are often the only place a deck explains itself rather than
+listing. Master-slide furniture (the copyright line and page number repeated on
+every slide) is stripped: it was ~30% of the text in a sample AA-210 deck.
 
 The subfolder must match a real folder under `02-Areas/Academics/`; anything else
 is reported and skipped rather than filed somewhere plausible. Sources are

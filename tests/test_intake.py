@@ -102,7 +102,9 @@ class TestScan(IntakeBase):
         self.assertTrue(any("top level" in why for _, why in problems))
 
     def test_an_unsupported_type_is_reported(self):
-        self.drop_file("CSE-311/slides.pptx")
+        # .docx, not .pptx — slides became supported on 2026-07-31 and this
+        # fixture was the first thing to notice.
+        self.drop_file("CSE-311/essay.docx")
         items, problems = intake.scan()
         self.assertEqual(items, [])
         self.assertTrue(any("unsupported type" in why for _, why in problems))
@@ -146,6 +148,82 @@ class TestExtract(IntakeBase):
         p = self.drop_file("CSE-311/small.txt", "z" * 300)
         _, truncated = intake.extract(p)
         self.assertFalse(truncated)
+
+
+def _has_pptx():
+    try:
+        import pptx  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+@unittest.skipUnless(_has_pptx(), "python-pptx not installed")
+class TestPptx(IntakeBase):
+    """Lecture slides. 49 of AA-210's 125 source documents are decks, so this
+    path carries a large share of the course's material."""
+
+    def deck(self, name="d.pptx", slides=3, footer="Copyright (c) 2020"):
+        from pptx import Presentation
+        from pptx.util import Inches
+        prs = Presentation()
+        for i in range(slides):
+            s = prs.slides.add_slide(prs.slide_layouts[5])   # title only
+            s.shapes.title.text = f"Topic {i + 1}"
+            box = s.shapes.add_textbox(Inches(1), Inches(2), Inches(6), Inches(3))
+            tf = box.text_frame
+            tf.text = f"point {i + 1}a"
+            tf.add_paragraph().text = f"point {i + 1}b"
+            if footer:                       # master-slide furniture on every slide
+                tf.add_paragraph().text = footer
+            s.notes_slide.notes_text_frame.text = f"note {i + 1}"
+        p = self.drop / "CSE-311" / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        prs.save(str(p))
+        return p
+
+    def test_slide_structure_is_kept(self):
+        text = intake.extract_pptx(self.deck())
+        self.assertIn("### Slide 1 — Topic 1", text)
+        self.assertIn("### Slide 3 — Topic 3", text)
+        self.assertIn("- point 2a", text)
+
+    def test_speaker_notes_are_included(self):
+        """Often the only place a deck explains itself rather than listing."""
+        text = intake.extract_pptx(self.deck())
+        self.assertIn("> Speaker notes: note 2", text)
+
+    def test_repeated_footer_is_stripped(self):
+        text = intake.extract_pptx(self.deck(slides=6))
+        self.assertNotIn("Copyright", text)
+        self.assertIn("- point 1a", text)     # real content survives
+
+    def test_a_line_on_only_one_slide_is_content_not_furniture(self):
+        from pptx import Presentation
+        from pptx.util import Inches
+        prs = Presentation()
+        for i in range(6):
+            s = prs.slides.add_slide(prs.slide_layouts[5])
+            s.shapes.title.text = f"T{i}"
+            tf = s.shapes.add_textbox(Inches(1), Inches(2), Inches(6), Inches(2)).text_frame
+            tf.text = "shared footer"
+            if i == 0:
+                tf.add_paragraph().text = "a unique and important claim"
+        p = self.drop / "CSE-311" / "u.pptx"
+        prs.save(str(p))
+        text = intake.extract_pptx(p)
+        self.assertNotIn("shared footer", text)
+        self.assertIn("a unique and important claim", text)
+
+    def test_pptx_is_accepted_by_the_scanner(self):
+        self.deck(name="lecture.pptx")
+        items, problems = intake.scan()
+        self.assertEqual([p.name for p, _ in items], ["lecture.pptx"], problems)
+
+    def test_extract_routes_pptx_and_reports_length(self):
+        text, truncated = intake.extract(self.deck())
+        self.assertFalse(truncated)
+        self.assertIn("### Slide 1", text)
 
 
 class TestSourceRetention(IntakeBase):

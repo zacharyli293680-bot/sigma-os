@@ -56,7 +56,7 @@ DROP = VAULT / "00-Inbox" / "intake"
 ATTACH = VAULT / "99-Meta" / "Attachments"
 COURSES_ROOT = VAULT / "02-Areas" / "Academics"
 
-SUPPORTED = {".pdf", ".md", ".txt"}
+SUPPORTED = {".pdf", ".pptx", ".md", ".txt"}
 
 # One document's extracted text, capped. A 200-page textbook would otherwise
 # blow the window on a single call and fail the whole run. Truncation is
@@ -151,7 +151,7 @@ def scan() -> tuple:
 # --------------------------------------------------------------------------
 
 def extractor_name() -> str:
-    """Which extractor this process will actually get.
+    """Which extractor this process will actually get for PDFs.
 
     `markitdown` lives in the machine-local `~/.obsidian-tools/venv` that
     `tools/convert.cmd` uses, not in the interface venv intake runs on — so
@@ -164,14 +164,107 @@ def extractor_name() -> str:
     return "markitdown" if importlib.util.find_spec("markitdown") else "pdftotext -layout"
 
 
+def extract_pptx(path: Path) -> str:
+    """Lecture slides, with their structure kept.
+
+    Slides are not prose, and flattening a deck into one text blob loses the
+    thing that makes it readable: which words were the title, which were the
+    body, and what the lecturer wrote in the notes pane — often the only place
+    a deck explains itself rather than listing bullets. So this walks the deck
+    and emits per-slide markdown the model can actually reason about.
+
+    python-pptx rather than markitdown deliberately — see requirements.txt.
+    """
+    from pptx import Presentation
+
+    deck = Presentation(str(path))
+    slides = []
+    for n, slide in enumerate(deck.slides, 1):
+        title = ""
+        try:
+            if slide.shapes.title is not None:
+                title = (slide.shapes.title.text or "").strip()
+        except Exception:
+            pass
+
+        lines, rows = [], []
+        for shape in slide.shapes:
+            try:
+                if shape.has_table:
+                    for row in shape.table.rows:
+                        cells = [(c.text or "").strip().replace("\n", " ") for c in row.cells]
+                        if any(cells):
+                            rows.append("| " + " | ".join(cells) + " |")
+                    continue
+                if not shape.has_text_frame:
+                    continue
+                text = (shape.text_frame.text or "").strip()
+                # The title is already the heading; repeating it reads as a
+                # duplicate bullet and the model treats it as emphasis.
+                if not text or text == title:
+                    continue
+                lines.extend(ln.strip() for ln in text.splitlines() if ln.strip())
+            except Exception:
+                continue                      # one odd shape must not lose the slide
+
+        notes = ""
+        try:
+            if slide.has_notes_slide:
+                notes = (slide.notes_slide.notes_text_frame.text or "").strip()
+        except Exception:
+            pass
+        slides.append({"n": n, "title": title, "lines": lines,
+                       "rows": rows, "notes": notes})
+
+    # Strip master-slide furniture. A deck repeats its copyright line and page
+    # number on every slide, which in the sample deck was ~30% of the extracted
+    # text — pure noise that crowds real content out of the character budget and
+    # reads to the model as something emphasised by repetition. Anything on more
+    # than half the slides is furniture, not content; the threshold is a
+    # majority rather than "all" because title and section slides often use a
+    # different master.
+    counts: dict = {}
+    for s in slides:
+        for ln in set(s["lines"]):
+            counts[ln] = counts.get(ln, 0) + 1
+    cutoff = max(2, len(slides) // 2)
+    boilerplate = {ln for ln, c in counts.items() if c > cutoff}
+
+    out = []
+    for s in slides:
+        out.append(f"### Slide {s['n']}" + (f" — {s['title']}" if s["title"] else ""))
+        for ln in s["lines"]:
+            # Bare page numbers survive the frequency test (each is distinct)
+            # but are just as useless.
+            if ln in boilerplate or ln == str(s["n"]) or ln.isdigit():
+                continue
+            out.append(f"- {ln}")
+        out.extend(s["rows"])
+        if s["notes"]:
+            out.append(f"> Speaker notes: {s['notes']}")
+        out.append("")
+    return "\n".join(out).strip()
+
+
 def extract(path: Path) -> tuple:
     """(text, truncated). PDFs go through the existing converter's extractor —
     the one place that knows the markitdown -> pdftotext fallback."""
-    if path.suffix.lower() == ".pdf":
+    suffix = path.suffix.lower()
+    if suffix == ".pdf":
         sys.path.insert(0, str(_HERE.parent / "tools"))
         try:
             from convert_pdfs import convert_text
             text = convert_text(path)
+        except Exception as e:
+            log(f"   extraction failed for {path.name}: {type(e).__name__}: {e}")
+            text = ""
+    elif suffix == ".pptx":
+        try:
+            text = extract_pptx(path)
+        except ImportError:
+            log(f"   cannot read {path.name}: python-pptx is not installed "
+                f"(pip install -r interface/backend/requirements.txt)")
+            text = ""
         except Exception as e:
             log(f"   extraction failed for {path.name}: {type(e).__name__}: {e}")
             text = ""
@@ -346,7 +439,14 @@ def run(only_course: str | None = None, dry_run: bool = False,
             f"(the rest stay in the drop folder)")
         items = items[:limit]
 
-    log(f"{len(items)} file(s) to intake (pdf text via {extractor_name()})")
+    kinds = {p.suffix.lower() for p, _ in items}
+    how = []
+    if ".pdf" in kinds:
+        how.append(f"pdf via {extractor_name()}")
+    if ".pptx" in kinds:
+        how.append("pptx via python-pptx")
+    log(f"{len(items)} file(s) to intake"
+        + (f" ({', '.join(how)})" if how else ""))
     if dry_run:
         for p, c in items:
             log(f"  would read {p.name} -> {c}")
