@@ -7,7 +7,7 @@
  */
 import { useState } from "react";
 import { ApiError, obsidianHref, post, rel } from "./api";
-import type { Fleet, Health, Project, Proposals, Tasks, VaultTask, Window_ } from "./api";
+import type { Health, Project, Proposals, Tasks, VaultTask, Window_ } from "./api";
 
 export function Panel({ label, children, className = "" }: {
   label: string; children: React.ReactNode; className?: string;
@@ -114,8 +114,9 @@ export function WaitingPanel({ proposals, vault }: { proposals: Proposals | null
     ...proposals.approved.map(p => ({ ...p, badge: "approved", hint: "sigma reflect apply" })),
     ...proposals.staged.map(p => ({ ...p, badge: "staged", hint: "sigma reflect diff → merge" })),
   ];
+  // The one panel that keeps a frame: a bordered box means something is on you.
   return (
-    <Panel label="WAITING ON YOU">
+    <Panel label="WAITING ON YOU" className={rows.length ? "attn" : ""}>
       {rows.length === 0 ? (
         <p className="allclear">✓ nothing is waiting on you</p>
       ) : (
@@ -230,31 +231,9 @@ export function ProjectsPanel({ projects, vault }: { projects: Project[] | null;
   );
 }
 
-export function FleetDetail({ fleet }: { fleet: Fleet | null }) {
-  if (!fleet) return <Panel label="SPECIALISTS"><p className="dim">loading…</p></Panel>;
-  return (
-    <Panel label="SPECIALISTS">
-      <table className="fleet-table">
-        <thead>
-          <tr><th>who</th><th>cadence</th><th>model</th><th>last ok</th><th>raised</th><th></th></tr>
-        </thead>
-        <tbody>
-          {fleet.specialists.map(s => (
-            <tr key={s.key} className={s.last_result && s.last_result !== "ok" ? "broken" : ""}>
-              <td>{s.key}</td>
-              <td>{s.cadence}</td>
-              <td>{s.model}</td>
-              <td title={s.last_ok ?? "never"}>{rel(s.last_ok)}</td>
-              <td>{s.last_proposals ?? "—"}</td>
-              <td>{s.due ? <em className="due-tag">due</em>
-                : s.last_result === "ok" ? "✓" : s.last_result ? `✗ ${s.last_result}` : "·"}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </Panel>
-  );
-}
+// The SPECIALISTS table lived here until it was folded into the reactor: the
+// arcs already said who and how-healthy, so the panel restated half its own
+// subject. Hovering or focusing an arc now shows that specialist's full row.
 
 // ---------------------------------------------------------------- foot
 

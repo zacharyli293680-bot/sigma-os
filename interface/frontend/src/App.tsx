@@ -15,7 +15,7 @@ import Brain from "./brain";
 import ChatDrawer from "./chat";
 import Ledger from "./ledger";
 import Palette from "./palette";
-import { FleetDetail, Foot, Panel, ProjectsPanel, Rail, TodayPanel, TopStrip, WaitingPanel } from "./panels";
+import { Foot, Panel, ProjectsPanel, Rail, TodayPanel, TopStrip, WaitingPanel } from "./panels";
 import Reactor, { activityLine, useElapsed } from "./reactor";
 
 const REFRESH_MS = 60_000;
@@ -164,6 +164,8 @@ export default function App() {
 
   return (
     <div className="shell">
+      {/* the same drifting haze the brain view sits in — one material, two views */}
+      <div className="haze" aria-hidden="true" />
       <TopStrip health={health} window={window_ ?? null} block={tasks?.block ?? null}
                 clock={clock} onHealthClick={checkHealth} />
       <Rail brainOpen={brainOpen} onBrain={() => setBrainOpen(o => !o)} />
@@ -174,7 +176,6 @@ export default function App() {
       </div>
       <div className="lower">
         <ProjectsPanel projects={projects?.projects ?? null} vault={vault} />
-        <FleetDetail fleet={fleet ?? null} />
       </div>
       <Foot activity={dock}
             onChat={() => setChatOpen(o => !o)}

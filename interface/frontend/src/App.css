@@ -25,14 +25,47 @@
 * { box-sizing: border-box; }
 
 body {
+  /* §2's "4% circuit-trace texture" over the void — two hairline grids at a
+     scale coarse enough to read as substrate, not as a spreadsheet. */
   background:
-    radial-gradient(1200px 600px at 70% -10%, rgba(34, 211, 238, 0.05), transparent 60%),
+    linear-gradient(rgba(34, 211, 238, 0.035) 1px, transparent 1px) 0 0 / 100% 92px,
+    linear-gradient(90deg, rgba(34, 211, 238, 0.035) 1px, transparent 1px) 0 0 / 92px 100%,
+    linear-gradient(rgba(34, 211, 238, 0.018) 1px, transparent 1px) 0 0 / 100% 23px,
+    linear-gradient(90deg, rgba(34, 211, 238, 0.018) 1px, transparent 1px) 0 0 / 23px 100%,
     var(--void);
   color: var(--ink);
   font: 14px/1.45 var(--sans);
 }
 
+/* The haze. Same drifting gradients as the brain's nebula at about half
+   strength, brightest behind the reactor so the core sits in its own glow —
+   the dashboard and the brain are visibly one material. Costs nothing: it is
+   CSS behind the grid, not another canvas. */
+.haze {
+  position: fixed;
+  inset: -20%;
+  z-index: -1;                 /* behind every panel, above the void + grid */
+  pointer-events: none;
+  opacity: 0.5;
+  filter: blur(46px);
+  background:
+    radial-gradient(30% 34% at 46% 44%, rgba(0, 229, 255, 0.20), transparent 66%),
+    radial-gradient(34% 40% at 74% 68%, rgba(192, 132, 252, 0.11), transparent 66%),
+    radial-gradient(30% 36% at 22% 26%, rgba(45, 212, 191, 0.10), transparent 64%),
+    radial-gradient(40% 46% at 62% 16%, rgba(96, 165, 250, 0.09), transparent 70%);
+  animation: haze-drift 64s ease-in-out infinite alternate;
+}
+@keyframes haze-drift {
+  0%   { transform: translate3d(0, 0, 0) scale(1); }
+  50%  { transform: translate3d(2%, -1.6%, 0) scale(1.06); }
+  100% { transform: translate3d(-1.6%, 2%, 0) scale(1.02); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .haze { animation: none; }
+}
+
 .shell {
+  position: relative;
   display: grid;
   height: 100%;
   min-width: 920px;
@@ -49,33 +82,42 @@ body {
 
 /* ---------------------------------------------------------------- panels */
 
+/* Panels are unframed by default: a label with a rule running off it, and
+   whitespace doing the separating. Five bordered boxes at equal weight read as
+   noise, and the plan's own rule is that depth comes from glow rather than
+   outlines. A frame is therefore reserved for meaning — see .panel.attn. */
 .panel {
   position: relative;
-  border: 1px solid var(--panel-line);
-  clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px),
-                     calc(100% - 12px) 100%, 0 100%, 0 12px);
-  padding: 30px 14px 12px;
+  padding: 0 2px 6px;
   min-height: 0;
   overflow-y: auto;
 }
-/* The label sits just inside the top border (the classic break-the-border HUD
-   label is impossible here: the notch clip-path would cut it off). */
 .panel > h2 {
-  position: absolute;
-  top: 7px; left: 16px;
-  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 8px;
   color: var(--cyan);
   font: 600 10.5px/1.6 var(--sans);
   letter-spacing: 0.18em;
 }
 .panel > h2::after {
   content: "";
-  display: inline-block;
-  width: 46px; height: 1px;
-  background: var(--panel-line);
-  vertical-align: middle;
-  margin-left: 10px;
+  flex: 1 1 auto;
+  height: 1px;
+  background: linear-gradient(90deg, var(--panel-line), transparent);
 }
+
+/* A frame means something is on you. Notched corners, as before. */
+.panel.attn {
+  border: 1px solid var(--panel-line);
+  clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px),
+                     calc(100% - 12px) 100%, 0 100%, 0 12px);
+  padding: 10px 14px 12px;
+  background: rgba(34, 211, 238, 0.03);
+}
+.panel.attn > h2 { color: var(--amber); }
+.panel.attn > h2::after { background: linear-gradient(90deg, rgba(255, 176, 32, 0.4), transparent); }
 
 .rows { list-style: none; margin: 4px 0; padding: 0; }
 .rows li { margin: 2px 0; }
@@ -153,28 +195,67 @@ code { font-family: var(--mono); font-size: 0.92em; }
   cursor: pointer;
 }
 .rail button.active { color: var(--cyan); border-color: var(--panel-line); }
-.rail button:disabled { color: var(--muted); cursor: default; }
+/* Unbuilt phases stay visible as a faint roadmap rather than vanishing —
+   the rail keeps its shape, and you can see what is coming. */
+.rail button:disabled { color: var(--muted); cursor: default; opacity: 0.42; }
 .rail-gap { flex: 1; }
 .rail .seal { color: var(--bronze); opacity: 0.55; }
 
 /* ---------------------------------------------------------------- centre: the reactor */
 
-.center { grid-area: center; display: flex; }
-.reactor { margin: auto; text-align: center; width: 100%; max-width: 480px; }
-.reactor-svg { width: min(44vh, 330px); max-width: 100%; }
+/* Column, not row: unframed, the h2 is a flex child, and in a row it landed
+   vertically centred at the far left edge — a label orphaned from its own
+   reactor. */
+.center { grid-area: center; display: flex; flex-direction: column; }
+.reactor {
+  position: relative;
+  margin: auto;
+  text-align: center;
+  width: 100%;
+  max-width: 560px;
+}
+.reactor-svg { width: min(58vh, 440px); max-width: 100%; overflow: visible; }
+
+/* No corner brackets: tried, and a rectangular reticle around a circular
+   instrument reads as arbitrary rather than as framing. The bezel and the hex
+   core already carry the weight. */
 
 /* §2 motion: a 4s breathing pulse at idle; when running, the pulse stops and
-   the sweep carries the motion — if it moves, something happened. */
-.reactor.idle .reactor-svg { animation: breathe 4s ease-in-out infinite; }
+   the sweep carries the motion — if it moves, something happened. Only the
+   reporting layers breathe; the core has its own life below. */
+.reactor.idle .bezel,
+.reactor.idle .arc { animation: breathe 4s ease-in-out infinite; }
 @keyframes breathe {
-  0%, 100% { opacity: 0.6; }
-  50%      { opacity: 0.95; }
+  0%, 100% { opacity: 0.62; }
+  50%      { opacity: 1; }
 }
+
+/* the graduation bezel — machining, deliberately static */
+.tick { stroke: rgba(34, 211, 238, 0.16); stroke-width: 1; }
+.tick.major { stroke: rgba(34, 211, 238, 0.34); stroke-width: 1.4; }
+
+/* data spokes: core to arc, lit only by the specialist that owns them */
+.spoke {
+  stroke: rgba(34, 211, 238, 0.10);
+  stroke-width: 1;
+  transition: stroke 200ms linear;
+}
+.arc.running .spoke { stroke: rgba(34, 211, 238, 0.75); }
+.arc.held    .spoke { stroke: rgba(255, 176, 32, 0.5); }
+.arc.fault   .spoke { stroke: rgba(255, 77, 77, 0.5); }
+.arc.probed  .spoke { stroke: rgba(34, 211, 238, 0.5); }
+
+/* invisible fat band so the whole arc is a hover/focus target */
+.arc-hit { fill: none; stroke: transparent; stroke-width: 34; cursor: default; }
+.arc { outline: none; }
+.arc.probed .arc-base { filter: drop-shadow(0 0 7px rgba(0, 229, 255, 0.5)); }
+.arc:focus-visible .arc-base { stroke: var(--cyan); }
 
 .arc-base {
   fill: none;
   stroke: var(--muted);
-  stroke-width: 6;
+  stroke-width: 7;
+  stroke-linecap: round;
   transition: stroke 200ms linear, opacity 200ms linear;
 }
 .arc.idle    .arc-base { stroke: rgba(34, 211, 238, 0.32); }
@@ -188,9 +269,10 @@ code { font-family: var(--mono); font-size: 0.92em; }
 .arc-sweep {
   fill: none;
   stroke: var(--cyan);
-  stroke-width: 6;
+  stroke-width: 7;
+  stroke-linecap: round;
   stroke-dasharray: 26 74;
-  filter: drop-shadow(0 0 6px rgba(0, 229, 255, 0.55));
+  filter: drop-shadow(0 0 8px rgba(0, 229, 255, 0.7));
   animation: sweep 1.6s linear infinite;
 }
 @keyframes sweep {
@@ -205,23 +287,64 @@ code { font-family: var(--mono); font-size: 0.92em; }
   transition: fill 200ms linear;
 }
 .arc.running .arc-label { fill: var(--cyan); }
+.arc.probed  .arc-label { fill: var(--ink); }
 .arc.held    .arc-label { fill: var(--amber); }
 .arc.fault   .arc-label { fill: var(--red); }
 
-.core-ring {
-  fill: none;
+/* The core — the agent itself. Two hex gimbals counter-rotate whether or not
+   a job is running: §2's "if it moves, something happened" governs everything
+   that reports state, and the core reports no state — it is the machine being
+   awake. Linear and slow, so it never reads as activity. */
+.core-plate {
+  fill: rgba(5, 12, 20, 0.55);
   stroke: var(--panel-line);
   stroke-width: 1.5;
   transition: stroke 200ms linear;
 }
-.reactor.running .core-ring {
-  stroke: var(--cyan);
-  filter: drop-shadow(0 0 10px rgba(0, 229, 255, 0.45));
+.core-gimbal,
+.core-gimbal-in {
+  fill: none;
+  stroke: rgba(34, 211, 238, 0.22);
+  stroke-width: 1;
+  stroke-dasharray: 14 9;
+  transform-box: view-box;
+  transform-origin: 150px 150px;
 }
-.core-word { font: 600 13px var(--mono); letter-spacing: 0.14em; fill: var(--ink); }
-.core-sub  { font: 300 12px var(--mono); fill: var(--ink-2); }
+.core-gimbal    { animation: gimbal 54s linear infinite; }
+.core-gimbal-in { animation: gimbal 78s linear infinite reverse; stroke-dasharray: 6 12; }
+@keyframes gimbal { to { transform: rotate(360deg); } }
 
-.center-sub { margin-top: 10px; font-family: var(--mono); font-size: 13px; color: var(--ink-2); }
+.reactor.running .core-plate {
+  stroke: var(--cyan);
+  filter: drop-shadow(0 0 14px rgba(0, 229, 255, 0.5));
+}
+.reactor.running .core-gimbal,
+.reactor.running .core-gimbal-in { stroke: rgba(34, 211, 238, 0.5); }
+
+/* Numbers are the hero: large, thin, letter-spaced. */
+.core-word {
+  font: 200 19px var(--mono);
+  letter-spacing: 0.2em;
+  fill: var(--ink);
+  text-transform: uppercase;
+}
+.core-sub { font: 300 12px var(--mono); letter-spacing: 0.1em; fill: var(--ink-2); }
+
+@media (prefers-reduced-motion: reduce) {
+  .reactor.idle .bezel,
+  .reactor.idle .arc,
+  .core-gimbal,
+  .core-gimbal-in { animation: none; }
+}
+
+.center-sub {
+  margin-top: 14px;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--ink-2);
+  min-height: 1.4em;                     /* no reflow when a probe swaps in */
+}
+.center-sub.probing b { color: var(--cyan); font-weight: 500; }
 .due-tag { color: var(--amber); font-style: normal; }
 .center-note { margin-top: 8px; font-size: 11.5px; }
 
@@ -254,26 +377,29 @@ code { font-family: var(--mono); font-size: 0.92em; }
 
 /* ---------------------------------------------------------------- lower row */
 
+/* Full width since SPECIALISTS folded into the reactor. */
 .lower {
   grid-area: lower;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 12px;
   min-height: 0;
+}
+/* Wrap into as many columns as fit rather than stretching five rows across the
+   full width — space-between over 1400px puts a project's name and its git
+   status at opposite ends of the screen. */
+.lower .rows {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 380px));
+  gap: 0 36px;
 }
 .project a { display: flex; justify-content: space-between; gap: 12px; }
 .project .name { font-family: var(--mono); }
 .project .repo { font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); }
 .project .repo.dirty { color: var(--amber); }
 
-.fleet-table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
-.fleet-table th {
-  text-align: left; font: 600 10px/2 var(--sans);
-  letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-2);
-  border-bottom: 1px solid var(--panel-line-dim);
-}
-.fleet-table td { padding: 5px 8px 5px 0; border-bottom: 1px solid rgba(58, 74, 85, 0.25); }
-.fleet-table .broken td { color: var(--red); }
+/* .fleet-table lived here for the SPECIALISTS panel, now folded into the
+   reactor's hover readout. */
 
 /* ---------------------------------------------------------------- foot */
 
