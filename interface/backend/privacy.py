@@ -34,15 +34,24 @@ _RUNTIME = Path(__file__).resolve().parents[2] / "runtime"
 
 
 @lru_cache(maxsize=1)
-def model_allow_prefixes() -> tuple:
-    """The model-boundary exemptions, loaded once per process. A missing or
-    broken config yields no exemptions — never a wider opening."""
+def model_allow_raw() -> tuple:
+    """The exemptions exactly as the operator wrote them — for *display*, never
+    for matching. A missing or broken config yields no exemptions, never a
+    wider opening."""
     try:
         cfg = json.loads((_RUNTIME / "privacy.config.json").read_text(encoding="utf-8"))
-        return tuple(str(p).replace("\\", "/").strip("/").lower()
-                     for p in cfg.get("model_allow", []) if str(p).strip())
+        return tuple(str(p).strip() for p in cfg.get("model_allow", []) if str(p).strip())
     except Exception:
         return ()
+
+
+@lru_cache(maxsize=1)
+def model_allow_prefixes() -> tuple:
+    """The same list normalised for matching: forward slashes, no surrounding
+    separators, lower-cased. Kept separate from the raw form because showing a
+    path back to the operator in a shape they did not write reads like a bug —
+    the audit view lists `02-Areas/ProCertus/`, not `02-areas/procertus`."""
+    return tuple(p.replace("\\", "/").strip("/").lower() for p in model_allow_raw())
 
 
 def is_model_allowed(rel_posix: str) -> bool:
@@ -52,30 +61,55 @@ def is_model_allowed(rel_posix: str) -> bool:
     return any(r == p or r.startswith(p + "/") for p in model_allow_prefixes())
 
 
-def sealed_paths(vault: Path, rels: list) -> set:
-    """Batch form of the same boundary, for the dashboard panels: gitignored
-    minus the model-boundary exemptions. The single implementation — panels
-    must not grow their own copy with different failure semantics (they did
-    once, and the two disagreed about git exit 128).
+def gitignore_scan(vault: Path, rels: list) -> tuple:
+    """One `git check-ignore` pass, split into the two things the dashboard
+    needs — plus whether git actually answered.
+
+        sealed   gitignored and NOT model-exempt. Hidden from every panel.
+        no_sync  gitignored and model-exempt. Shown, and marked *never leaves
+                 this machine* (dashboard-plan §6, Phase 5).
+        answered False if git could not be asked at all.
+
+    The single implementation of the boundary — panels must not grow their own
+    copy with different failure semantics (they did once, and the two disagreed
+    about git exit 128).
 
     utf-8 is explicit because the default is cp1252 on Windows, where one
     emoji in a *filename* would raise on encode and silently seal everything.
     NUL separation because text-mode newline translation broke this once.
-    Fails closed: if git cannot answer, everything non-exempt is sealed.
+
+    **The two failure directions are not symmetric, so they fail differently.**
+    Hiding is a safety measure, so it fails *on*: if git cannot answer,
+    everything non-exempt is sealed. Marking is a *claim about confidentiality*
+    — "you may put client material here, it cannot leave" — so it fails *off*:
+    an unanswered git yields no marks at all. Marking something no-sync that in
+    fact syncs is the one error in this module that could cause a breach rather
+    than an inconvenience, so it is never made on a guess.
+
+    That also means a mark requires two independent yeses: git must refuse the
+    path *and* the operator must have listed it. A path wrongly listed in
+    `model_allow` but actually tracked by git is never marked.
     """
     if not rels:
-        return set()
-    ignored = set(rels)
+        return set(), set(), True
+    ignored, answered = set(rels), False
     try:
         r = subprocess.run(["git", "-C", str(vault), "check-ignore", "--stdin", "-z"],
                            input="\0".join(rels), capture_output=True,
                            text=True, encoding="utf-8", errors="replace",
                            timeout=15)
         if r.returncode in (0, 1):        # 0 = some ignored, 1 = none
-            ignored = {s for s in r.stdout.split("\0") if s}
+            ignored, answered = {s for s in r.stdout.split("\0") if s}, True
     except Exception:
         pass
-    return {s for s in ignored if not is_model_allowed(s)}
+    sealed = {s for s in ignored if not is_model_allowed(s)}
+    no_sync = {s for s in ignored if is_model_allowed(s)} if answered else set()
+    return sealed, no_sync, answered
+
+
+def sealed_paths(vault: Path, rels: list) -> set:
+    """Just the hidden half, for callers that only filter."""
+    return gitignore_scan(vault, rels)[0]
 
 # Tools whose arguments name a path we must vet before the model sees the result.
 PATH_ARGS = {

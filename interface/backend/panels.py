@@ -9,6 +9,7 @@ Five endpoints, all read-only, all serving panels in the web dashboard:
     GET /api/proposals   what is waiting on Zach — pending, approved, staged
     GET /api/projects    project hubs + live git state of their repos
     GET /api/window      rate-limit headroom — honestly unknown until the Phase 4 spike
+    GET /api/nosync      the audit view: everything that never leaves this machine
 
 Nothing here writes, and nothing here calls a model. Two boundaries hold:
 
@@ -18,6 +19,10 @@ Nothing here writes, and nothing here calls a model. Two boundaries hold:
   panels while still never syncing. Everything gitignored and unlisted stays
   hidden, fail-closed. (Asymmetry worth knowing: the old ProCertus session
   logs remain sealed even though the material they summarize is exempt.)
+- **What is shown but never syncs is marked** (Phase 5). Tasks, projects and
+  graph nodes carry `no_sync`, and `/api/nosync` is the same fact totalled.
+  The two halves come from one `git check-ignore` pass and fail in opposite
+  directions on purpose — see privacy.gitignore_scan.
 - **`fleet.py` is imported, never invoked.** Phase 1 touches the fleet; Phase 0
   deliberately does not (the first unattended 09:00 run had not happened when
   this was written, and you do not rewire the thing you are about to observe).
@@ -35,7 +40,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from agent import VAULT
-from privacy import sealed_paths
+from privacy import gitignore_scan, model_allow_prefixes, model_allow_raw
 
 # The runtime modules own the facts these panels display; recomputing them here
 # would be a second copy that can disagree (the watchdog's cardinal rule).
@@ -79,13 +84,15 @@ def _git(args: list, cwd: Path) -> str | None:
         return None
 
 
-def _gitignored(paths: list) -> set:
-    """Which of these vault-relative paths are *sealed* — gitignored and not
-    exempted at the model boundary. Delegates to privacy.sealed_paths, the
-    single implementation of the boundary; a second copy here once disagreed
-    with it about git's failure exit codes, which is exactly the drift the
-    one-implementation rule exists to prevent."""
-    return sealed_paths(VAULT, paths)
+def _split(paths: list) -> tuple:
+    """(sealed, no_sync) — what to hide, and what to mark, from one pass.
+
+    Delegates to privacy.gitignore_scan, the single implementation of the
+    boundary; a second copy here once disagreed with it about git's failure
+    exit codes, which is exactly the drift the one-implementation rule exists
+    to prevent."""
+    sealed, no_sync, _ = gitignore_scan(VAULT, paths)
+    return sealed, no_sync
 
 
 def _rel(p: Path) -> str:
@@ -184,7 +191,7 @@ def _scan_tasks() -> dict:
              and not p.relative_to(VAULT).parts[0].startswith(".")
              and p.relative_to(VAULT).parts[0] not in _EXCLUDED_TOPS]
     rels = [_rel(p) for p in files]
-    sealed = _gitignored(rels)
+    sealed, no_sync = _split(rels)
 
     tasks = []
     for p, rel in zip(files, rels):
@@ -215,6 +222,7 @@ def _scan_tasks() -> dict:
             # if the note moved underneath it.
             tasks.append({"text": text, "due": due.group(1), "priority": prio,
                           "overdue": due.group(1) < today,
+                          "no_sync": rel in no_sync,
                           "file": rel, "line": i, "raw": line})
 
     tasks.sort(key=lambda t: (t["due"], -(t["priority"] if t["priority"] is not None else -1)))
@@ -306,7 +314,7 @@ def _repo_state(repo: Path) -> dict | None:
 def _scan_projects() -> dict:
     hubs = sorted((VAULT / "03-Projects").glob("*.md"))
     rels = [_rel(p) for p in hubs]
-    sealed = _gitignored(rels)
+    sealed, no_sync = _split(rels)
     projects = []
     for p, rel in zip(hubs, rels):
         if rel in sealed:
@@ -321,6 +329,7 @@ def _scan_projects() -> dict:
         projects.append({
             "name": p.stem, "status": fm.get("status"), "area": fm.get("area"),
             "started": fm.get("started"), "due": fm.get("due"), "repo": repo,
+            "no_sync": rel in no_sync,
             "git": _repo_state(Path(repo)) if repo else None,
         })
     return {"projects": projects}
@@ -378,7 +387,7 @@ def _build_graph() -> dict:
         if top in _GRAPH_SKIP_TOPS or top.startswith("."):
             continue
         files.append((p, rel))
-    sealed = _gitignored([rel for _, rel in files])
+    sealed, no_sync = _split([rel for _, rel in files])
     files = [(p, rel) for p, rel in files if rel not in sealed]
 
     nodes, idx_of = [], {}
@@ -393,8 +402,12 @@ def _build_graph() -> dict:
             mtime = mtime.isoformat(timespec="seconds")
         except OSError:
             mtime = None
+        # `no_sync` rides alongside `bucket` rather than replacing it: the
+        # brain's colours are the vault's eight bucket groups (dashboard-plan
+        # §2) and overloading one of them would make the picture disagree with
+        # Obsidian's graph. The renderer draws a bronze ring instead.
         nodes.append({"id": rel, "label": p.stem, "bucket": _bucket_of(rel),
-                      "inlinks": 0, "mtime": mtime})
+                      "no_sync": rel in no_sync, "inlinks": 0, "mtime": mtime})
 
     def resolve(target: str, src_rel: str) -> str | None:
         t = target.replace("\\", "/").strip("/").lower()
@@ -441,6 +454,89 @@ def _build_graph() -> dict:
 @router.get("/graph")
 def api_graph():
     return _cached("graph", 300, _build_graph)
+
+
+# --------------------------------------------------------------------------
+# GET /api/nosync — the audit view (dashboard-plan §6, Phase 5)
+# --------------------------------------------------------------------------
+# The lens the marker earns: everything that never leaves this machine, in one
+# list. Nothing exclusive lives here — every one of these files also appears in
+# Today, Projects or the brain, marked. What this view adds is the *total*,
+# which no other surface can show, and which is the honest answer to a question
+# the inline marker cannot answer: what exists on one disk only?
+#
+# Not .md-only, deliberately. The carve-out holds PDFs and images too, and this
+# is the list you would hand a backup job.
+
+_NOSYNC_CAP = 500
+
+
+def _scan_nosync() -> dict:
+    files = []
+    for p in VAULT.rglob("*"):
+        if not p.is_file():
+            continue
+        rel = _rel(p)
+        top = rel.split("/", 1)[0]
+        if top.startswith(".") or top == ".git":
+            continue
+        files.append((p, rel))
+
+    rels = [rel for _, rel in files]
+    _, no_sync, answered = gitignore_scan(VAULT, rels)
+
+    rows = []
+    for p, rel in files:
+        if rel not in no_sync:
+            continue
+        try:
+            st = p.stat()
+            mtime = datetime.datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds")
+            size = st.st_size
+        except OSError:
+            mtime, size = None, None
+        rows.append({"path": rel, "mtime": mtime, "bytes": size})
+    rows.sort(key=lambda r: r["path"].lower())
+
+    # Group under the declared prefixes, so the view reads as the carve-out
+    # rather than as a flat pile. A file matching no prefix cannot happen —
+    # membership in no_sync *is* prefix membership — but the bucket exists so a
+    # future change cannot silently drop rows.
+    # Match on the normalised prefixes, label with what the operator wrote.
+    prefixes = model_allow_prefixes()
+    shown = dict(zip(prefixes, model_allow_raw()))
+    groups = {pre: [] for pre in prefixes}
+    other = []
+    for r in rows:
+        low = r["path"].lower()
+        hit = next((pre for pre in prefixes if low == pre or low.startswith(pre + "/")), None)
+        (groups[hit] if hit else other).append(r)
+
+    out = [{"prefix": shown.get(pre, pre), "count": len(items),
+            "bytes": sum(i["bytes"] or 0 for i in items),
+            "newest": max((i["mtime"] for i in items if i["mtime"]), default=None)}
+           for pre, items in groups.items()]
+    if other:
+        out.append({"prefix": "(unlisted)", "count": len(other),
+                    "bytes": sum(i["bytes"] or 0 for i in other),
+                    "newest": max((i["mtime"] for i in other if i["mtime"]), default=None)})
+
+    return {
+        # False = git could not answer, so the boundary is unverified and the
+        # UI must say so rather than render an empty, reassuring list.
+        "ok": answered,
+        "total": len(rows),
+        "bytes": sum(r["bytes"] or 0 for r in rows),
+        "groups": sorted(out, key=lambda g: g["prefix"]),
+        "files": rows[:_NOSYNC_CAP],
+        # No silent caps: if the list is trimmed, the view says by how much.
+        "truncated": max(0, len(rows) - _NOSYNC_CAP),
+    }
+
+
+@router.get("/nosync")
+def api_nosync():
+    return _cached("nosync", 30, _scan_nosync)
 
 
 # --------------------------------------------------------------------------
