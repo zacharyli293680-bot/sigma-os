@@ -266,6 +266,20 @@ class TestSourceRetention(IntakeBase):
         intake.run()
         self.assertTrue(src.exists())
 
+    def test_declining_thin_material_is_not_a_failure(self):
+        """The brief tells the model that material too thin to work with should
+        produce nothing. Exiting non-zero for that made the code contradict its
+        own instructions — the palette renders it as '✗ failed'."""
+        self.drop_file("CSE-311/week-4.md")
+        self._fake_run({"ok": True, "proposals": 0, "files": [], "summary": ""}, [])
+        self.assertEqual(intake.run(), 0)
+
+    def test_a_real_failure_still_exits_non_zero(self):
+        self.drop_file("CSE-311/week-4.md")
+        self._fake_run({"ok": False, "proposals": 0, "files": [],
+                        "error": "timed out"}, [])
+        self.assertEqual(intake.run(), 1)
+
     def test_a_held_proposal_still_counts_as_landed(self):
         """A hold means the change is staged and recorded, not lost."""
         src = self.drop_file("CSE-311/week-4.md")

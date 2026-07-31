@@ -452,7 +452,14 @@ def run(only_course: str | None = None, dry_run: bool = False,
             log(f"  would read {p.name} -> {c}")
         return 0
 
-    made = failed = 0
+    # `declined` is deliberately not `failed`. The brief tells the model that
+    # material too thin to work with should produce nothing — "that is a
+    # correct outcome, and far better than a confident note built on OCR
+    # noise". Counting that as a failure made the code contradict the
+    # instructions it ships: a 548-character slide deck was correctly refused
+    # and the run still exited 1, which the palette renders as "✗ failed" and a
+    # scheduler would read as broken. Judgement is not an error.
+    made = failed = declined = 0
     for p, c in items:
         log(f"-> {p.name} ({c})")
         try:
@@ -461,10 +468,14 @@ def run(only_course: str | None = None, dry_run: bool = False,
             r = {"ok": False, "proposals": 0, "files": [],
                  "error": f"{type(e).__name__}: {e}"}
 
-        if not r.get("ok") or not r.get("proposals"):
+        if not r.get("ok"):
             failed += 1
-            why = r.get("error") or "the model proposed nothing"
-            log(f"   left in place — {why}")
+            log(f"   left in place — {r.get('error') or 'the run failed'}")
+            continue
+        if not r.get("proposals"):
+            declined += 1
+            log(f"   nothing worth writing — left in place"
+                + (f" ({r['summary'][:160]})" if r.get("summary") else ""))
             continue
 
         # Land them, through the one applier the fleet already uses: one commit
@@ -510,8 +521,15 @@ def run(only_course: str | None = None, dry_run: bool = False,
                 log(f"   could not clear {p.name} from the drop folder: {e}")
         made += 1
 
-    log(f"intake finished: {made} filed, {failed} left in place")
-    return 0 if failed == 0 else 1
+    tally = f"intake finished: {made} filed"
+    if declined:
+        tally += f", {declined} with nothing worth writing"
+    if failed:
+        tally += f", {failed} failed"
+    log(tally)
+    # Only real failures are a non-zero exit. A declined document is a working
+    # run that found nothing, which is not the same thing as a broken one.
+    return 1 if failed else 0
 
 
 def status() -> int:
