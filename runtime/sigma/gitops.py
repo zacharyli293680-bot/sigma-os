@@ -35,10 +35,28 @@ class GitBusy(RuntimeError):
     """Another Sigma writer holds the git mutex and did not release in time."""
 
 
+# Nothing here ever runs with a human at a terminal: the fleet is a scheduled
+# task, the dashboard writes come from a web request, and intake runs headless.
+# So git must never *ask* for anything. Without this, an expired GitHub
+# credential does not fail — it blocks forever on a username prompt reading a
+# stdin nobody is attached to, which is exactly what happened on 2026-07-31:
+# hung `git pull`s, orphaned git processes, and a stale mutex left behind by a
+# writer that never returned. A credential that has to be renewed should surface
+# as one loud failed pull, not as a wedged system.
+_NONINTERACTIVE = {
+    "GIT_TERMINAL_PROMPT": "0",     # git's own prompt
+    "GCM_INTERACTIVE": "never",     # Git Credential Manager's GUI dialog
+    "GIT_ASKPASS": "",              # and the askpass helpers it would fall back to
+    "SSH_ASKPASS": "",
+}
+
+
 def _git(vault, *args, timeout=90):
+    env = {**os.environ, **_NONINTERACTIVE}
     return subprocess.run(["git", "-C", str(vault), *args],
                           capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", timeout=timeout)
+                          errors="replace", timeout=timeout,
+                          env=env, stdin=subprocess.DEVNULL)
 
 
 class _Mutex:
@@ -96,6 +114,12 @@ class _Mutex:
         return False
 
 
+# A courtesy fetch before a local write, not the write itself. Short, because
+# a remote that has not answered in this long will not help *this* write, and
+# obsidian-git will merge whenever it next succeeds.
+PULL_TIMEOUT = 20
+
+
 def _pull(vault) -> dict:
     """Best-effort pull. obsidian-git pulls every 15 minutes underneath us, so a
     write that skips this can land on a 14-minute-old HEAD and lose the race.
@@ -104,16 +128,43 @@ def _pull(vault) -> dict:
     means the merge simply happens later; a conflict is aborted and left for
     obsidian-git's own conflict handling. Either way the local write is still
     safe — it becomes a fresh commit on local HEAD.
+
+    **"Best-effort" has to include hanging, which it did not until 2026-07-31.**
+    Only a pull that *returned* nonzero was handled; a remote that accepts the
+    connection and then never answers made `subprocess.run` raise
+    `TimeoutExpired`, which sailed past this function, past `vault_write`, and
+    past `apply_one` — whose docstring promises it never raises. So an
+    unreachable-by-hanging remote took out every autonomous write, including the
+    09:00 fleet's, while an unreachable-by-refusing one degraded politely. Found
+    when GitHub stopped answering from this machine and study intake's first
+    real run proposed a note it could not land.
     """
-    r = _git(vault, "remote")
-    if r.returncode != 0 or not (r.stdout or "").strip():
-        return {"ok": True, "note": "no remote"}
-    r = _git(vault, "pull", "--no-rebase", "--no-edit")
+    try:
+        r = _git(vault, "remote", timeout=10)
+        if r.returncode != 0 or not (r.stdout or "").strip():
+            return {"ok": True, "note": "no remote"}
+        r = _git(vault, "pull", "--no-rebase", "--no-edit", timeout=PULL_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        _merge_abort(vault)
+        return {"ok": False,
+                "note": f"pull timed out after {PULL_TIMEOUT}s - writing on local HEAD"}
+    except OSError as e:
+        return {"ok": False, "note": f"pull could not run ({e}) - writing on local HEAD"}
+
     if r.returncode == 0:
         return {"ok": True, "note": None}
-    _git(vault, "merge", "--abort")              # harmless if there is no merge
+    _merge_abort(vault)
     detail = " ".join(((r.stderr or r.stdout) or "").split())[:200]
     return {"ok": False, "note": f"pull failed ({detail}) - writing on local HEAD"}
+
+
+def _merge_abort(vault):
+    """Harmless if there is no merge in progress, and must not itself be the
+    thing that raises — it only ever runs on a path that already failed."""
+    try:
+        _git(vault, "merge", "--abort", timeout=15)
+    except (subprocess.TimeoutExpired, OSError):
+        pass
 
 
 def head(vault) -> str | None:
@@ -128,6 +179,21 @@ class Writer:
         self.vault = Path(vault)
         self.pulled = pulled
 
+    def _note(self, note: str | None) -> str | None:
+        """Fold a failed pull into whatever this commit has to say.
+
+        `self.pulled` was stored and read by nothing, so a pull that failed was
+        invisible to every caller and to the ledger: the write landed on local
+        HEAD and no one was told it had not synced. On 2026-07-31 that hid an
+        expired GitHub credential for a full day while obsidian-git quietly
+        accumulated eighteen hung processes. A best-effort step is still allowed
+        to fail; it is not allowed to fail silently.
+        """
+        if (self.pulled or {}).get("ok", True):
+            return note
+        warn = self.pulled.get("note") or "pull failed"
+        return f"{note}; {warn}" if note else warn
+
     def commit(self, paths, message) -> dict:
         """Stage exactly `paths`, commit, return what actually happened.
 
@@ -138,6 +204,9 @@ class Writer:
         obsidian-git's 30-minute backup is the expected culprit — already
         carries the change; its SHA is returned so the ledger can still point
         at a real, revertible commit rather than at nothing.
+
+        `note` also carries a failed pull, so "this committed locally but never
+        reached the remote" is something the caller can see.
         """
         rels = [str(p) for p in (paths if isinstance(paths, (list, tuple)) else [paths])]
         r = _git(self.vault, "add", "--", *rels)
@@ -145,22 +214,25 @@ class Writer:
             blob = (r.stderr or r.stdout or "").lower()
             if "ignored" in blob:
                 return {"sha": None, "absorbed": False,
-                        "note": "gitignored path - written but never committed, no undo commit"}
+                        "note": self._note("gitignored path - written but never "
+                                           "committed, no undo commit")}
             return {"sha": None, "absorbed": False,
-                    "note": f"git add failed: {' '.join(blob.split())[:200]}"}
+                    "note": self._note(f"git add failed: {' '.join(blob.split())[:200]}")}
         staged = _git(self.vault, "diff", "--cached", "--quiet", "--", *rels)
         if staged.returncode == 0:               # nothing staged: absorbed or no-op
             r = _git(self.vault, "log", "-1", "--format=%H", "--", rels[0])
             sha = (r.stdout or "").strip() or None
             return {"sha": sha, "absorbed": bool(sha),
-                    "note": "change was already committed (interleaved backup commit)"
-                            if sha else "nothing to commit"}
+                    "note": self._note("change was already committed "
+                                       "(interleaved backup commit)"
+                                       if sha else "nothing to commit")}
         r = _git(self.vault, "commit", "-m", message, "--", *rels)
         if r.returncode != 0:
             detail = " ".join(((r.stderr or r.stdout) or "").split())[:200]
             _git(self.vault, "reset", "--", *rels)
-            return {"sha": None, "absorbed": False, "note": f"commit failed: {detail}"}
-        return {"sha": head(self.vault), "absorbed": False, "note": None}
+            return {"sha": None, "absorbed": False,
+                    "note": self._note(f"commit failed: {detail}")}
+        return {"sha": head(self.vault), "absorbed": False, "note": self._note(None)}
 
 
 @contextmanager
