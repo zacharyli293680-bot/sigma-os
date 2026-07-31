@@ -459,12 +459,49 @@ kbd {
 .brain-overlay {
   position: fixed;
   inset: 0;
+  overflow: hidden;
   background: var(--void);
   z-index: 15;                 /* under the chat drawer (20): ask while watching */
   animation: brain-in 200ms linear;
 }
 @keyframes brain-in { from { opacity: 0; } to { opacity: 1; } }
-.brain-canvas { width: 100%; height: 100%; display: block; }
+.brain-canvas {
+  position: relative; z-index: 1;
+  width: 100%; height: 100%; display: block;
+}
+
+/* Deep tissue behind the stars. Pure CSS on purpose — it costs the canvas
+   nothing, which is the whole reason the frame budget in §11 can afford the
+   bloom that sits on top of it. */
+.brain-nebula {
+  position: absolute; inset: -20%; z-index: 0;
+  pointer-events: none;
+  opacity: 0.68;
+  filter: blur(38px);
+  background:
+    radial-gradient(38% 44% at 26% 30%, rgba(0, 229, 255, 0.24), transparent 68%),
+    radial-gradient(34% 40% at 74% 66%, rgba(192, 132, 252, 0.22), transparent 66%),
+    radial-gradient(30% 36% at 58% 22%, rgba(45, 212, 191, 0.15), transparent 64%),
+    radial-gradient(42% 48% at 38% 78%, rgba(96, 165, 250, 0.15), transparent 70%);
+  animation: brain-drift 52s ease-in-out infinite alternate;
+}
+@keyframes brain-drift {
+  0%   { transform: translate3d(0, 0, 0) scale(1); }
+  50%  { transform: translate3d(2.5%, -2%, 0) scale(1.08); }
+  100% { transform: translate3d(-2%, 2.5%, 0) scale(1.03); }
+}
+
+/* The sky falls off into the void rather than ending at the window edge. */
+.brain-vignette {
+  position: absolute; inset: 0; z-index: 2;
+  pointer-events: none;
+  background: radial-gradient(ellipse 76% 76% at 50% 50%,
+    transparent 42%, rgba(4, 8, 14, 0.5) 82%, rgba(4, 8, 14, 0.9) 100%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brain-nebula { animation: none; }
+}
 
 /* The V.A.U.L.T. arrangement: hard stats down one side, one hero number. */
 .brain-stats {
@@ -472,6 +509,7 @@ kbd {
   left: 26px; top: 50%;
   transform: translateY(-50%);
   width: 210px;
+  z-index: 3;                  /* above the vignette, or the stats read as fogged */
   pointer-events: none;
   font-family: var(--mono);
 }

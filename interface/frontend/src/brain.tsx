@@ -11,9 +11,17 @@
  * basename) light their node and pulse its edges, so you can watch where an
  * answer came from. Layout is aesthetic; the firing is factual.
  *
+ * That split governs every effect here. Ambient beauty — the cortical breathing
+ * wave, the bloom, the depth fog, the dust — is deliberately *continuous and
+ * slow*, so it can never be mistaken for a spike. Firing stays the only thing
+ * that flashes white-cyan and the only thing that sends light down an edge. If
+ * you see something travel, it happened.
+ *
  * §11's render-budget risk is handled directly: if the average frame runs
  * long, the loop degrades to a static render that repaints only on
  * interaction. prefers-reduced-motion gets the static sky from the start.
+ * Glows are pre-rendered sprites rather than ctx.shadowBlur — same look at a
+ * fraction of the cost, which is what buys the bloom inside the budget.
  */
 import { useEffect, useRef, useState } from "react";
 import { get, obsidianHref } from "./api";
@@ -30,6 +38,9 @@ const BUCKETS: [string, string][] = [
   ["system", "system"], ["archive", "archive"], ["meta", "meta & ref"],
 ];
 const FIRE_MS = 1900;
+const FIRE_COLOR = "#9BEFFC";
+/** Fraction of FIRE_MS an axon pulse takes to cross its edge. */
+const AXON = 0.42;
 
 function hash(s: string): number {
   let h = 2166136261;
@@ -43,6 +54,36 @@ function mulberry32(seed: number) {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+}
+
+/* --------------------------------------------------------------- glow sprites */
+
+/** Pre-rendered radial glow, one per colour. ctx.shadowBlur re-blurs on every
+ *  fill and was the single most expensive call in the old frame; a cached
+ *  sprite blitted with drawImage costs a texture copy and looks better. */
+const SPRITES = new Map<string, HTMLCanvasElement>();
+const SPRITE_PX = 64;
+
+function glow(color: string): HTMLCanvasElement {
+  const hit = SPRITES.get(color);
+  if (hit) return hit;
+  const c = document.createElement("canvas");
+  c.width = c.height = SPRITE_PX;
+  const x = c.getContext("2d")!;
+  const h = SPRITE_PX / 2;
+  const r = parseInt(color.slice(1, 3), 16);
+  const g = parseInt(color.slice(3, 5), 16);
+  const b = parseInt(color.slice(5, 7), 16);
+  const grd = x.createRadialGradient(h, h, 0, h, h, h);
+  grd.addColorStop(0.00, "rgba(255,255,255,0.95)");
+  grd.addColorStop(0.13, `rgba(${r},${g},${b},0.90)`);
+  grd.addColorStop(0.34, `rgba(${r},${g},${b},0.30)`);
+  grd.addColorStop(0.62, `rgba(${r},${g},${b},0.07)`);
+  grd.addColorStop(1.00, `rgba(${r},${g},${b},0)`);
+  x.fillStyle = grd;
+  x.fillRect(0, 0, SPRITE_PX, SPRITE_PX);
+  SPRITES.set(color, c);
+  return c;
 }
 
 /** One-shot 3D force layout: repulsion, springs, centre gravity. Seeded from
@@ -93,9 +134,24 @@ function layout(g: Graph): Float32Array {
   return pos;
 }
 
+/** Interstellar dust: parallax depth cues, so camera drift reads as motion
+ *  through a volume rather than a flat picture rotating. */
+function dust(seed: number, count = 260): Float32Array {
+  const rnd = mulberry32(seed);
+  const d = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++) {
+    d[i * 3] = (rnd() - 0.5) * 1500;
+    d[i * 3 + 1] = (rnd() - 0.5) * 1500;
+    d[i * 3 + 2] = (rnd() - 0.5) * 1500;
+  }
+  return d;
+}
+
 type World = {
   g: Graph;
   pos: Float32Array;
+  phase: Float32Array;                 // per-node breathing phase (spatial wave)
+  motes: Float32Array;
   byId: Map<string, number>;           // full vault-relative path (no .md, lower)
   byBase: Map<string, number>;         // basename fallback — ambiguous, last wins
   edgesOf: Map<number, [number, number][]>;
@@ -133,14 +189,25 @@ export default function Brain({ open, vault, fireRef }: {
       }
       const touched = [...g.nodes].sort((a, b) =>
         (b.mtime ?? "").localeCompare(a.mtime ?? ""))[0];
+
+      const pos = layout(g);
+      // Phase from position, not from index: neighbours in space breathe nearly
+      // in step, so the sky shows slow travelling swells the way cortex does,
+      // instead of 164 independently twinkling stars.
+      const phase = new Float32Array(g.nodes.length);
+      for (let i = 0; i < g.nodes.length; i++) {
+        phase[i] = (pos[i * 3] + pos[i * 3 + 1] * 0.6 + pos[i * 3 + 2] * 0.3) * 0.006;
+      }
+
       world.current = {
-        g, pos: layout(g), byId, byBase, edgesOf, fires: new Map(),
+        g, pos, phase, motes: dust(hash(vault || "sigma")),
+        byId, byBase, edgesOf, fires: new Map(),
         lastTouched: touched?.label ?? "—",
       };
       setGraph(g);
     }).catch(() => setGraph(null))
       .finally(() => { fetching.current = false; });
-  }, [open, graph]);
+  }, [open, graph, vault]);
 
   // The firing hook the chat drawer calls through App. Reads now arrive as
   // vault-relative paths (describe() in app.py), so the exact node fires even
@@ -183,19 +250,22 @@ export default function Brain({ open, vault, fireRef }: {
       const rotX = mouse.current.y * 0.22;
       const cy = Math.cos(rotY), sy = Math.sin(rotY);
       const cx = Math.cos(rotX), sx = Math.sin(rotX);
-      const scale = Math.min(W, H) / 720;
-      const breathe = live ? 0.72 + 0.22 * Math.sin((t / 4000) * Math.PI * 2) : 0.85;
+      const scale = Math.min(W, H) / 560;
+
+      // Project once into flat arrays; everything below reads these.
+      const project = (src: Float32Array, i: number): [number, number, number] => {
+        const x0 = src[i * 3], y0 = src[i * 3 + 1], z0 = src[i * 3 + 2];
+        const x1 = x0 * cy + z0 * sy, z1 = -x0 * sy + z0 * cy;
+        const y2 = y0 * cx - z1 * sx, z2 = y0 * sx + z1 * cx;
+        const p = 620 / (620 + z2);
+        return [W / 2 + x1 * p * scale, H / 2 + y2 * p * scale, p];
+      };
 
       const n = w.g.nodes.length;
       const px = new Float32Array(n), py = new Float32Array(n), pp = new Float32Array(n);
       for (let i = 0; i < n; i++) {
-        const x0 = w.pos[i * 3], y0 = w.pos[i * 3 + 1], z0 = w.pos[i * 3 + 2];
-        const x1 = x0 * cy + z0 * sy, z1 = -x0 * sy + z0 * cy;
-        const y2 = y0 * cx - z1 * sx, z2 = y0 * sx + z1 * cx;
-        const p = 620 / (620 + z2);
-        px[i] = W / 2 + x1 * p * scale;
-        py[i] = H / 2 + y2 * p * scale;
-        pp[i] = p;
+        const [x, y, p] = project(w.pos, i);
+        px[i] = x; py[i] = y; pp[i] = p;
       }
 
       const now = performance.now();
@@ -207,38 +277,93 @@ export default function Brain({ open, vault, fireRef }: {
         return a;
       };
 
+      ctx.globalCompositeOperation = "lighter";
+
+      /* ---- dust ---------------------------------------------------------- */
+      ctx.fillStyle = "rgba(150,185,210,0.30)";
+      for (let i = 0; i < w.motes.length / 3; i++) {
+        const [x, y, p] = project(w.motes, i);
+        if (p <= 0 || x < 0 || y < 0 || x > W || y > H) continue;
+        ctx.globalAlpha = Math.min(0.5, (p - 0.45) * 0.7);
+        if (ctx.globalAlpha <= 0) continue;
+        ctx.fillRect(x, y, p * 1.4, p * 1.4);
+      }
+      ctx.globalAlpha = 1;
+
+      /* ---- edges --------------------------------------------------------- */
+      const hi = hover.current;
+      const hotEdges = hi !== null ? w.edgesOf.get(hi) : undefined;
       ctx.lineWidth = 1;
       for (const [a, b] of w.g.links) {
         const boost = Math.max(fireAge(a), fireAge(b));
+        const lit = hi !== null && (a === hi || b === hi);
+        // Depth-fade edges too, or the far side of the volume reads as a
+        // flat wire cage sitting on top of the near stars.
+        const depth = Math.min(pp[a], pp[b]);
         ctx.strokeStyle = boost > 0
           ? `rgba(34, 211, 238, ${(0.06 + 0.5 * boost).toFixed(3)})`
-          : "rgba(120, 150, 170, 0.05)";
+          : lit
+            ? "rgba(155, 239, 252, 0.34)"
+            : `rgba(120, 150, 170, ${(0.035 * depth).toFixed(3)})`;
         ctx.beginPath();
         ctx.moveTo(px[a], py[a]);
         ctx.lineTo(px[b], py[b]);
         ctx.stroke();
       }
 
+      /* ---- axon pulses ---------------------------------------------------
+         Only fired nodes emit these. Nothing else in the scene travels, so a
+         moving light always means a tool actually touched that note.        */
+      const axon = glow(FIRE_COLOR);
+      for (const [idx] of w.fires) {
+        const a = fireAge(idx);
+        if (a <= 0) continue;
+        const u = (1 - a) / AXON;
+        if (u > 1) continue;
+        const edges = w.edgesOf.get(idx);
+        if (!edges) continue;
+        const fade = 1 - u;
+        for (const [ea, eb] of edges) {
+          const far = ea === idx ? eb : ea;
+          const x = px[idx] + (px[far] - px[idx]) * u;
+          const y = py[idx] + (py[far] - py[idx]) * u;
+          const s = 9 * pp[far] * fade;
+          ctx.globalAlpha = fade;
+          ctx.drawImage(axon, x - s, y - s, s * 2, s * 2);
+        }
+      }
+      ctx.globalAlpha = 1;
+
+      /* ---- stars --------------------------------------------------------- */
       for (let i = 0; i < n; i++) {
         const node = w.g.nodes[i];
         const boost = fireAge(i);
-        const r = (1.5 + Math.sqrt(node.inlinks) * 0.95) * pp[i] + boost * 6;
-        ctx.globalAlpha = Math.min(1, breathe + boost);
-        ctx.fillStyle = boost > 0 ? "#9BEFFC" : COLORS[node.bucket] ?? "#8299A6";
-        ctx.shadowColor = ctx.fillStyle;
-        ctx.shadowBlur = boost > 0 ? 20 : r > 3.4 ? 9 : 0;
-        ctx.beginPath();
-        ctx.arc(px[i], py[i], Math.max(r, 1), 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.shadowBlur = 0;
-      ctx.globalAlpha = 1;
+        // The ambient pulse: a slow spatial swell, deliberately gentle and
+        // never white — the eye reads it as breathing, not as an event.
+        const swell = live
+          ? 0.80 + 0.20 * Math.sin(t / 3400 * Math.PI * 2 + w.phase[i])
+          : 0.88;
+        const depth = Math.max(0, Math.min(1, (pp[i] - 0.42) / 0.9));
+        const dim = hi !== null && i !== hi && !hotEdges?.some(([a, b]) => a === i || b === i)
+          ? 0.30 : 1;
 
-      if (hover.current !== null) {
-        const i = hover.current;
+        const r = (1.7 + Math.sqrt(node.inlinks) * 1.05) * pp[i] + boost * 6;
+        const spr = glow(boost > 0 ? FIRE_COLOR : COLORS[node.bucket] ?? "#8299A6");
+        const reach = Math.max(r, 1) * (3.9 + boost * 3.2);
+
+        ctx.globalAlpha = Math.min(1, (0.36 + 0.62 * depth) * swell * dim + boost);
+        ctx.drawImage(spr, px[i] - reach, py[i] - reach, reach * 2, reach * 2);
+      }
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = "source-over";
+
+      if (hi !== null) {
         ctx.font = "12px 'JetBrains Mono', Consolas, monospace";
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "rgba(6,10,18,0.9)";
+        ctx.strokeText(w.g.nodes[hi].label, px[hi] + 10, py[hi] - 8);
         ctx.fillStyle = "#D9E4EB";
-        ctx.fillText(w.g.nodes[i].label, px[i] + 10, py[i] - 8);
+        ctx.fillText(w.g.nodes[hi].label, px[hi] + 10, py[hi] - 8);
       }
 
       // hit-test bookkeeping for hover/click, reused by the handlers below
@@ -306,7 +431,9 @@ export default function Brain({ open, vault, fireRef }: {
 
   return (
     <div className="brain-overlay">
+      <div className="brain-nebula" aria-hidden="true" />
       <canvas ref={canvasRef} className="brain-canvas" />
+      <div className="brain-vignette" aria-hidden="true" />
       <aside className="brain-stats">
         <div className="hero">{graph?.notes ?? "…"}</div>
         <div className="hero-label">NOTES</div>
