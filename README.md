@@ -68,12 +68,25 @@ sigma reflect diff        review changes staged against existing notes
 sigma reflect merge NAME  apply one staged change to its target
 sigma capture status      session-logging self-check + backlog
 sigma capture sweep       log any session the hook missed   --max N
+sigma intake              what is waiting in the drop folder
+sigma intake run          course material -> notes   --course --dry-run --keep --max N
 sigma install [what]      git hooks and scheduled tasks (all | hooks | schedules)
 sigma ui                  start the interface   --port
 ```
 
 On Windows use `sigma.cmd`; the `sigma` shell script is the POSIX equivalent. Neither needs to be
 on `PATH` to work — an absolute path is fine, which is what a scheduled task uses.
+
+**Study intake** reads a drop folder rather than a path argument, so the palette
+verb stays a dictionary key with nothing user-supplied in it:
+
+```
+00-Inbox/intake/<COURSE>/<anything>.pdf|.md|.txt
+```
+
+The subfolder must match a real folder under `02-Areas/Academics/`; anything else
+is reported and skipped rather than filed somewhere plausible. Sources are
+cleared only once a note actually lands.
 
 **Tests** are stdlib `unittest`, not pytest, and there is no `sigma` verb for them:
 

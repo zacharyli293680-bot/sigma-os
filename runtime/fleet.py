@@ -238,11 +238,20 @@ logged.
 """.strip()
 
 
-async def run_one(spec, timeout_s: int = 420, model_override: str | None = None) -> dict:
+async def run_one(spec, timeout_s: int = 420, model_override: str | None = None,
+                  rules: str | None = None) -> dict:
     """Run a single specialist to completion. Never raises.
 
     model_override is the degrade path: after a rate limit the sequencer re-runs
     the remaining Sonnet specialists on Haiku, and the reactor renders the drop.
+
+    `rules` overrides the preamble for callers that are not the scheduled fleet.
+    SHARED_RULES opens with "running unattended on a schedule, Zach is not
+    watching" — true for the four specialists, false for study intake, which a
+    human triggers and then watches in the dock. Everything else here (the
+    applied timeout, proposal counting by directory diff, rate-limit detection,
+    the Windows pipe-teardown sleep) is worth reusing exactly rather than
+    growing a second copy of.
     """
     from claude_agent_sdk import (AssistantMessage, ClaudeSDKClient, ResultMessage,
                                   TextBlock, ToolUseBlock)
@@ -277,7 +286,8 @@ async def run_one(spec, timeout_s: int = 420, model_override: str | None = None)
 
     async def _converse():
         opts = build_options(allow_proposals=True,
-                             orientation=f"{SHARED_RULES}\n\n## Your brief\n\n{spec.brief}",
+                             orientation=f"{rules or SHARED_RULES}\n\n"
+                                         f"## Your brief\n\n{spec.brief}",
                              model=model, effort=spec.effort,
                              max_turns=spec.max_turns)
         # include_partial_messages is for the browser; a headless run does not

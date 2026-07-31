@@ -299,7 +299,7 @@ guessing at intent: `sigma fleet` shows status, it does not run anything.
 | Proposals | 13 — 11 applied, 2 rejected, 0 pending, 0 staged |
 | Skills | 3 user-scoped, 1 vault-scoped (`reflect`) |
 | Doctor | `all clear` on all six checks |
-| Tests | **52 across six committed suites in `tests/`, green 2026-07-31** (41 + 11 for the Phase 5 boundary). Stdlib `unittest`, no pytest: `interface\backend\.venv\Scripts\python -m unittest discover -s tests -t tests`. Both halves matter — the backend venv supplies `fastapi`/`httpx`, and `-t tests` is required because `tests/` is not a package (a bare `discover` dies on *"Start directory is not importable"*). |
+| Tests | **66 across seven committed suites in `tests/`, green 2026-07-31** (41 + 11 for the Phase 5 boundary + 14 for study intake). Stdlib `unittest`, no pytest: `interface\backend\.venv\Scripts\python -m unittest discover -s tests -t tests`. Both halves matter — the backend venv supplies `fastapi`/`httpx`, and `-t tests` is required because `tests/` is not a package (a bare `discover` dies on *"Start directory is not importable"*). |
 
 **Both scheduled tasks are installed and `Ready`.** The weekly reflection's 2026-07-26 run failed on
 `ENOTFOUND` and was re-run by hand; it has not been due since, and `LastTaskResult` is still `1` from

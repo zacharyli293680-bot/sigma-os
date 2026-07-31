@@ -46,6 +46,7 @@ DOCTOR = HERE / "doctor.py"
 FLEET = HERE / "fleet.py"
 REFLECT = HERE / "reflect.py"
 CAPTURE = HERE / "session_logger.py"
+INTAKE = HERE / "intake.py"
 HOOKS = HERE / "install_hooks.py"
 
 
@@ -202,6 +203,23 @@ def cmd_capture(a):
     return run(CAPTURE, *args)
 
 
+def cmd_intake(a):
+    if a.intake_cmd == "status":
+        return run(INTAKE, "--status")
+    args = []
+    if a.course:
+        args += ["--course", a.course]
+    if a.dry_run:
+        args.append("--dry-run")
+    if a.keep:
+        args.append("--keep")
+    if a.max:
+        args += ["--max", a.max]
+    # needs_sdk: unlike the other verbs this one calls a model, so it has to run
+    # on the interpreter that has the agent SDK.
+    return run(INTAKE, *args, needs_sdk=True)
+
+
 def cmd_install(a):
     what = a.what or "all"
     rc = 0
@@ -274,6 +292,16 @@ def build_parser():
     csw = cs.add_parser("sweep", help="log any session the hook missed")
     csw.add_argument("--max", metavar="N")
 
+    n = sub.add_parser("intake", help="turn dropped course material into notes")
+    ns = n.add_subparsers(dest="intake_cmd")
+    ns.add_parser("status", help="what is waiting in the drop folder")
+    nr = ns.add_parser("run", help="read the drop folder and write the notes")
+    for p in (n, nr):        # `sigma intake` and `sigma intake run` take the same flags
+        p.add_argument("--course", default="", help="only this course code")
+        p.add_argument("--dry-run", action="store_true", help="name the files; call no model")
+        p.add_argument("--keep", action="store_true", help="leave sources in the drop folder")
+        p.add_argument("--max", metavar="N")
+
     i = sub.add_parser("install", help="git hooks and scheduled tasks")
     i.add_argument("what", nargs="?", choices=["all", "hooks", "schedules"])
 
@@ -294,18 +322,21 @@ def main(argv=None):
     # A group with no verb should show that group's help, not silently do
     # something plausible — guessing is how a CLI teaches you the wrong model.
     for group, dest in (("fleet", "fleet_cmd"), ("reflect", "reflect_cmd"),
-                        ("capture", "capture_cmd")):
+                        ("capture", "capture_cmd"), ("intake", "intake_cmd")):
         if a.cmd == group and not getattr(a, dest, None):
             if group == "fleet":
                 return run(FLEET, "--status")
             if group == "capture":
                 return run(CAPTURE, "--status")
+            # Bare `sigma intake` reports; `sigma intake run` spends the window.
+            if group == "intake":
+                return run(INTAKE, "--status")
             return run(REFLECT, "--status")
 
     return {
         "status": cmd_status, "doctor": cmd_doctor, "fleet": cmd_fleet,
-        "reflect": cmd_reflect, "capture": cmd_capture, "install": cmd_install,
-        "ui": cmd_ui,
+        "reflect": cmd_reflect, "capture": cmd_capture, "intake": cmd_intake,
+        "install": cmd_install, "ui": cmd_ui,
     }[a.cmd](a)
 
 

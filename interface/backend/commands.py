@@ -95,6 +95,16 @@ VERBS: dict = {
                         "hint": "log anything the hook missed",
                         "argv": _script("session_logger.py", "--sweep"),
                         "timeout": 600, "model": True},
+    # Study intake (Phase 6). No path argument by design — the source is the
+    # drop folder, so the verb stays a dictionary key like every other one.
+    "intake-status":   {"title": "Intake — what is waiting",
+                        "hint": "files dropped in 00-Inbox/intake/<COURSE>/",
+                        "argv": _script("intake.py", "--status"), "timeout": 60},
+    "intake":          {"title": "Intake — read the drop folder",
+                        "hint": "course material in, contract-shaped notes out",
+                        # Several documents × a multi-note conversation each.
+                        "argv": _script("intake.py"),
+                        "timeout": 2400, "model": True, "writes": True},
 }
 
 DISABLED = [
