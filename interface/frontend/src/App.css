@@ -1061,10 +1061,16 @@ pre.diff .meta { color: var(--muted); }
 }
 .capture-actions button:disabled { opacity: 0.35; cursor: default; color: var(--ink-2); }
 
-/* The legend became the filter control — same rows, now clickable. */
+/* The legend became the filter control — same rows, now clickable.
+   `pointer-events: auto` is load-bearing and was missing: the aside these live
+   in sets `pointer-events: none` so the stars stay hoverable *through* the
+   stats, and nothing re-enabled it for the controls added inside it. The
+   filters shipped keyboard-only — Tab and Enter worked, the mouse did nothing,
+   which is exactly the kind of failure that looks like success. */
 button.legend-row {
   width: 100%; background: none; border: 1px solid transparent;
   cursor: pointer; text-align: left; font: inherit;
+  pointer-events: auto;
 }
 button.legend-row:hover { border-color: var(--panel-line-dim); }
 button.legend-row.on { border-color: var(--panel-line); color: var(--cyan); }
@@ -1072,6 +1078,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--cyan); }
 .brain-filters button {
   background: none; border: 1px solid var(--panel-line-dim); color: var(--ink-2);
   font: 11px var(--mono); padding: 4px 8px; cursor: pointer;
+  pointer-events: auto;                /* see button.legend-row above */
 }
 .brain-filters button:hover:not(:disabled) { color: var(--cyan); border-color: var(--panel-line); }
 .brain-filters button.on { color: var(--cyan); border-color: var(--cyan); }

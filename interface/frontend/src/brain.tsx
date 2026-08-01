@@ -46,6 +46,23 @@ const NOSYNC_COLOR = "#C77D2E";
 /** Fraction of FIRE_MS an axon pulse takes to cross its edge. */
 const AXON = 0.42;
 
+/** Ambient frame rate. The camera makes one revolution per 140 seconds, so at
+ *  60fps a star at the cloud's edge moves ~1.4px per frame — fifteen is
+ *  visually identical and costs a quarter as much. That is what makes a
+ *  permanently-mounted brain affordable to leave on all day. */
+const AMBIENT_FPS = 15;
+/** How long a fire promotes the sky to full rate: the pulse's crossing plus the
+ *  tail of the node's own glow. "If it moves, something happened" applied to
+ *  the frame budget — the only thing that buys 60fps is something real. */
+const HOT_MS = FIRE_MS + 300;
+/** Quality ladder. 0 full · 1 dust off and a shorter glow reach · 2 static,
+ *  repainting only on demand. This replaces a one-way boolean: the old rule
+ *  condemned the sky permanently once any 45 frames exceeded 26ms, so a single
+ *  GC pause could do it and nothing could ever recover. Measured on a rolling
+ *  median instead, and re-armed whenever the canvas changes size class. */
+const SLOW_MS = 26;
+const WINDOW = 45;
+
 function hash(s: string): number {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -163,14 +180,33 @@ type World = {
   lastTouched: string;
 };
 
-export default function Brain({ open, vault, fireRef }: {
+export default function Brain({ open, vault, fireRef, mode = "focus", spread = 1 }: {
   open: boolean;
   vault: string;
   fireRef: React.MutableRefObject<((detail: string) => void) | null>;
+  /** "focus" renders at full rate; "ambient" runs at AMBIENT_FPS and drops the
+   *  dust layer. The sky is never unmounted between them — that is the whole
+   *  point of the mode existing rather than a second view. */
+  mode?: "ambient" | "focus";
+  /** Camera fill. 1 is the framing the fullscreen view was designed at; a
+   *  smaller cell wants the cloud spread wider so it over-fills and runs off
+   *  the edges rather than sitting in a box. */
+  spread?: number;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [graph, setGraph] = useState<Graph | null>(null);
-  const [staticSky, setStaticSky] = useState(false);
+  const [quality, setQuality] = useState(0);
+  const staticSky = quality >= 2;
+  // Camera angle accumulates rather than being derived from the frame
+  // timestamp: the loop stops while the tab is hidden, and `t * k` would
+  // teleport the sky by however long you were away. A ref, so changing quality
+  // or mode restarts the loop without snapping the camera back to zero.
+  const driftRef = useRef(0);
+  const hotUntil = useRef(0);
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  const spreadRef = useRef(spread);
+  spreadRef.current = spread;
   // Filters *dim*, they do not remove. The layout is computed once and cached
   // (dashboard-plan §5), so hiding nodes would either relayout — throwing away
   // the picture you had just learned to read — or leave holes. Dimming keeps
@@ -180,6 +216,16 @@ export default function Brain({ open, vault, fireRef }: {
   const [filter, setFilter] = useState<string | null>(null);
   const filterRef = useRef<string | null>(null);
   filterRef.current = filter;
+  // Set by the draw effect; lets anything outside the loop ask for one repaint
+  // without restarting it. Needed because in the degraded static mode nothing
+  // repaints on its own, so a filter change would simply not show up.
+  const redrawRef = useRef<(() => void) | null>(null);
+  useEffect(() => { redrawRef.current?.(); }, [filter]);
+  // Re-arm the ladder when the mode changes: a degrade measured against an
+  // ambient cell says nothing about the expanded view, and vice versa. Without
+  // this, one slow moment in a corner of the dashboard would leave the full
+  // view permanently static.
+  useEffect(() => { setQuality(0); }, [mode]);
   const world = useRef<World | null>(null);
   const mouse = useRef({ x: 0, y: 0 });
   const hover = useRef<number | null>(null);
@@ -203,23 +249,33 @@ export default function Brain({ open, vault, fireRef }: {
       const touched = [...g.nodes].sort((a, b) =>
         (b.mtime ?? "").localeCompare(a.mtime ?? ""))[0];
 
-      const pos = layout(g);
-      // Phase from position, not from index: neighbours in space breathe nearly
-      // in step, so the sky shows slow travelling swells the way cortex does,
-      // instead of 164 independently twinkling stars.
-      const phase = new Float32Array(g.nodes.length);
-      for (let i = 0; i < g.nodes.length; i++) {
-        phase[i] = (pos[i * 3] + pos[i * 3 + 1] * 0.6 + pos[i * 3 + 2] * 0.3) * 0.006;
-      }
-
-      world.current = {
-        g, pos, phase, motes: dust(hash(vault || "sigma")),
-        byId, byBase, edgesOf, fires: new Map(),
-        lastTouched: touched?.label ?? "—",
+      // layout() is O(n²)·220 iterations synchronously on the main thread —
+      // ~3M distance computations at 164 notes. Behind a fullscreen overlay's
+      // fade that was invisible; with the brain permanently mounted it lands
+      // in the dashboard's cold load instead, so it waits for an idle slot.
+      const build = () => {
+        const pos = layout(g);
+        // Phase from position, not from index: neighbours in space breathe nearly
+        // in step, so the sky shows slow travelling swells the way cortex does,
+        // instead of 164 independently twinkling stars.
+        const phase = new Float32Array(g.nodes.length);
+        for (let i = 0; i < g.nodes.length; i++) {
+          phase[i] = (pos[i * 3] + pos[i * 3 + 1] * 0.6 + pos[i * 3 + 2] * 0.3) * 0.006;
+        }
+        world.current = {
+          g, pos, phase, motes: dust(hash(vault || "sigma")),
+          byId, byBase, edgesOf, fires: new Map(),
+          lastTouched: touched?.label ?? "—",
+        };
+        fetching.current = false;
+        setGraph(g);
       };
-      setGraph(g);
-    }).catch(() => setGraph(null))
-      .finally(() => { fetching.current = false; });
+      const idle = (window as Window & {
+        requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => void;
+      }).requestIdleCallback;
+      if (idle) idle(build, { timeout: 1200 });
+      else setTimeout(build, 0);
+    }).catch(() => { fetching.current = false; setGraph(null); });
   }, [open, graph, vault]);
 
   // The firing hook the chat drawer calls through App. Reads now arrive as
@@ -233,7 +289,13 @@ export default function Brain({ open, vault, fireRef }: {
       const key = detail.replace(/\\/g, "/").replace(/\.md$/i, "").toLowerCase().trim();
       const idx = w.byId.get(key)
         ?? w.byBase.get(key.split("/").pop() ?? key);
-      if (idx !== undefined) w.fires.set(idx, performance.now());
+      if (idx === undefined) return;
+      w.fires.set(idx, performance.now());
+      // A fire is the one thing that earns full frame rate: promote the sky
+      // for exactly as long as the pulse is actually travelling, then let it
+      // fall back. This is also what makes firing visible at all in the
+      // degraded static mode, where nothing else would repaint.
+      hotUntil.current = performance.now() + HOT_MS;
     };
     return () => { fireRef.current = null; };
   }, [fireRef]);
@@ -243,9 +305,12 @@ export default function Brain({ open, vault, fireRef }: {
     const canvas = canvasRef.current!;
     const ctx = canvas.getContext("2d")!;
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    let raf = 0, frames = 0, slow = 0, live = !reduced && !staticSky;
+    const live = !reduced && quality < 2;
+    let raf = 0, prev = 0, lastDraw = 0, dirty = true;
+    let awake = !document.hidden;
+    const times: number[] = [];
 
-    const draw = (t: number) => {
+    const draw = (t: number, animating: boolean) => {
       const w = world.current!;
       const W = canvas.clientWidth, H = canvas.clientHeight;
       const dpr = window.devicePixelRatio || 1;
@@ -258,12 +323,11 @@ export default function Brain({ open, vault, fireRef }: {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, W, H);
 
-      const drift = live ? t * 0.000045 : 0.6;
-      const rotY = drift + mouse.current.x * 0.35;
+      const rotY = driftRef.current + mouse.current.x * 0.35;
       const rotX = mouse.current.y * 0.22;
       const cy = Math.cos(rotY), sy = Math.sin(rotY);
       const cx = Math.cos(rotX), sx = Math.sin(rotX);
-      const scale = Math.min(W, H) / 560;
+      const scale = Math.min(W, H) / 560 * spreadRef.current;
 
       // Project once into flat arrays; everything below reads these.
       const project = (src: Float32Array, i: number): [number, number, number] => {
@@ -292,16 +356,20 @@ export default function Brain({ open, vault, fireRef }: {
 
       ctx.globalCompositeOperation = "lighter";
 
-      /* ---- dust ---------------------------------------------------------- */
-      ctx.fillStyle = "rgba(150,185,210,0.30)";
-      for (let i = 0; i < w.motes.length / 3; i++) {
-        const [x, y, p] = project(w.motes, i);
-        if (p <= 0 || x < 0 || y < 0 || x > W || y > H) continue;
-        ctx.globalAlpha = Math.min(0.5, (p - 0.45) * 0.7);
-        if (ctx.globalAlpha <= 0) continue;
-        ctx.fillRect(x, y, p * 1.4, p * 1.4);
+      /* ---- dust ----------------------------------------------------------
+         First thing dropped when the frame budget slips: 260 motes are pure
+         depth cue, and losing them costs parallax rather than information. */
+      if (quality < 1) {
+        ctx.fillStyle = "rgba(150,185,210,0.30)";
+        for (let i = 0; i < w.motes.length / 3; i++) {
+          const [x, y, p] = project(w.motes, i);
+          if (p <= 0 || x < 0 || y < 0 || x > W || y > H) continue;
+          ctx.globalAlpha = Math.min(0.5, (p - 0.45) * 0.7);
+          if (ctx.globalAlpha <= 0) continue;
+          ctx.fillRect(x, y, p * 1.4, p * 1.4);
+        }
+        ctx.globalAlpha = 1;
       }
-      ctx.globalAlpha = 1;
 
       /* ---- edges --------------------------------------------------------- */
       const hi = hover.current;
@@ -353,7 +421,7 @@ export default function Brain({ open, vault, fireRef }: {
         const boost = fireAge(i);
         // The ambient pulse: a slow spatial swell, deliberately gentle and
         // never white — the eye reads it as breathing, not as an event.
-        const swell = live
+        const swell = animating
           ? 0.80 + 0.20 * Math.sin(t / 3400 * Math.PI * 2 + w.phase[i])
           : 0.88;
         const depth = Math.max(0, Math.min(1, (pp[i] - 0.42) / 0.9));
@@ -366,7 +434,10 @@ export default function Brain({ open, vault, fireRef }: {
 
         const r = (1.7 + Math.sqrt(node.inlinks) * 1.05) * pp[i] + boost * 6;
         const spr = glow(boost > 0 ? FIRE_COLOR : COLORS[node.bucket] ?? "#8299A6");
-        const reach = Math.max(r, 1) * (3.9 + boost * 3.2);
+        // A smaller sprite at reduced quality: the blit is fill-rate bound, so
+        // shrinking the reach is the cheapest thing that buys back a frame
+        // without changing what is on screen.
+        const reach = Math.max(r, 1) * ((quality < 1 ? 3.9 : 2.9) + boost * 3.2);
 
         ctx.globalAlpha = Math.min(1, (0.36 + 0.62 * depth) * swell * dim + boost);
         ctx.drawImage(spr, px[i] - reach, py[i] - reach, reach * 2, reach * 2);
@@ -412,22 +483,66 @@ export default function Brain({ open, vault, fireRef }: {
       (canvas as any)._proj = { px, py };
     };
 
+    /* The frame governor. The RAF runs continuously — it is nearly free when
+       it decides not to draw — and everything about *whether* to paint is
+       decided here rather than by starting and stopping the loop. That is what
+       lets a fire animate even in the static mode, where nothing else would
+       ever repaint. */
     const loop = (t: number) => {
-      const t0 = performance.now();
-      draw(t);
-      const dt = performance.now() - t0;
-      if (++frames > 30 && dt > 26 && ++slow > 45) {
-        // §11: cache the layout, cap the cost, degrade to static if the frame
-        // budget slips — a stuttering sky is worse than a still one.
-        setStaticSky(true);
-        live = false;
-        return;
-      }
-      if (live) raf = requestAnimationFrame(loop);
-    };
+      raf = requestAnimationFrame(loop);
+      if (!awake) return;                       // hidden tab: cost nothing
+      const dt = prev ? Math.min(t - prev, 100) : 16;
+      prev = t;
 
-    if (live) raf = requestAnimationFrame(loop);
-    else draw(performance.now());
+      const hot = t < hotUntil.current;
+      const animating = live || hot;
+      if (!animating && !dirty) return;         // static and nothing changed
+
+      // Ambient is capped; focus and anything hot run at the display's rate.
+      const interval = (modeRef.current === "focus" || hot) ? 0 : 1000 / AMBIENT_FPS;
+      if (animating && !dirty && t - lastDraw < interval) return;
+      lastDraw = t;
+      dirty = false;
+      if (animating) driftRef.current += dt * 0.000045;
+
+      const t0 = performance.now();
+      draw(t, animating);
+      const ms = performance.now() - t0;
+
+      // Median of a window, not "any frame over budget, counted". One GC pause
+      // must not be able to condemn the sky, and the old rule let it.
+      if (!animating || quality >= 2) return;
+      times.push(ms);
+      if (times.length < WINDOW) return;
+      const median = [...times].sort((a, b) => a - b)[times.length >> 1];
+      times.length = 0;
+      if (median > SLOW_MS) setQuality(q => Math.min(2, q + 1));
+    };
+    raf = requestAnimationFrame(loop);
+
+    /* Waking and sleeping. A dashboard is left open all day; painting a
+       starfield nobody can see is the one cost that would make a permanent
+       brain indefensible.
+
+       Visibility only — deliberately NOT window blur. This dashboard's whole
+       job is ambient awareness, and the case it is for is having it open on a
+       second screen while you work in another window. Blur would freeze it in
+       exactly that case, which is the one that matters most. `document.hidden`
+       is the only signal that actually means nobody can see this. */
+    const onVisibility = () => {
+      awake = !document.hidden;
+      if (awake) { prev = 0; dirty = true; }    // repaint once, do not jump
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    // The per-frame clientWidth read only adapts while the loop is drawing, so
+    // a resize in static mode left a stretched picture until the mouse moved.
+    const ro = new ResizeObserver(() => { dirty = true; });
+    ro.observe(canvas);
+
+    // A filter change has to repaint too, for the same reason. filterRef is
+    // read inside draw, so this is the only thing that has to happen.
+    redrawRef.current = () => { dirty = true; };
 
     const pick = (e: MouseEvent): number | null => {
       const proj = (canvas as any)._proj;
@@ -447,7 +562,14 @@ export default function Brain({ open, vault, fireRef }: {
       mouse.current.y = (e.clientY - rect.top) / rect.height - 0.5;
       hover.current = pick(e);
       canvas.style.cursor = hover.current !== null ? "pointer" : "default";
-      if (!live) draw(performance.now());
+      dirty = true;
+    };
+    // Without this, moving the cursor off a star and onto something layered
+    // over the canvas leaves that star's label painted, pointing at nothing.
+    const onLeave = () => {
+      hover.current = null;
+      mouse.current.x = mouse.current.y = 0;
+      dirty = true;
     };
     const onClick = (e: MouseEvent) => {
       const i = pick(e);
@@ -458,13 +580,18 @@ export default function Brain({ open, vault, fireRef }: {
       }
     };
     canvas.addEventListener("mousemove", onMove);
+    canvas.addEventListener("mouseleave", onLeave);
     canvas.addEventListener("click", onClick);
     return () => {
       cancelAnimationFrame(raf);
+      ro.disconnect();
+      redrawRef.current = null;
+      document.removeEventListener("visibilitychange", onVisibility);
       canvas.removeEventListener("mousemove", onMove);
+      canvas.removeEventListener("mouseleave", onLeave);
       canvas.removeEventListener("click", onClick);
     };
-  }, [open, graph, staticSky, vault]);
+  }, [open, graph, quality, vault]);
 
   if (!open) return null;
 
