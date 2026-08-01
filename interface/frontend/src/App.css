@@ -203,18 +203,64 @@ code { font-family: var(--mono); font-size: 0.92em; }
 
 /* ---------------------------------------------------------------- centre: the reactor */
 
-/* Column, not row: unframed, the h2 is a flex child, and in a row it landed
-   vertically centred at the far left edge — a label orphaned from its own
-   reactor. */
-.center { grid-area: center; display: flex; flex-direction: column; }
-.reactor {
+/* The centre is a stage, not a panel with a picture in it: the sky fills it,
+   the reactor sits at its heart, the chips ride the bottom edge. `isolation`
+   keeps that z-ladder local so the global one (chat-fab 10, drawer 20,
+   palette 30) is untouched; `container-type` lets the reactor size off the
+   cell rather than the viewport, which is what keeps it from reading as a
+   dartboard against the star cloud. */
+.center {
+  grid-area: center;
   position: relative;
-  margin: auto;
+  overflow: hidden;              /* .panel sets overflow-y:auto — kill it here */
+  isolation: isolate;
+  container-type: size;
+}
+.center > h2 { position: relative; z-index: 5; }
+.vault-line {
+  margin-left: 10px; color: var(--ink-2); letter-spacing: 0.08em;
+  font: 400 10.5px var(--mono); text-transform: none;
+}
+
+/* The pool of darkened sky the reactor sits in. Without it the instrument and
+   the densest part of the cloud fight for the same pixels and neither reads.
+   CSS rather than a hole in the layout: the camera rotates, so any exclusion
+   zone carved into the force sim would simply rotate away — and moving the
+   stars would break the promise that the sky looks the same every visit.
+   Sized off `cqmin`, deliberately NOT a percentage of the cell: the centre is
+   a 2.4:1 letterbox, so `width: 132%` with `aspect-ratio: 1` is a 1614px disc
+   dropped on a 508px-tall cell — it blankets the entire sky. Tied to the
+   smaller dimension it stays a pool around the instrument, which is its job. */
+.core-scrim {
+  position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(84cqmin, 560px); aspect-ratio: 1; z-index: 2;
+  pointer-events: none;
+  background: radial-gradient(closest-side,
+    rgba(5, 7, 10, 0.92) 30%, rgba(5, 7, 10, 0.55) 56%, transparent 100%);
+}
+
+.reactor {
+  position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 3;
   text-align: center;
   width: 100%;
   max-width: 560px;
+  /* Click-through. The reactor is mostly empty space between its arcs, and a
+     star behind that space must stay clickable — otherwise the instrument
+     would punch a dead 420px hole in the middle of the graph. The arcs opt
+     back in below; pointer-events is not a blocking inheritance. */
+  pointer-events: none;
 }
-.reactor-svg { width: min(58vh, 440px); max-width: 100%; overflow: visible; }
+.reactor-svg {
+  width: clamp(280px, 46cqmin, 420px);
+  max-width: 100%; overflow: visible;
+}
+/* Readable over stars without blocking them. */
+.center-sub, .center-note, .center .warn-line {
+  text-shadow: 0 0 10px var(--void), 0 0 4px var(--void);
+}
 
 /* No corner brackets: tried, and a rectangular reticle around a circular
    instrument reads as arbitrary rather than as framing. The bezel and the hex
@@ -246,7 +292,13 @@ code { font-family: var(--mono); font-size: 0.92em; }
 .arc.probed  .spoke { stroke: rgba(34, 211, 238, 0.5); }
 
 /* invisible fat band so the whole arc is a hover/focus target */
-.arc-hit { fill: none; stroke: transparent; stroke-width: 34; cursor: default; }
+/* The one part of the reactor that takes the mouse back — see .reactor above.
+   `stroke` rather than `auto`: only the 34px band itself is a target, so the
+   arc's bounding box does not swallow the stars around it. */
+.arc-hit {
+  fill: none; stroke: transparent; stroke-width: 34; cursor: default;
+  pointer-events: stroke;
+}
 .arc { outline: none; }
 .arc.probed .arc-base { filter: drop-shadow(0 0 7px rgba(0, 229, 255, 0.5)); }
 .arc:focus-visible .arc-base { stroke: var(--cyan); }
@@ -582,15 +634,20 @@ kbd {
 
 /* ---------------------------------------------------------------- the brain */
 
-.brain-overlay {
-  position: fixed;
-  inset: 0;
+/* The sky is a layer of the centre stage now, not a view of its own. It fills
+   the cell behind the reactor and stays mounted at every zoom level — there is
+   no screen on which you can see one and not the other. */
+.brain-field {
+  position: absolute; inset: 0; z-index: 1;
   overflow: hidden;
-  background: var(--void);
-  z-index: 15;                 /* under the chat drawer (20): ask while watching */
-  animation: brain-in 200ms linear;
+  /* Fade at the edges instead of vignetting to opaque dark: the cell has no
+     border, so a dark ring would draw the box the design spent its whole
+     budget avoiding. This way the sky dissolves into the haze. */
+  -webkit-mask-image: radial-gradient(ellipse 82% 82% at 50% 50%,
+    #000 46%, rgba(0,0,0,0.72) 76%, transparent 100%);
+  mask-image: radial-gradient(ellipse 82% 82% at 50% 50%,
+    #000 46%, rgba(0,0,0,0.72) 76%, transparent 100%);
 }
-@keyframes brain-in { from { opacity: 0; } to { opacity: 1; } }
 .brain-canvas {
   position: relative; z-index: 1;
   width: 100%; height: 100%; display: block;
@@ -617,13 +674,10 @@ kbd {
   100% { transform: translate3d(-2%, 2.5%, 0) scale(1.03); }
 }
 
-/* The sky falls off into the void rather than ending at the window edge. */
-.brain-vignette {
-  position: absolute; inset: 0; z-index: 2;
-  pointer-events: none;
-  background: radial-gradient(ellipse 76% 76% at 50% 50%,
-    transparent 42%, rgba(4, 8, 14, 0.5) 82%, rgba(4, 8, 14, 0.9) 100%);
-}
+/* The vignette that used to sit here is gone: it faded to opaque dark, which
+   was right against a fullscreen void and wrong inside a borderless cell —
+   it would have drawn exactly the box the layout avoids everywhere else.
+   `.brain-field`'s mask-image does the same falloff, to transparent. */
 
 @media (prefers-reduced-motion: reduce) {
   .brain-nebula { animation: none; }
@@ -635,8 +689,8 @@ kbd {
   left: 26px; top: 50%;
   transform: translateY(-50%);
   width: 210px;
-  z-index: 3;                  /* above the vignette, or the stats read as fogged */
-  pointer-events: none;
+  z-index: 4;                  /* above the reactor, which is z3 on the stage */
+  pointer-events: none;        /* stars stay hoverable through it; buttons opt in */
   font-family: var(--mono);
 }
 .brain-stats .hero {
@@ -1084,3 +1138,54 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--cyan); }
 .brain-filters button.on { color: var(--cyan); border-color: var(--cyan); }
 .brain-filters button:disabled { opacity: 0.35; cursor: default; }
 .brain-filter-note { margin: 8px 0 0; font-size: 11px; line-height: 1.5; }
+
+/* ------------------------------------------------- the stage's chip row */
+
+/* The legend, flattened into one line along the bottom of the centre cell.
+   Same facts and the same filter as the V.A.U.L.T. aside — this is just the
+   variant that fits when the sky is sharing its cell with a reactor. */
+.vault-chips {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 4;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px;
+  padding: 6px 2px 2px;
+}
+.vault-chips .chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: none; border: 1px solid transparent; color: var(--ink-2);
+  font: 10.5px var(--mono); padding: 2px 6px; cursor: pointer;
+  pointer-events: auto;          /* the stage above it is click-through */
+  text-shadow: 0 0 8px var(--void);
+}
+.vault-chips .chip i {
+  width: 7px; height: 7px; border-radius: 50%; flex: none;
+}
+.vault-chips .chip b { color: var(--ink); font-weight: 500; }
+.vault-chips .chip:hover { border-color: var(--panel-line-dim); color: var(--ink); }
+.vault-chips .chip.on { border-color: var(--panel-line); color: var(--cyan); }
+.vault-chips .nosync-chip { cursor: default; }
+.vault-chips .nosync-chip:hover { border-color: transparent; color: var(--ink-2); }
+.chip-note { font-size: 10.5px; margin: 0 0 0 4px; text-shadow: 0 0 8px var(--void); }
+
+/* ------------------------------------------------------------- the dive */
+
+/* Ctrl+G is a zoom, not a switch. The right column and lower row collapse to
+   nothing and the centre stage takes the space — in flow, so the global
+   z-index ladder is untouched and the chat drawer still opens over it. The
+   reactor rides along at the heart the whole way. */
+.shell.diving {
+  grid-template-columns: 72px minmax(0, 1fr) 0;
+  grid-template-rows: 44px minmax(220px, 1fr) 0 30px;
+}
+.shell.diving .right,
+.shell.diving .lower { opacity: 0; overflow: hidden; pointer-events: none; }
+.right, .lower { transition: opacity 160ms linear; }
+.shell, .shell.diving { transition: grid-template-rows 200ms ease, grid-template-columns 200ms ease; }
+/* Expanded, the stage has room for the full V.A.U.L.T. column again, and the
+   scrim shrinks relative to the sky because the cloud is no longer crowding
+   the instrument. Same cqmin basis as above, for the same reason. */
+.shell.diving .core-scrim { width: min(58cqmin, 620px); }
+.shell.diving .brain-nebula { opacity: 0.8; }
+
+@media (prefers-reduced-motion: reduce) {
+  .right, .lower, .shell, .shell.diving { transition: none; }
+}

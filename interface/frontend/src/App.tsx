@@ -10,8 +10,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./App.css";
 import { API, get } from "./api";
-import type { Fleet, Health, Job, NoSync, Progress, Projects, Proposals, Tasks, Window_ } from "./api";
-import Brain from "./brain";
+import type { Fleet, Graph, Health, Job, NoSync, Progress, Projects, Proposals, Tasks, Window_ } from "./api";
+import Brain, { VaultHud } from "./brain";
 import ChatDrawer from "./chat";
 import Ledger from "./ledger";
 import NoSyncView from "./nosync";
@@ -25,6 +25,9 @@ import { Foot, Panel, ProjectsPanel, Rail, TodayPanel, TopStrip, WaitingPanel } 
 import Reactor, { activityLine, useElapsed } from "./reactor";
 
 const REFRESH_MS = 60_000;
+/** The graph endpoint is cached server-side for 300s; polling it faster only
+ *  ever returns the same thing. */
+const GRAPH_MS = 300_000;
 
 function useClock(): string {
   const [now, setNow] = useState(new Date());
@@ -47,7 +50,12 @@ export default function App() {
   const [window_, setWindow] = useState<Window_ | null | undefined>(undefined);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
-  const [brainOpen, setBrainOpen] = useState(false);
+  // The brain is never absent now — it is the centre stage's background, with
+  // the reactor at its heart. `diving` only decides how much room it gets.
+  const [graph, setGraph] = useState<Graph | null>(null);
+  const [diving, setDiving] = useState(false);
+  const [brainFilter, setBrainFilter] = useState<string | null>(null);
+  const [staticSky, setStaticSky] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [ledgerOpen, setLedgerOpen] = useState(false);
   const [noSyncOpen, setNoSyncOpen] = useState(false);
@@ -85,6 +93,17 @@ export default function App() {
     return () => clearInterval(t);
   }, [refresh, checkHealth]);
 
+  // The graph on its own slower cadence: the backend caches it for 300s, and
+  // re-fetching it every minute would only ever hand back the same object.
+  // Kept off `refresh` deliberately — a new graph identity relays the sky, and
+  // that is not something a routine poll should be able to do.
+  useEffect(() => {
+    const pull = () => get<Graph>("graph").then(setGraph).catch(() => {});
+    pull();
+    const t = setInterval(pull, GRAPH_MS);
+    return () => clearInterval(t);
+  }, []);
+
   // The reactor's live feed. EventSource reconnects on its own, and the
   // endpoint replays the current state on connect, so a mid-run page load
   // still shows the run.
@@ -117,7 +136,9 @@ export default function App() {
         setPaletteOpen(o => !o);
       } else if (e.ctrlKey && (e.key === "g" || e.key === "G")) {
         e.preventDefault();
-        setBrainOpen(o => !o);
+        // Not a view switch any more: the brain is always on the centre stage,
+        // and this decides whether it gets the whole shell.
+        setDiving(d => !d);
       } else if (e.ctrlKey && (e.key === "j" || e.key === "J")) {
         e.preventDefault();
         setLedgerOpen(o => !o);
@@ -128,7 +149,10 @@ export default function App() {
         e.preventDefault();
         setCaptureOpen(o => !o);
       } else if (e.key === "Escape") {
-        // Esc peels one layer: review, palette, no-sync, ledger, drawer, brain.
+        // Esc peels one layer: review, palette, no-sync, ledger, drawer, then
+        // the dive, then an active filter. That last rung is new — a filter had
+        // no keyboard escape at all before, because Esc's job used to be
+        // closing a view that took the filter with it.
         if (captureOpen) setCaptureOpen(false);
         else if (reviewing) setReviewing(null);
         else if (studyOpen) setStudyOpen(false);
@@ -137,12 +161,14 @@ export default function App() {
         else if (noSyncOpen) setNoSyncOpen(false);
         else if (ledgerOpen) setLedgerOpen(false);
         else if (chatOpen) setChatOpen(false);
-        else setBrainOpen(false);
+        else if (diving) setDiving(false);
+        else if (brainFilter) setBrainFilter(null);
       }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [paletteOpen, ledgerOpen, chatOpen, noSyncOpen, reviewing, studyOpen, buildOpen, captureOpen]);
+  }, [paletteOpen, ledgerOpen, chatOpen, noSyncOpen, reviewing, studyOpen,
+      buildOpen, captureOpen, diving, brainFilter]);
 
   // Palette jobs stream here and take over the dock while they run; when one
   // finishes, the panels it may have changed refetch immediately.
@@ -188,17 +214,33 @@ export default function App() {
     : activityLine(fleet ?? null, progress, dockElapsed);
 
   return (
-    <div className="shell">
-      {/* the same drifting haze the brain view sits in — one material, two views */}
+    <div className={`shell ${diving ? "diving" : ""}`}>
+      {/* the same drifting haze the sky sits in — one material, one view */}
       <div className="haze" aria-hidden="true" />
       <TopStrip health={health} window={window_ ?? null} block={tasks?.block ?? null}
                 clock={clock} onHealthClick={checkHealth} />
-      <Rail brainOpen={brainOpen} onBrain={() => setBrainOpen(o => !o)}
+      <Rail diving={diving} onBrain={() => setDiving(d => !d)}
             noSyncOpen={noSyncOpen} onNoSync={() => setNoSyncOpen(o => !o)}
             noSyncCount={noSync?.ok ? noSync.total : null}
             studyOpen={studyOpen} onStudy={() => setStudyOpen(o => !o)}
             buildOpen={buildOpen} onBuild={() => setBuildOpen(o => !o)} />
-      <Reactor fleet={fleet ?? null} progress={progress} waitingCount={waitingCount} />
+      {/* The centre stage: one scene, not a panel with a picture in it. The
+          sky fills the cell, the reactor sits at its heart in a pool of
+          darkened sky, and the chips ride the bottom edge. */}
+      <section className="panel center">
+        <h2>FLEET
+          <span className="vault-line">
+            {graph ? `${graph.notes} notes · ${graph.edges} edges` : "…"}
+          </span>
+        </h2>
+        <Brain graph={graph} vault={vault} fireRef={fireRef} filter={brainFilter}
+               onStatic={setStaticSky}
+               mode={diving ? "focus" : "ambient"} spread={diving ? 1 : 1.35} />
+        <div className="core-scrim" aria-hidden="true" />
+        <Reactor fleet={fleet ?? null} progress={progress} waitingCount={waitingCount} />
+        <VaultHud graph={graph} filter={brainFilter} onFilter={setBrainFilter}
+                  staticSky={staticSky} variant={diving ? "aside" : "chips"} />
+      </section>
       <div className="right">
         <WaitingPanel proposals={proposals ?? null} onReview={setReviewing} />
         <TodayPanel tasks={tasks ?? null} vault={vault} onMutate={refresh} />
@@ -209,12 +251,11 @@ export default function App() {
       </div>
       <Foot activity={dock}
             onChat={() => setChatOpen(o => !o)}
-            onBrain={() => setBrainOpen(o => !o)}
+            onBrain={() => setDiving(d => !d)}
             onPalette={() => setPaletteOpen(o => !o)}
             onLedger={() => setLedgerOpen(o => !o)}
             onNoSync={() => setNoSyncOpen(o => !o)}
             onCapture={() => setCaptureOpen(o => !o)} />
-      <Brain open={brainOpen} vault={vault} fireRef={fireRef} />
       <Ledger open={ledgerOpen} vault={vault} onClose={() => setLedgerOpen(false)}
               onMutate={refresh} />
       <NoSyncView open={noSyncOpen} vault={vault} onClose={() => setNoSyncOpen(false)} />

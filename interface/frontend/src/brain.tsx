@@ -23,8 +23,8 @@
  * Glows are pre-rendered sprites rather than ctx.shadowBlur — same look at a
  * fraction of the cost, which is what buys the bloom inside the budget.
  */
-import { useEffect, useRef, useState } from "react";
-import { get, obsidianHref } from "./api";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { obsidianHref } from "./api";
 import type { Graph } from "./api";
 
 const COLORS: Record<string, string> = {
@@ -180,23 +180,35 @@ type World = {
   lastTouched: string;
 };
 
-export default function Brain({ open, vault, fireRef, mode = "focus", spread = 1 }: {
-  open: boolean;
+export default function Brain({ graph, vault, fireRef, filter, onStatic,
+                                mode = "focus", spread = 1 }: {
+  /** Fetched by App, like every other panel's data. The brain is a renderer. */
+  graph: Graph | null;
   vault: string;
   fireRef: React.MutableRefObject<((detail: string) => void) | null>;
+  /** Lifted to App so the HUD can live outside this component — the chips sit
+   *  on the stage in ambient and become the V.A.U.L.T. column when expanded. */
+  filter: string | null;
+  /** Reports the bottom of the quality ladder upward, so the HUD can say
+   *  "static sky — frame budget" while living outside this component. A
+   *  degradation nobody is told about is the kind of silent failure this whole
+   *  OS is built to avoid. */
+  onStatic?: (v: boolean) => void;
   /** "focus" renders at full rate; "ambient" runs at AMBIENT_FPS and drops the
    *  dust layer. The sky is never unmounted between them — that is the whole
-   *  point of the mode existing rather than a second view. */
+   *  point of a mode rather than a second view. */
   mode?: "ambient" | "focus";
-  /** Camera fill. 1 is the framing the fullscreen view was designed at; a
-   *  smaller cell wants the cloud spread wider so it over-fills and runs off
-   *  the edges rather than sitting in a box. */
+  /** Camera fill. 1 is the framing the fullscreen view was designed at; the
+   *  smaller centre cell wants the cloud spread wider so it over-fills and runs
+   *  off the edges rather than sitting in a box. */
   spread?: number;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [graph, setGraph] = useState<Graph | null>(null);
   const [quality, setQuality] = useState(0);
-  const staticSky = quality >= 2;
+  // `ready` flips when the deferred layout has produced a world to draw. It is
+  // state rather than a ref because the draw effect has to re-run when it lands.
+  const [ready, setReady] = useState(false);
+  useEffect(() => { onStatic?.(quality >= 2); }, [quality, onStatic]);
   // Camera angle accumulates rather than being derived from the frame
   // timestamp: the loop stops while the tab is hidden, and `t * k` would
   // teleport the sky by however long you were away. A ref, so changing quality
@@ -213,7 +225,6 @@ export default function Brain({ open, vault, fireRef, mode = "focus", spread = 1
   // the constellation recognisable and costs nothing.
   // A ref, not state, inside the draw loop: filtering must not restart the
   // animation, and the loop needs the current value each frame.
-  const [filter, setFilter] = useState<string | null>(null);
   const filterRef = useRef<string | null>(null);
   filterRef.current = filter;
   // Set by the draw effect; lets anything outside the loop ask for one repaint
@@ -230,11 +241,15 @@ export default function Brain({ open, vault, fireRef, mode = "focus", spread = 1
   const mouse = useRef({ x: 0, y: 0 });
   const hover = useRef<number | null>(null);
 
-  const fetching = useRef(false);      // StrictMode double-invokes effects
+  // Build the world from whatever graph App last handed us. Keyed on graph
+  // identity, so a refetch that returns the same object does nothing and a
+  // genuinely new one relays.
+  const built = useRef<Graph | null>(null);
   useEffect(() => {
-    if (!open || graph || fetching.current) return;
-    fetching.current = true;
-    get<Graph>("graph").then(g => {
+    const g = graph;
+    if (!g || built.current === g) return;
+    built.current = g;
+    {
       const byId = new Map<string, number>();
       const byBase = new Map<string, number>();
       g.nodes.forEach((n, i) => {
@@ -267,16 +282,23 @@ export default function Brain({ open, vault, fireRef, mode = "focus", spread = 1
           byId, byBase, edgesOf, fires: new Map(),
           lastTouched: touched?.label ?? "—",
         };
-        fetching.current = false;
-        setGraph(g);
+        setReady(true);
       };
+      // Whichever fires first. requestIdleCallback's `timeout` is supposed to
+      // guarantee the callback runs, but a background tab defers it hard — and
+      // this dashboard is exactly the kind of thing you open in a background
+      // tab and switch to later, which would leave the sky permanently unbuilt.
+      // The timer is the floor; the idle slot is the optimisation.
+      let done = false;
+      const once = () => { if (!done) { done = true; build(); } };
       const idle = (window as Window & {
         requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => void;
       }).requestIdleCallback;
-      if (idle) idle(build, { timeout: 1200 });
-      else setTimeout(build, 0);
-    }).catch(() => { fetching.current = false; setGraph(null); });
-  }, [open, graph, vault]);
+      if (idle) idle(once, { timeout: 1200 });
+      const t = setTimeout(once, 1400);
+      return () => clearTimeout(t);
+    }
+  }, [graph, vault]);
 
   // The firing hook the chat drawer calls through App. Reads now arrive as
   // vault-relative paths (describe() in app.py), so the exact node fires even
@@ -301,7 +323,7 @@ export default function Brain({ open, vault, fireRef, mode = "focus", spread = 1
   }, [fireRef]);
 
   useEffect(() => {
-    if (!open || !graph) return;
+    if (!ready || !world.current) return;
     const canvas = canvasRef.current!;
     const ctx = canvas.getContext("2d")!;
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -591,64 +613,122 @@ export default function Brain({ open, vault, fireRef, mode = "focus", spread = 1
       canvas.removeEventListener("mouseleave", onLeave);
       canvas.removeEventListener("click", onClick);
     };
-  }, [open, graph, quality, vault]);
+  }, [ready, quality, vault]);
 
-  if (!open) return null;
-
-  const counts: Record<string, number> = {};
-  graph?.nodes.forEach(n => { counts[n.bucket] = (counts[n.bucket] ?? 0) + 1; });
-  const noSyncCount = graph?.nodes.filter(n => n.no_sync).length ?? 0;
-  const weekCount = graph?.nodes.filter(n =>
-    n.mtime ? Date.now() - new Date(n.mtime).getTime() < 7 * 864e5 : false).length ?? 0;
-
+  // Just the sky. The numbers and the filters are VaultHud, below, because in
+  // the ambient state they live on the stage's edges rather than over the
+  // canvas — and the two need to be positioned independently.
   return (
-    <div className="brain-overlay">
+    <div className={`brain-field ${mode}`}>
       <div className="brain-nebula" aria-hidden="true" />
       <canvas ref={canvasRef} className="brain-canvas" />
-      <div className="brain-vignette" aria-hidden="true" />
-      <aside className="brain-stats">
-        <div className="hero">{graph?.notes ?? "…"}</div>
-        <div className="hero-label">NOTES</div>
-        <div className="stat-row"><span>edges</span><b>{graph?.edges ?? "…"}</b></div>
-        <div className="stat-row"><span>last touched</span><b>{world.current?.lastTouched ?? "…"}</b></div>
-        <div className="legend">
-          {BUCKETS.map(([k, label]) => (
-            <button key={k}
-                    className={`legend-row ${filter === k ? "on" : ""}`}
-                    onClick={() => setFilter(filter === k ? null : k)}
-                    title={`show only ${label}`}>
-              <i style={{ background: COLORS[k] }} />
-              <span>{label}</span><b>{counts[k] ?? 0}</b>
-            </button>
-          ))}
-          {noSyncCount > 0 && (
-            // Listed apart from the buckets because it is not one: a node has
-            // exactly one bucket and may *also* be no-sync.
-            // `nosync-key`, not `nosync`: the overlay in nosync.tsx owns the
-            // bare class and sizes itself to 760px, which this row inherited.
-            <div className="legend-row nosync-key" title="never leaves this machine (Ctrl+.)">
-              <i style={{ background: "transparent", boxShadow: `inset 0 0 0 1px ${NOSYNC_COLOR}` }} />
-              <span>no-sync</span><b>{noSyncCount}</b>
-            </div>
-          )}
-        </div>
-        <div className="brain-filters">
-          <button className={filter === "week" ? "on" : ""}
-                  onClick={() => setFilter(filter === "week" ? null : "week")}
-                  title="notes touched in the last 7 days">changed this week</button>
-          <button onClick={() => setFilter(null)} disabled={!filter}>all</button>
-        </div>
-        {filter && (
-          <p className="dim brain-filter-note">
-            showing {filter === "week" ? weekCount : (counts[filter] ?? 0)} of {graph?.notes ?? 0}
-            {" "}· the rest are dimmed, not hidden
-          </p>
-        )}
-        <p className="dim brain-hint">
-          click a star to open the note · <kbd>Esc</kbd> back
-          {staticSky && <><br />static sky — frame budget</>}
-        </p>
-      </aside>
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ the HUD */
+
+/** The vault's numbers and the bucket filters.
+ *
+ *  Two variants of one component rather than two components: they show exactly
+ *  the same facts and drive exactly the same filter, and the only difference is
+ *  how much room they have. `chips` is a row along the bottom of the stage for
+ *  the ambient state; `aside` is the V.A.U.L.T. column with the 84px hero
+ *  number, for when the brain has the whole shell.
+ */
+export function VaultHud({ graph, filter, onFilter, variant, staticSky = false }: {
+  graph: Graph | null;
+  filter: string | null;
+  onFilter: (f: string | null) => void;
+  variant: "chips" | "aside";
+  staticSky?: boolean;
+}) {
+  // Memoised: App re-renders on every fleet-progress SSE message, and these
+  // walked all 200 nodes three times on each of them.
+  const { counts, noSyncCount, weekCount } = useMemo(() => {
+    const c: Record<string, number> = {};
+    let ns = 0, wk = 0;
+    const weekAgo = Date.now() - 7 * 864e5;
+    graph?.nodes.forEach(n => {
+      c[n.bucket] = (c[n.bucket] ?? 0) + 1;
+      if (n.no_sync) ns++;
+      if (n.mtime && new Date(n.mtime).getTime() > weekAgo) wk++;
+    });
+    return { counts: c, noSyncCount: ns, weekCount: wk };
+  }, [graph]);
+
+  const shown = filter ? (filter === "week" ? weekCount : (counts[filter] ?? 0)) : 0;
+
+  if (variant === "chips") {
+    return (
+      <div className="vault-chips">
+        {BUCKETS.map(([k, label]) => (
+          <button key={k} className={`chip ${filter === k ? "on" : ""}`}
+                  onClick={() => onFilter(filter === k ? null : k)}
+                  title={`show only ${label} — ${counts[k] ?? 0} notes`}>
+            <i style={{ background: COLORS[k] }} />{label}<b>{counts[k] ?? 0}</b>
+          </button>
+        ))}
+        {noSyncCount > 0 && (
+          <span className="chip nosync-chip" title="never leaves this machine (Ctrl+.)">
+            <i style={{ background: "transparent", boxShadow: `inset 0 0 0 1px ${NOSYNC_COLOR}` }} />
+            no-sync<b>{noSyncCount}</b>
+          </span>
+        )}
+        <button className={`chip ${filter === "week" ? "on" : ""}`}
+                onClick={() => onFilter(filter === "week" ? null : "week")}
+                title="notes touched in the last 7 days">changed this week<b>{weekCount}</b></button>
+        {filter && (
+          <span className="dim chip-note">
+            showing {shown} of {graph?.notes ?? 0} · the rest are dimmed, not hidden
+            {" "}· <kbd>Esc</kbd> clears
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <aside className="brain-stats">
+      <div className="hero">{graph?.notes ?? "…"}</div>
+      <div className="hero-label">NOTES</div>
+      <div className="stat-row"><span>edges</span><b>{graph?.edges ?? "…"}</b></div>
+      <div className="legend">
+        {BUCKETS.map(([k, label]) => (
+          <button key={k}
+                  className={`legend-row ${filter === k ? "on" : ""}`}
+                  onClick={() => onFilter(filter === k ? null : k)}
+                  title={`show only ${label}`}>
+            <i style={{ background: COLORS[k] }} />
+            <span>{label}</span><b>{counts[k] ?? 0}</b>
+          </button>
+        ))}
+        {noSyncCount > 0 && (
+          // Listed apart from the buckets because it is not one: a node has
+          // exactly one bucket and may *also* be no-sync.
+          // `nosync-key`, not `nosync`: the overlay in nosync.tsx owns the
+          // bare class and sizes itself to 760px, which this row inherited.
+          <div className="legend-row nosync-key" title="never leaves this machine (Ctrl+.)">
+            <i style={{ background: "transparent", boxShadow: `inset 0 0 0 1px ${NOSYNC_COLOR}` }} />
+            <span>no-sync</span><b>{noSyncCount}</b>
+          </div>
+        )}
+      </div>
+      <div className="brain-filters">
+        <button className={filter === "week" ? "on" : ""}
+                onClick={() => onFilter(filter === "week" ? null : "week")}
+                title="notes touched in the last 7 days">changed this week</button>
+        <button onClick={() => onFilter(null)} disabled={!filter}>all</button>
+      </div>
+      {filter && (
+        <p className="dim brain-filter-note">
+          showing {shown} of {graph?.notes ?? 0} · the rest are dimmed, not hidden
+        </p>
+      )}
+      <p className="dim brain-hint">
+        click a star to open the note · <kbd>Esc</kbd> back
+        {staticSky && <><br />static sky — frame budget</>}
+      </p>
+    </aside>
   );
 }

@@ -29,7 +29,6 @@
 import { useEffect, useState } from "react";
 import type { Fleet, Progress } from "./api";
 import { rel } from "./api";
-import { Panel } from "./panels";
 
 type ArcState = "idle" | "queued" | "running" | "ok" | "held" | "fault" | "degraded";
 
@@ -104,11 +103,11 @@ export default function Reactor({ fleet, progress, waitingCount }: {
   const degraded = !!progress?.degraded && (running || paused);
   const elapsed = useElapsed(running ? progress!.current_started : null);
 
-  if (!fleet) return <Panel label="FLEET" className="center"><p className="dim">loading…</p></Panel>;
+  if (!fleet) return <div className="reactor idle"><p className="dim">loading…</p></div>;
   if (fleet.specialists.length === 0) {
-    return <Panel label="FLEET" className="center">
+    return <div className="reactor idle">
       <p className="warn-line">no specialists configured — check specialists.py</p>
-    </Panel>;
+    </div>;
   }
 
   const stateOf = (key: string): ArcState => {
@@ -159,8 +158,7 @@ export default function Reactor({ fleet, progress, waitingCount }: {
     : anyFault ? "FAULT" : "IDLE";
 
   return (
-    <Panel label="FLEET" className="center">
-      <div className={`reactor ${running ? "running" : "idle"}`}>
+    <div className={`reactor ${running ? "running" : "idle"}`}>
         <svg viewBox="0 0 300 300" className="reactor-svg" role="img"
              aria-label={`fleet ${coreWord.toLowerCase()}`}>
           {/* bezel — machining, not data */}
@@ -241,8 +239,7 @@ export default function Reactor({ fleet, progress, waitingCount }: {
         {!paused && fleet.stopped_early_at && (
           <p className="warn-line">last run stopped early on a rate limit ({rel(fleet.stopped_early_at)} ago)</p>
         )}
-      </div>
-    </Panel>
+    </div>
   );
 }
 

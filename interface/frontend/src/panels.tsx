@@ -71,8 +71,8 @@ export function TopStrip({ health, window: win, block, clock, onHealthClick }: {
 // ---------------------------------------------------------------- left rail
 
 const RAIL: [string, string, boolean][] = [
-  ["OV", "Overview", true],
-  ["BR", "Brain (Ctrl+G)", true],
+  ["OV", "Overview — the dashboard around it", true],
+  ["BR", "Brain — expand the sky (Ctrl+G)", true],
   ["AG", "Agents — Phase 1", false],
   ["WK", "Work — Phase 6", false],
   ["ST", "Study — exam mode", true],
@@ -81,9 +81,11 @@ const RAIL: [string, string, boolean][] = [
   ["SY", "System — Phase 6", false],
 ];
 
-export function Rail({ brainOpen, onBrain, noSyncOpen, onNoSync, noSyncCount,
+/** OV and BR are no longer two rooms. The brain is always on the centre stage;
+ *  these name how much of the shell it gets, which is why BR reads "expand". */
+export function Rail({ diving, onBrain, noSyncOpen, onNoSync, noSyncCount,
                       studyOpen, onStudy, buildOpen, onBuild }: {
-  brainOpen: boolean; onBrain: () => void;
+  diving: boolean; onBrain: () => void;
   noSyncOpen: boolean; onNoSync: () => void; noSyncCount: number | null;
   studyOpen: boolean; onStudy: () => void;
   buildOpen: boolean; onBuild: () => void;
@@ -91,11 +93,11 @@ export function Rail({ brainOpen, onBrain, noSyncOpen, onNoSync, noSyncCount,
   return (
     <nav className="rail">
       {RAIL.map(([k, title, live]) => {
-        const active = k === "BR" ? brainOpen : k === "ST" ? studyOpen
+        const active = k === "BR" ? diving : k === "ST" ? studyOpen
           : k === "BD" ? buildOpen
-          : k === "OV" ? !brainOpen && !studyOpen && !buildOpen : false;
+          : k === "OV" ? !diving && !studyOpen && !buildOpen : false;
         const go = k === "BR" ? onBrain : k === "ST" ? onStudy : k === "BD" ? onBuild
-          : k === "OV" && brainOpen ? onBrain : undefined;
+          : k === "OV" && diving ? onBrain : undefined;
         return (
           <button key={k} className={active ? "active" : ""} disabled={!live}
                   title={title} onClick={go}>
