@@ -56,6 +56,20 @@ export type Project = {
 };
 export type Projects = { projects: Project[] };
 
+/** Exam mode (Phase 6). `date`/`days` are null when the source never stated
+ *  one — blank is the honest answer, not zero. */
+export type ExamUnit = {
+  course: string; exam: string | null;
+  date: string | null; days: number | null;
+  status: string | null; file: string; title: string;
+};
+export type CourseCoverage = {
+  course: string; sources: number; covered: number;
+  by_folder: { folder: string; total: number; covered: number }[];
+  uncovered_sample: string[]; uncovered_more: number;
+};
+export type Study = { exams: ExamUnit[]; coverage: CourseCoverage[] };
+
 /** The Phase 5 audit view: everything that never leaves this machine. */
 export type NoSyncGroup = {
   prefix: string; count: number; bytes: number; newest: string | null;

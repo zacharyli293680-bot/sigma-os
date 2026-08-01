@@ -540,6 +540,112 @@ def api_nosync():
 
 
 # --------------------------------------------------------------------------
+# GET /api/study — exam mode (dashboard-plan Phase 6)
+# --------------------------------------------------------------------------
+# [[dashboard-vision]] asks for "everything for one exam in one place: what is
+# covered, what you have not practised, what you got wrong last time".
+#
+# The first two are computable and are what this returns. The third is not:
+# nothing in the vault records a wrong answer, so inventing a "weak areas"
+# number would be a confident guess dressed as data. It is left out rather than
+# faked, and the UI says so.
+#
+# **"Not practised" is defined as: a source file no note embeds.** Intake writes
+# `> Source: ![[the-file]]` into every note it produces, and hand-written notes
+# use the same Obsidian embed, so the embed set *is* the record of what has been
+# worked through. That makes coverage a fact about the vault rather than a
+# heuristic about filenames — which matters here, because AA-210's `EX1*`/`SG1`
+# naming is one course's convention and would not survive contact with the next.
+
+_COVERAGE_SAMPLE = 12
+
+
+def _embedded_sources(folder: Path) -> set:
+    """Every `![[target]]` embedded by any note under this course."""
+    out = set()
+    for p in folder.rglob("*.md"):
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for raw in re.findall(r"!\[\[([^\]|#]+)", text):
+            out.add(raw.strip().rsplit("/", 1)[-1].lower())
+    return out
+
+
+def _scan_study() -> dict:
+    root = VAULT / "02-Areas" / "Academics"
+    exams, coverage = [], []
+    if not root.is_dir():
+        return {"exams": [], "coverage": []}
+
+    today = datetime.date.today()
+    for folder in sorted(p for p in root.iterdir() if p.is_dir()):
+        course = folder.name
+        rels = [_rel(p) for p in folder.rglob("*.md")]
+        sealed, _ = _split(rels)
+
+        for p in sorted(folder.rglob("*.md")):
+            rel = _rel(p)
+            if rel in sealed:
+                continue
+            try:
+                fm = frontmatter(p.read_text(encoding="utf-8", errors="replace"))
+            except OSError:
+                continue
+            if (fm or {}).get("type") != "exam-prep":
+                continue
+            raw_date = str(fm.get("date") or "").strip()
+            days = None
+            if raw_date:
+                try:
+                    days = (datetime.date.fromisoformat(raw_date) - today).days
+                except ValueError:
+                    days = None
+            exams.append({
+                "course": course, "exam": str(fm.get("exam") or "").strip() or None,
+                # Blank is the honest answer when the source never stated one —
+                # every AA-210 study guide is in exactly that position.
+                "date": raw_date or None, "days": days,
+                "status": str(fm.get("status") or "").strip() or None,
+                "file": rel, "title": _title_of(p.read_text(encoding="utf-8",
+                                                            errors="replace"), p.stem),
+            })
+
+        sources = [q for q in folder.rglob("*") if q.is_file() and q.suffix.lower() != ".md"]
+        if not sources:
+            continue
+        embedded = _embedded_sources(folder)
+        uncovered = [q for q in sources if q.name.lower() not in embedded]
+        by_folder: dict = {}
+        for q in sources:
+            grp = q.parent.relative_to(folder).as_posix() or "."
+            g = by_folder.setdefault(grp, {"total": 0, "covered": 0})
+            g["total"] += 1
+            if q.name.lower() in embedded:
+                g["covered"] += 1
+        coverage.append({
+            "course": course,
+            "sources": len(sources), "covered": len(sources) - len(uncovered),
+            "by_folder": [{"folder": k, **v} for k, v in sorted(by_folder.items())],
+            "uncovered_sample": [_rel(q) for q in uncovered[:_COVERAGE_SAMPLE]],
+            # No silent caps.
+            "uncovered_more": max(0, len(uncovered) - _COVERAGE_SAMPLE),
+        })
+
+    # Dated exams first and soonest-first; undated ones after, since an exam
+    # with no date cannot be ranked against one that has one.
+    exams.sort(key=lambda e: (e["days"] is None, e["days"] if e["days"] is not None else 0,
+                              e["course"], e["exam"] or ""))
+    return {"exams": exams, "coverage": coverage}
+
+
+@router.get("/study")
+def api_study():
+    return _cached("study", 60, _scan_study)
+
+
+# --------------------------------------------------------------------------
 # GET /api/window
 # --------------------------------------------------------------------------
 

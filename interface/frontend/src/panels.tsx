@@ -75,24 +75,28 @@ const RAIL: [string, string, boolean][] = [
   ["BR", "Brain (Ctrl+G)", true],
   ["AG", "Agents — Phase 1", false],
   ["WK", "Work — Phase 6", false],
-  ["ST", "Study — Phase 6", false],
+  ["ST", "Study — exam mode", true],
   ["BD", "Build — Phase 6", false],
   ["CR", "Career — Phase 6", false],
   ["SY", "System — Phase 6", false],
 ];
 
-export function Rail({ brainOpen, onBrain, noSyncOpen, onNoSync, noSyncCount }: {
+export function Rail({ brainOpen, onBrain, noSyncOpen, onNoSync, noSyncCount,
+                      studyOpen, onStudy }: {
   brainOpen: boolean; onBrain: () => void;
   noSyncOpen: boolean; onNoSync: () => void; noSyncCount: number | null;
+  studyOpen: boolean; onStudy: () => void;
 }) {
   return (
     <nav className="rail">
       {RAIL.map(([k, title, live]) => {
-        const active = k === "BR" ? brainOpen : k === "OV" ? !brainOpen : false;
+        const active = k === "BR" ? brainOpen : k === "ST" ? studyOpen
+          : k === "OV" ? !brainOpen && !studyOpen : false;
+        const go = k === "BR" ? onBrain : k === "ST" ? onStudy
+          : k === "OV" && brainOpen ? onBrain : undefined;
         return (
           <button key={k} className={active ? "active" : ""} disabled={!live}
-                  title={title}
-                  onClick={k === "BR" ? onBrain : k === "OV" && brainOpen ? onBrain : undefined}>
+                  title={title} onClick={go}>
             ◇ {k}
           </button>
         );
