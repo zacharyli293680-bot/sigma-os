@@ -100,6 +100,123 @@ class WhereToStart(unittest.TestCase):
                       devlog._span({"n": 3, "base": None, "since": None}))
 
 
+class EntryFrom(unittest.TestCase):
+    """The model is asked for prose and told the runner adds the date, the bullet
+    and the stamp — but it has just been shown five entries in the full form, so
+    it sometimes hands one back that way. Stripping is cheaper than refusing."""
+
+    def _e(self, said):
+        return devlog.entry_from(said, "ccccccc", "2026-07-31")
+
+    def test_the_tags_discard_everything_around_them(self):
+        """The real failure: the first sigma-os run opened with "I can't read the
+        repo itself…" and that sentence went into the note."""
+        got = self._e("I can't read the repo itself — only the commit subjects "
+                      "are available to me. I'll write the entry from those.\n\n"
+                      "<entry>Phase 5 landed the sync boundary, and the two halves "
+                      "fail in opposite directions on purpose.</entry>\n\n"
+                      "Let me know if you'd like it shorter.")
+        self.assertTrue(got.startswith("- **2026-07-31** — Phase 5 landed"))
+        self.assertNotIn("I can't read", got)
+        self.assertNotIn("Let me know", got)
+
+    def test_the_refusal_word_wins_over_stray_prose(self):
+        self.assertIsNone(self._e("Looking at these two commits — NOTHING here is "
+                                  "worth an entry."))
+
+    def test_the_refusal_word_inside_an_entry_is_not_a_refusal(self):
+        got = self._e("<entry>NOTHING about the parser changed, but the auth stack "
+                      "was rebuilt around a public read allowlist.</entry>")
+        self.assertIsNotNone(got)
+        self.assertIn("auth stack", got)
+
+    def test_plain_prose_gets_dated_bulleted_and_stamped(self):
+        got = self._e("Added the auth stack and locked public reads to an allowlist.")
+        self.assertTrue(got.startswith("- **2026-07-31** — Added the auth"))
+        self.assertTrue(got.endswith("_(through `ccccccc`)_"))
+
+    def test_a_self_written_bullet_and_date_are_not_doubled(self):
+        got = self._e("- **2026-07-31** — Added the auth stack and the allowlist "
+                      "that goes with it.")
+        self.assertEqual(got.count("2026-07-31"), 1)
+        self.assertFalse(got.startswith("- - "))
+
+    def test_a_self_written_stamp_is_not_doubled(self):
+        got = self._e("Added the auth stack and the public read allowlist beside "
+                      "it. _(through `ccccccc`)_")
+        self.assertEqual(got.count("through"), 1)
+
+    def test_a_code_fence_is_unwrapped(self):
+        got = self._e("```markdown\nAdded the auth stack and the read allowlist.\n```")
+        self.assertNotIn("```", got)
+        self.assertIn("Added the auth stack", got)
+
+    def test_the_refusal_word_declines(self):
+        self.assertIsNone(self._e("NOTHING"))
+        self.assertIsNone(self._e("NOTHING worth recording here."))
+
+    def test_a_too_short_answer_declines_rather_than_landing(self):
+        self.assertIsNone(self._e("Bumped deps."))
+
+    def test_newlines_collapse_to_one_bullet(self):
+        got = self._e("First the scaffold.\n\nThen the parser that reads it, which "
+                      "is the part that matters.")
+        self.assertNotIn("\n", got)
+
+
+class Splice(unittest.TestCase):
+    """A splice is a rule: it inserts between two known offsets, so it cannot
+    drop a section or reword a decision the way a re-transcription can."""
+
+    ENTRY = "- **2026-07-31** — Did the thing. _(through `ccccccc`)_"
+
+    def test_it_appends_after_the_last_entry(self):
+        got = devlog.splice(HUB, self.ENTRY)
+        log = devlog.dev_log_section(got)
+        self.assertTrue(log.rstrip().endswith("_(through `ccccccc`)_"))
+        self.assertIn("2026-07-01", log)
+        self.assertIn("2026-07-20", log)
+
+    def test_it_keeps_every_other_section_byte_for_byte(self):
+        got = devlog.splice(HUB, self.ENTRY)
+        for chunk in ("## Tasks\n- [ ] Ship the thing 📅 2026-08-04",
+                      "## Decisions\n- Chose SQLite over Postgres.",
+                      "repo: C:\\Users\\tusha\\Documents\\CS Projects\\demo"):
+            self.assertIn(chunk, got)
+        self.assertEqual(len(devlog.H2.findall(HUB)), len(devlog.H2.findall(got)))
+
+    def test_the_empty_placeholder_is_replaced_not_kept(self):
+        hub = HUB.replace(
+            "- **2026-07-01** — Started it. _(through `aaaaaaa`)_\n"
+            "- **2026-07-20** — Kept going, and this one runs to a second line\n"
+            "  because entries here do that.\n", "-\n")
+        got = devlog.splice(hub, self.ENTRY)
+        log = devlog.dev_log_section(got)
+        self.assertNotIn("\n-\n", "\n" + log + "\n")
+        self.assertTrue(log.strip().startswith("- **2026-07-31**"))
+
+    def test_a_note_with_no_dev_log_gains_one_before_decisions(self):
+        hub = re.sub(r"## Dev log\n.*?\n\n## Decisions", "## Decisions", HUB, flags=re.S)
+        self.assertNotIn("## Dev log", hub)
+        got = devlog.splice(hub, self.ENTRY)
+        self.assertLess(got.index("## Dev log"), got.index("## Decisions"))
+        self.assertIn("- Chose SQLite over Postgres.", got)
+
+    def test_a_note_with_no_headings_at_all_is_refused(self):
+        self.assertIsNone(devlog.splice("just prose, no structure\n", self.ENTRY))
+
+    def test_the_spliced_note_passes_its_own_vet(self):
+        """The splice and the vet must agree — a vet that refuses every splice
+        would make the feature fail closed and look like a model problem."""
+        v = Vet("test_a_clean_append_passes")
+        v.setUp()
+        try:
+            got = devlog.splice(HUB, self.ENTRY)
+            self.assertIsNone(devlog._vet(v._prop(got), v.job))
+        finally:
+            v.tearDown()
+
+
 class Vet(unittest.TestCase):
     """Each rule, proven to fire. A refusal leaves the proposal pending, so a
     false positive costs a hand-merge and a false negative costs Zach's writing —

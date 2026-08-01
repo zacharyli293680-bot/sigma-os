@@ -22,14 +22,22 @@ itself says where the next run should start. That is the whole thesis of this OS
 the vault is the memory substrate — and it means the bookkeeping survives a wiped
 machine, syncs with the note, and is legible to a human reading the log.
 
-**Why this one vets before applying.** Every previous auto-applied proposal
-*created* a note. This is the first that routinely **updates** a note Zach wrote
-by hand, and the model has to hand back the whole file to do it — so a dropped
-section would be a silent loss of his writing, not a bad new note he can delete.
-`_vet` is script code, not judgement: the proposal is refused unless every H2
-heading, every existing dev log entry, and the `repo:` line come back intact and
-the note did not get shorter. A refused proposal stays pending, so nothing is
-lost either way.
+**The model writes the entry; script code writes the note.** This is the first
+feature that routinely **updates** a note Zach wrote by hand, and the obvious
+design — have the model return the whole updated file — is wrong twice over. A
+dropped section would be a silent loss of his writing rather than a bad new note
+he can delete; and the whole note has to go *in* to come back out, which put
+`sigma-os` (42,000 characters of hub note) past Windows' 32,767-character command
+line and made the vault's most important project the one this could not log. So
+the model returns one paragraph, `splice()` inserts it between two known offsets,
+and the composed file goes through `rf.write_proposal` — the same function the
+agent's own tool calls. A splice cannot retitle a heading or tick a checkbox,
+because it only ever inserts.
+
+`_vet` still runs on the composed note, and now guards *this module's* splice
+rather than the model's carelessness: every H2 heading, every existing entry and
+the `repo:` line must survive, the note must not shrink, and the entry must carry
+its sha. A refused proposal stays pending, so nothing is lost either way.
 
 **Writes.** None, directly — `propose_change` then `applier.py`, exactly as the
 fleet and study intake do. One revertible commit per entry, in the ledger.
@@ -64,6 +72,30 @@ EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 MAX_COMMITS = 40
 DIFF_BUDGET = 10_000
 SESSION_BUDGET = 6
+
+# Windows caps a command line at 32,767 characters, and the SDK passes the system
+# prompt — which is where the brief goes — as an argument. Overshooting does not
+# fail cleanly: the SDK reports `CLINotFoundError: Claude Code not found`, naming
+# a binary that is sitting right there. `sigma-os` hit it first, at 48,576
+# characters, because a hub note grows as it is dev-logged: the feature makes its
+# own failure more likely the longer it works. So the brief is assembled to a
+# budget, and what gets dropped is named rather than silently cut.
+BRIEF_BUDGET = 22_000
+HUB_BUDGET = 9_000
+LOG_TAIL = 5            # existing dev log entries shown, for voice and overlap
+
+# The model writes prose; script code stamps the sha. Asking it to copy a literal
+# was the earlier design, and a stamp the model can forget is a duplicate entry
+# next run — this cannot be forgotten.
+NOTHING = "NOTHING"
+
+# Where the entry starts and stops. "Reply with the entry alone" is not enough on
+# its own: the first real run opened with "I can't read the repo itself — only the
+# commit subjects are available to me. I'll write the entry from those", and that
+# sentence went into the note. Instruction-following is the wrong tool for a
+# boundary a parser can enforce, so the entry is delimited and everything outside
+# the tags is thrown away.
+ENTRY_TAG = re.compile(r"<entry>(.*?)</entry>", re.S | re.I)
 
 # One project, one entry — shorter work than an intake conversation.
 TIMEOUT_S = 600
@@ -297,11 +329,18 @@ def candidates(only: str | None = None) -> tuple:
 
         job = {**rec, "base": base, "since": since, **got}
         if rec["archived"]:
-            # Worth saying out loud rather than logging: an archived project with
-            # new commits means either the archive was premature or the log was
-            # never written, and which one it is decides what to do about it.
-            problems.append((name, f"archived, and {_span(job)} — unarchive it if "
-                                   f"the work restarted, or log it by hand"))
+            # An archived project with commits *past its last entry* is a real
+            # signal: the work restarted after someone decided it was finished,
+            # and only Zach can say which of those two facts is wrong. An
+            # archived project that was simply never dev-logged is not — its repo
+            # has always had that history, and reporting it as a problem on every
+            # single run is how a warning list teaches you to stop reading it.
+            if base or since:
+                problems.append((name, f"archived, but {_span(job)} — unarchive it "
+                                       f"if the work restarted"))
+            else:
+                quiet.append((name, f"archived, never dev-logged "
+                                    f"({got['n']} commit(s) in its history)"))
             continue
 
         jobs.append(job)
@@ -352,22 +391,26 @@ def session_context(project: str, guard) -> str:
 # the brief
 # --------------------------------------------------------------------------
 
-RULES = """
+RULES = f"""
 You are Sigma's dev-logger. Zach triggered this run himself and is watching the
-output land, so say what you are doing plainly and briefly.
+output land.
 
 Three rules bound everything you do:
 
-1. **You do not write files.** `propose_change` is the only tool you have that
-   touches disk. It drafts a proposal; the runner applies it afterwards as its
-   own revertible commit. Never claim you changed a file.
-2. **Never invent work.** Every claim in the entry must be traceable to a commit
-   subject, a changed file, or a session log printed below. If the material is
-   too thin to say anything true and useful, propose nothing and say so — that
-   is a correct outcome, and much better than a confident entry about work that
-   did not happen.
-3. **The hub note is Zach's writing.** You are adding one entry to it, not
-   editing it. Everything that is already there comes back exactly as it was.
+1. **You are writing one paragraph, not a file.** Wrap it in `<entry>` and
+   `</entry>` tags; everything outside them is discarded, so put the entry and
+   only the entry between them. The runner adds the date, the bullet and the
+   commit stamp, and puts it in the note. Do not call any tool.
+2. **Everything you know is in the brief.** You cannot open the repository — it
+   lives outside the vault. The commit subjects, the file churn and the session
+   logs printed below are the whole of the evidence, and they are enough. Do not
+   say you were unable to read something; write the entry from what you have.
+3. **Never invent work.** Every claim must be traceable to a commit subject, a
+   changed file, or a session log printed below. If you cannot tell what
+   something was for, say what changed and leave the why out.
+4. **If there is nothing worth recording, reply with exactly `{NOTHING}`** and
+   no tags. A run that finds a version bump and a typo fix should say so this way
+   rather than inflating them into an entry.
 """.strip()
 
 BRIEF = """
@@ -376,15 +419,10 @@ BRIEF = """
 - **Hub note:** `{rel}`
 - **Repo:** `{repo}`
 - **Covering:** {span}
-- **Stamp this entry with:** `_(through `{head}`)_` — copy that exactly,
-  including the backticks. The next run reads it to know where to start, so an
-  entry without it causes this same work to be written up twice.
 {morenote}
-## The hub note exactly as it stands right now
+## The hub note
 
-```markdown
 {hub}
-```
 
 ## The commits (oldest first)
 
@@ -404,32 +442,76 @@ BRIEF = """
 
 ## Your job
 
-Write **one** dev log entry and propose the complete updated hub note.
+Write the body of **one** dev log entry describing this work.
 
-1. **Where it goes.** At the end of the `## Dev log` list. If that section holds
-   only an empty `-` placeholder, replace the placeholder. If the note has no
-   `## Dev log` section at all, add one immediately before `## Decisions`, or at
-   the end of the note if there is no such section.
-2. **The shape**, matching the entries already in this vault:
-   `- **{today}** — <what the work was and why it matters>. _(through `{head}`)_`
-   Continuation lines are indented two spaces. One entry, a few sentences: what
-   changed, what it was for, and anything a reader six months from now would need
-   to know. Bold a phrase only where it earns it.
-3. **Say what the work was, not what the commits were called.** "Add auth stack
+1. **Say what the work was, not what the commits were called.** "Add auth stack
    and public read allowlist" is a commit subject; the entry should say what the
    project can now do that it could not before, and what decision it reflects.
-   Group related commits into one thought rather than listing them.
-4. **Everything else comes back unchanged.** The proposal content is the whole
-   file and it is written literally, so anything you drop is deleted from Zach's
-   note. Reproduce the frontmatter, every heading, every task, and every existing
-   dev log entry exactly. Do not tick a checkbox, do not change `status:`, do not
-   touch the `repo:` line — a run that does any of those is refused before it
-   lands.
-5. If these commits genuinely do not amount to anything worth recording, call no
-   tool and say so in one sentence.
+   Group related commits into one thought rather than listing them one by one.
+2. **A few sentences**, in the voice of the existing entries above: what changed,
+   what it was for, and what a reader six months from now would need to know.
+   Bold a phrase only where it earns it. Prose, not bullets — this becomes a
+   single bullet in a list.
+3. **Do not write the date, the leading `-`, or the commit stamp.** The runner
+   adds all three, so an entry that includes them ends up with two of each.
+   Start directly with the first word.
+4. Anything you were not shown, you do not know. The hub note above is trimmed to
+   its opening and its most recent entries; do not refer to parts of it you
+   cannot see, and do not assume a task or a decision is or is not recorded there.
 
-Call `propose_change` **once**, with `kind: note` and `target: {rel}`.
+Reply with exactly this and nothing else:
+
+```
+<entry>the entry text</entry>
+```
+
+or `{nothing}` on its own if this work does not deserve an entry.
 """.strip()
+
+
+def hub_context(job: dict) -> str:
+    """What the model needs of the hub note: its shape, its opening, its voice.
+
+    Deliberately *not* the whole note. The earlier design asked the model to
+    return the complete updated file, which meant the complete file had to go in
+    — and `sigma-os.md` is 42,000 characters of dev log, which put the brief past
+    the command-line limit and made the most important project in the vault the
+    one project this could not log. Sending less is not a workaround for that: the
+    model is writing one paragraph, and the only parts of the note that bear on
+    the paragraph are what the project is, what the recent entries sound like,
+    and what is already covered.
+    """
+    text = job["text"]
+    parts = []
+    fm = job["fm"]
+    parts.append("**Frontmatter:** " + ", ".join(
+        f"`{k}: {v}`" for k, v in fm.items() if v and k != "tags"))
+    heads = ", ".join(f"`## {h}`" for h in H2.findall(text))
+    parts.append("**Sections:** " + (heads or "_(none)_"))
+
+    # The opening: everything before the first H2 is what the project *is*.
+    body = text.split("---", 2)[-1]
+    first = H2.search(body)
+    intro = (body[:first.start()] if first else body).strip()
+    if intro:
+        parts.append("### How the note opens\n\n" + intro[:2500])
+
+    section = dev_log_section(text)
+    if section.strip() in ("", "-", "*"):
+        parts.append("### The dev log\n\n_Empty — this would be its first entry._")
+    else:
+        # Split on entry bullets so a truncated tail never cuts mid-entry.
+        starts = [m.start() for m in ENTRY_DATE.finditer(section)]
+        entries = [section[a:b].rstrip() for a, b in
+                   zip(starts, starts[1:] + [len(section)])] or [section]
+        shown = entries[-LOG_TAIL:]
+        head = (f"_Showing the last {len(shown)} of {len(entries)} entries._\n\n"
+                if len(entries) > len(shown) else "")
+        parts.append("### The dev log, most recent last\n\n" + head
+                     + "\n".join(shown))
+
+    out = "\n\n".join(parts)
+    return out if len(out) <= HUB_BUDGET else out[:HUB_BUDGET] + "\n\n… (trimmed)"
 
 
 def build_brief(job: dict, guard) -> str:
@@ -447,13 +529,97 @@ def build_brief(job: dict, guard) -> str:
         more += (f"- **Note:** this project's existing entries are dated but not "
                  f"stamped with a sha, so the range starts at {job['since']} and "
                  f"some of these commits may already be described by the last "
-                 f"entry. Read it and cover only what it does not.\n")
-    return BRIEF.format(
-        rel=rel, repo=job["repo"], span=_span(job), head=job["head"],
-        morenote=more, hub=job["text"].strip(),
-        commits="\n".join(job["commits"]), churn=job["churn"],
-        sessions=session_context(job["name"], guard),
-        today=datetime.date.today().isoformat())
+                 f"entry. Read them and cover only what they do not.\n")
+
+    fields = dict(rel=rel, repo=job["repo"], span=_span(job), morenote=more,
+                  hub=hub_context(job), commits="\n".join(job["commits"]),
+                  churn=job["churn"], sessions=session_context(job["name"], guard),
+                  nothing=NOTHING)
+
+    # Trim to the command-line budget, cheapest material first: file churn is a
+    # summary of the commits, the session logs restate them in prose, and the
+    # commit subjects themselves are the irreplaceable part. Each cut is stated
+    # in the brief so the model knows it is working from less.
+    for key, why in (("churn", "file-level churn"), ("sessions", "session logs")):
+        if len(BRIEF.format(**fields)) <= BRIEF_BUDGET:
+            break
+        log(f"   brief is over budget — dropping {why} for {job['name']}")
+        fields[key] = f"_(omitted: too large to fit alongside the commits)_"
+    brief = BRIEF.format(**fields)
+    if len(brief) > BRIEF_BUDGET:
+        log(f"   brief still over budget at {len(brief):,} — truncating the commit list")
+        brief = brief[:BRIEF_BUDGET] + "\n\n_(the brief was truncated here.)_"
+    return brief
+
+
+# --------------------------------------------------------------------------
+# composing the note — script code, not the model
+# --------------------------------------------------------------------------
+
+def entry_from(said: str, head: str, today: str) -> str | None:
+    """The model's prose → one dev log bullet, or None if it declined.
+
+    The model is asked for the body alone and told the runner adds the rest, but
+    a model that has just been shown five entries in `- **date** — …` form will
+    sometimes hand one back in that form too. Stripping what it should not have
+    written is cheaper than a refusal, and it makes the stamp unforgettable
+    rather than merely instructed: a missing stamp would silently duplicate this
+    work on the next run.
+    """
+    s = (said or "").strip()
+    tagged = ENTRY_TAG.search(s)
+    if tagged:
+        # The delimited case: everything outside the tags was preamble, and
+        # everything inside is the entry — including a "NOTHING" that happens to
+        # be the first word of a real sentence.
+        s = tagged.group(1).strip()
+    else:
+        # Undelimited, so the refusal has to be recognised by reading. Loose on
+        # purpose: a false refusal here costs a re-run and reports itself, while
+        # a missed one puts "there is nothing to report" in the note.
+        if NOTHING in s.upper()[:80]:
+            return None
+    if s.startswith("```"):
+        s = re.sub(r"^```[a-z]*\n?|\n?```$", "", s).strip()
+    if not s:
+        return None
+    s = re.sub(r"^\s*[-*]\s+", "", s)                        # its own bullet
+    s = re.sub(r"^\*\*\d{4}-\d{2}-\d{2}\*\*\s*[—–-]\s*", "", s)   # its own date
+    s = THROUGH.sub("", s)                                   # its own stamp
+    # One logical line: the vault's existing entries wrap by hand, but rewrapping
+    # here would break wikilinks and code spans across lines for no gain.
+    s = " ".join(s.split())
+    if len(s) < 40:
+        return None
+    return f"- **{today}** — {s} _(through `{head}`)_"
+
+
+def splice(hub: str, entry: str) -> str | None:
+    """Put one entry at the end of the `## Dev log` list. None if it cannot be
+    placed — better to refuse than to guess at where a dev log belongs.
+
+    This is the whole reason the model no longer returns the file. A splice is a
+    rule: it cannot drop a section, retitle a heading, tick a checkbox or reword
+    a decision, because it only ever inserts between two known offsets.
+    """
+    m = re.search(r"^##\s+Dev log\s*$", hub, re.M | re.I)
+    if m:
+        start = m.end()
+        nxt = re.search(r"^##\s+", hub[start:], re.M)
+        end = start + nxt.start() if nxt else len(hub)
+        body, tail = hub[start:end], hub[end:]
+        # The scaffold templates leave a bare `-`, which is a placeholder rather
+        # than an entry; keeping it would leave an empty bullet above the log.
+        kept = "" if body.strip() in ("-", "*", "") else body.strip() + "\n"
+        return hub[:start] + "\n" + kept + entry + "\n" + ("\n" + tail.lstrip("\n")
+                                                           if tail.strip() else "\n")
+    block = f"## Dev log\n{entry}\n"
+    d = re.search(r"^##\s+Decisions\s*$", hub, re.M | re.I)
+    if d:
+        return hub[:d.start()] + block + "\n" + hub[d.start():]
+    if H2.search(hub):
+        return hub.rstrip() + "\n\n" + block
+    return None            # no headings at all: not a hub note shape we know
 
 
 # --------------------------------------------------------------------------
@@ -523,10 +689,30 @@ async def devlog_one(job: dict, guard, model: str = "sonnet") -> dict:
         key="devlog", title="Dev log", cadence="manual",
         model=model, effort="medium",
         brief=build_brief(job, guard),
-        # One proposal, plus room to read the repo or a linked note if the
-        # commits do not explain themselves.
-        max_turns=26)
+        # Reading the repo when the commit subjects do not explain themselves is
+        # the only thing it spends turns on — the answer is one message.
+        max_turns=20)
     return await fl.run_one(spec, timeout_s=TIMEOUT_S, rules=RULES)
+
+
+def propose_entry(job: dict, entry: str) -> Path:
+    """Write the proposal, with the composed note as its content.
+
+    Still `propose_change`'s file, still `applier.py`, still one revertible
+    commit in the ledger — `rf.write_proposal` is the same function the agent's
+    tool calls. What is different is who composed the content: script code, from
+    a splice it cannot get wrong in the ways a re-transcription can.
+    """
+    rel = job["path"].relative_to(VAULT).as_posix()
+    return rf.write_proposal({
+        "title": f"Dev log: {job['name']} through {job['head']}",
+        "kind": "note", "target": rel, "content": splice(job["text"], entry),
+        "rationale": (f"{_span(job)}, written up from the commit log and this "
+                      f"project's session logs. The entry is the model's; the "
+                      f"rest of the note is the existing file, spliced by "
+                      f"`devlog.py` rather than re-transcribed."),
+        "risk": "low", "scope": "vault", "insight": "",
+    }, datetime.date.today().isoformat())
 
 
 def run(only: str | None = None, dry_run: bool = False, limit: int = 0,
@@ -562,6 +748,7 @@ def run(only: str | None = None, dry_run: bool = False, limit: int = 0,
         return 1
 
     made = failed = declined = 0
+    today = datetime.date.today().isoformat()
     for j in jobs:
         log(f"-> {j['name']} ({j['n']} commit(s) through {j['head']})")
         try:
@@ -574,35 +761,48 @@ def run(only: str | None = None, dry_run: bool = False, limit: int = 0,
             failed += 1
             log(f"   nothing written — {r.get('error') or 'the run failed'}")
             continue
-        if not r.get("proposals"):
+
+        # The brief says to call no tool, but `run_one` still hands it
+        # `propose_change`, and a proposal this module will not apply would
+        # otherwise sit pending forever with nothing to say where it came from.
+        for stray in r.get("files") or []:
+            log(f"   note: the model raised {stray} despite being asked for prose "
+                f"— left pending for you, not applied by this run")
+
+        entry = entry_from(r.get("text", ""), j["head"], today)
+        if entry is None:
             declined += 1
             log(f"   nothing worth recording"
-                + (f" ({r['summary'][:160]})" if r.get("summary") else ""))
+                + (f" ({r.get('summary', '')[:160]})" if r.get("summary") else ""))
+            continue
+        if splice(j["text"], entry) is None:
+            failed += 1
+            log(f"   cannot place an entry in {j['path'].name} — it has no "
+                f"`## Dev log` section and no headings to add one before")
             continue
 
-        # Vet before applying. A refused proposal is left pending on purpose:
-        # the writing is still there to read, edit and merge by hand.
-        ok_files, refused = [], []
-        for fname in r["files"]:
-            p = Path(rf.PROPOSALS) / fname
-            if not p.exists():
-                refused.append((fname, "vanished before it could be checked"))
-                continue
-            why = _vet(p, j)
-            (refused.append((fname, why)) if why else ok_files.append(fname))
-
-        for fname, why in refused:
-            log(f"   REFUSED {fname} — {why}")
-            log(f"           left pending: read it in 06-System/proposals/ and "
-                f"edit or discard it by hand")
-
-        if not ok_files:
+        try:
+            prop = propose_entry(j, entry)
+        except Exception as e:
             failed += 1
+            log(f"   could not write the proposal: {type(e).__name__}: {e}")
+            continue
+
+        # Vet the composed note before applying. The splice cannot lose a section
+        # the way a re-transcription could, so this now guards *this module's own
+        # bug* rather than the model's carelessness — cheap, and the one check
+        # that would catch a broken splice before it reached Zach's note.
+        why = _vet(prop, j)
+        if why:
+            failed += 1
+            log(f"   REFUSED {prop.name} — {why}")
+            log(f"           left pending in 06-System/proposals/ — this is a "
+                f"devlog.py bug, not a model one; the entry text is in the file")
             continue
 
         try:
             import applier
-            applied = applier.apply_run(ok_files, actor="devlog")
+            applied = applier.apply_run([prop.name], actor="devlog")
         except Exception as e:
             failed += 1
             log(f"   proposal written but applying failed: {type(e).__name__}: {e}")

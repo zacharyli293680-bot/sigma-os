@@ -353,13 +353,18 @@ async def run_one(spec, timeout_s: int = 420, model_override: str | None = None,
         # hangs would otherwise block the 9 AM run forever while holding the lock,
         # and nothing downstream would ever report it.
         await asyncio.wait_for(_converse(), timeout=timeout_s)
-        result["summary"] = " ".join(" ".join(said).split())[:400]
     except (asyncio.TimeoutError, TimeoutError):
         result["error"] = f"timed out after {timeout_s}s"
-        # Whatever it managed to say before hanging is the only clue about where.
-        result["summary"] = " ".join(" ".join(said).split())[:400]
     except Exception as e:
         result["error"] = f"{type(e).__name__}: {e}"
+    finally:
+        # `summary` is for display and stays short. `text` is the model's answer
+        # as it actually said it — for a caller whose *output* is prose rather
+        # than a proposal (devlog asks for one dev log entry and composes the
+        # note itself), 400 characters would truncate the deliverable.
+        # Whatever it managed to say before failing is also the only clue about
+        # where it got to, so both are set on every path.
+        result["text"] = "\n\n".join(said).strip()
         result["summary"] = " ".join(" ".join(said).split())[:400]
 
     # Let the SDK's subprocess transports finish closing before this coroutine
