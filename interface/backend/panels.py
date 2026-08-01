@@ -50,6 +50,7 @@ if _RUNTIME not in sys.path:
 import fleet as fl          # noqa: E402
 import reflect as rf        # noqa: E402
 import specialists as sp    # noqa: E402
+import todo as td           # noqa: E402
 from sigma import frontmatter  # noqa: E402
 
 router = APIRouter(prefix="/api")
@@ -175,13 +176,18 @@ async def api_fleet_progress():
 # The Tasks-plugin grammar the vault actually uses (see CLAUDE.md "Tasks"):
 # a checkbox, a due date, optional priority. Same folder exclusions as
 # Home.md's own query, so the dashboard and the vault agree on what "due" means.
-_TASK_RE = re.compile(r"^\s*[-*]\s+\[( |x|X)\]\s+(.*\S)\s*$")
-_DUE_RE = re.compile(r"📅\s*(\d{4}-\d{2}-\d{2})")
-_PRIORITY = {"🔺": 4, "⏫": 3, "🔼": 2, "🔽": 1, "⏬": 0}
-_META_RE = re.compile(          # strip task-plugin metadata out of display text
-    r"\s*(?:📅|✅|⏳|🛫|➕|🔁)\s*\d{4}-\d{2}-\d{2}|\s*[🔺⏫🔼🔽⏬]")
-_EXCLUDED_TOPS = {"05-Archive", "06-System", "99-Meta", ".obsidian", ".claude",
-                  ".git", "Excalidraw"}
+#
+# These lived here first and now live in todo.py, which is the other consumer of
+# the same grammar. Two modules parsing one grammar with two regexes is exactly
+# the drift the vault's one-implementation rule exists to stop — the same
+# mistake this file's own _split() docstring records about the privacy boundary.
+# Note todo.py excludes 01-Daily on top of these; that exclusion is the queue's
+# alone, because the calendar strip is about dated work wherever it lives.
+_TASK_RE = td.TASK_RE
+_DUE_RE = td.DUE_RE
+_PRIORITY = td.PRIORITY
+_META_RE = td.META_RE
+_EXCLUDED_TOPS = td.EXCLUDED_TOPS
 
 
 def _scan_tasks() -> dict:
@@ -247,6 +253,32 @@ def _scan_tasks() -> dict:
 @router.get("/tasks")
 def api_tasks():
     return _cached("tasks", 15, _scan_tasks)
+
+
+# --------------------------------------------------------------------------
+# GET /api/queue — the four priority queues (todo.py)
+# --------------------------------------------------------------------------
+
+@router.get("/queue")
+def api_queue():
+    """The Work view's whole payload.
+
+    Unlike every other endpoint here this one has a side effect: todo.build
+    writes the sidecar index. That is not incidental — reconciling the scan
+    against the index is *how* a completion gets recorded, and the review that
+    reads those records must see ticks made in Obsidian, not only ones made
+    through the dashboard. The write is atomic and refuses to run over an index
+    that existed but did not parse, so a torn read costs one stale cycle rather
+    than every task's age.
+
+    Same 15s TTL as /api/tasks, and the same privacy split — todo.py takes the
+    splitter as an argument precisely so it does not grow its own copy of the
+    boundary. `_split` closes over VAULT while todo.scan passes it explicitly,
+    hence the adapter rather than the bare function.
+    """
+    return _cached("queue", 15,
+                   lambda: td.build(vault=VAULT,
+                                    split=lambda _vault, rels: _split(rels)))
 
 
 # --------------------------------------------------------------------------

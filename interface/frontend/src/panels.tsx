@@ -74,7 +74,7 @@ const RAIL: [string, string, boolean][] = [
   ["OV", "Overview — the dashboard around it", true],
   ["BR", "Brain — expand the sky (Ctrl+G)", true],
   ["AG", "Agents — Phase 1", false],
-  ["WK", "Work — Phase 6", false],
+  ["WK", "Work — the four priority queues", true],
   ["ST", "Study — exam mode", true],
   ["BD", "Build — repo awareness", true],
   ["CR", "Career — Phase 6", false],
@@ -84,19 +84,22 @@ const RAIL: [string, string, boolean][] = [
 /** OV and BR are no longer two rooms. The brain is always on the centre stage;
  *  these name how much of the shell it gets, which is why BR reads "expand". */
 export function Rail({ diving, onBrain, noSyncOpen, onNoSync, noSyncCount,
-                      studyOpen, onStudy, buildOpen, onBuild }: {
+                      studyOpen, onStudy, buildOpen, onBuild,
+                      workOpen, onWork }: {
   diving: boolean; onBrain: () => void;
   noSyncOpen: boolean; onNoSync: () => void; noSyncCount: number | null;
   studyOpen: boolean; onStudy: () => void;
   buildOpen: boolean; onBuild: () => void;
+  workOpen: boolean; onWork: () => void;
 }) {
   return (
     <nav className="rail">
       {RAIL.map(([k, title, live]) => {
         const active = k === "BR" ? diving : k === "ST" ? studyOpen
-          : k === "BD" ? buildOpen
-          : k === "OV" ? !diving && !studyOpen && !buildOpen : false;
+          : k === "BD" ? buildOpen : k === "WK" ? workOpen
+          : k === "OV" ? !diving && !studyOpen && !buildOpen && !workOpen : false;
         const go = k === "BR" ? onBrain : k === "ST" ? onStudy : k === "BD" ? onBuild
+          : k === "WK" ? onWork
           : k === "OV" && diving ? onBrain : undefined;
         return (
           <button key={k} className={active ? "active" : ""} disabled={!live}

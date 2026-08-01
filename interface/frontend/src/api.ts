@@ -24,6 +24,56 @@ export type VaultTask = {
 };
 export type Tasks = { today: string; block: string | null; tasks: VaultTask[] };
 
+/** The four priority queues (todo.py). Days are no longer the organising unit;
+ *  each section shows a window of its highest-scoring *eligible* tasks. */
+export type ScoreParts = {
+  deadline: number; urgency: number; aging: number; total: number;
+  /** null when the task has no deadline — not zero, which would read as "today". */
+  days_until: number | null;
+  age_days: number;
+};
+export type QueueTask = {
+  id: string; file: string; line: number;
+  raw: string;   // the staleness token, same contract as VaultTask
+  text: string; heading: string | null; order: number;
+  no_sync: boolean; deadline: string | null;
+  section: string; parent: string | null;
+  urgency: "high" | "medium" | "low";
+  created: string; pinned: boolean; snoozed_until: string | null;
+  raw_input: string | null;
+  /** Set when this task sits behind an unfinished one in the same chain file. */
+  blocked_by: string | null;
+  parts: ScoreParts; score: number;
+  overdue: boolean; archived: boolean; snoozed: boolean;
+};
+/** One course or project, with its whole chain in document order. */
+export type QueueGroup = {
+  parent: string; label: string; open: number; chain: QueueTask[];
+};
+export type QueueSection = {
+  key: string; title: string;
+  kind: "chain" | "flat";
+  /** "course" / "project" when the window is one-per-parent, else null. */
+  parent_noun: string | null;
+  /** A maximum, never a quota: fewer eligible tasks means fewer rows, no filler. */
+  window: number;
+  visible: QueueTask[]; queue: QueueTask[]; blocked: QueueTask[];
+  archived: QueueTask[]; snoozed: QueueTask[];
+  groups: QueueGroup[];
+};
+export type Queue = {
+  today: string; adopted: string | null;
+  /** False when the sidecar index existed but did not parse — ages are stale
+   *  and nothing was written. Shown, never swallowed. */
+  index_ok: boolean;
+  sections: Record<string, QueueSection>;
+  counts: {
+    visible: number; queued: number; blocked: number;
+    archived: number; snoozed: number;
+  };
+};
+export const QUEUE_ORDER = ["courses", "procertus", "projects", "misc"] as const;
+
 export type ProposalRow = {
   file: string; title: string; kind: string | null; target: string | null;
   risk: string | null; date: string | null; status: string | null; staged?: string;

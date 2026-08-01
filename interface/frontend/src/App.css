@@ -1242,3 +1242,90 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--cyan); }
   .shell.diving .right, .shell.diving .lower { transition: none; }
   .shell.diving .right, .shell.diving .lower { transform: none; }
 }
+
+/* ------------------------------------------------------ work — the queues */
+
+/* The WK rail slot. Wider than STUDY because it holds four cards side by side
+   rather than one column, and the cards are the existing .panel — bordered-not-
+   filled, notched, mono numbers — so the view reads as more of the dashboard
+   rather than a second visual language layered on top of it. */
+.work {
+  /* The backdrop is a flex row with the default `align-items: stretch`, so
+     without this the box grows to its max-height and four short cards sit in
+     600px of void. STUDY never showed it because its content is always long. */
+  align-self: flex-start;
+  margin-top: 6vh; width: min(1120px, 96vw); max-height: 84vh;
+  background: var(--void); border: 1px solid var(--panel-line);
+  box-shadow: 0 0 40px rgba(0, 229, 255, 0.08);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.work-head {
+  display: flex; align-items: center; gap: 16px;
+  padding: 10px 14px; border-bottom: 1px solid var(--panel-line-dim);
+}
+.work-head .label { color: var(--cyan); letter-spacing: 0.14em; font-size: 11px; }
+.work-head .ghost { margin-left: auto; }
+.work-counts {
+  font-family: var(--mono); font-size: 11.5px; color: var(--ink-2);
+}
+.work .pad { padding: 14px; }
+.work .err { color: var(--red); font-size: 12px; line-height: 1.5; }
+
+/* Two-up, collapsing to one column on a narrow window. The shell has a 920px
+   min-width, so the single-column case is a genuinely small viewport rather
+   than a layout that never happens. */
+.work-grid {
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  gap: 4px 22px;
+  padding: 12px 14px 16px;
+}
+.q-card { padding-bottom: 10px; overflow: visible; }
+/* The count line rides the h2's gradient rule rather than sitting under it —
+   the rule is flex:1 and pushes this to the right edge automatically. */
+.q-head {
+  order: 3;
+  font: 400 10.5px/1.6 var(--mono);
+  letter-spacing: 0.04em; color: var(--ink-2);
+  text-transform: none;
+}
+.q-empty { margin: 6px 0 2px; font-size: 12px; }
+
+.q-rows li { margin: 1px 0; }
+.q-row { display: flex; align-items: baseline; gap: 2px; }
+.q-box { color: var(--muted); flex: none; padding: 3px 4px; }
+.q-main { flex: 1 1 auto; min-width: 0; }
+.q-text { display: block; }
+.q-parent {
+  font: 500 10.5px/1 var(--mono); letter-spacing: 0.06em;
+  color: var(--ink-2); margin-right: 7px;
+}
+.q-pin { margin-right: 5px; font-size: 10px; }
+/* The progress line: "Block 3 of 10 · next: strong induction notes". Muted
+   chrome, never reading text — it restates position, not content. */
+.q-sub {
+  display: block;
+  font: 400 10.5px/1.5 var(--mono);
+  color: var(--muted); margin-top: 1px;
+}
+.q-chips { display: flex; gap: 6px; flex: none; align-items: baseline; }
+
+/* Status is never colour alone: every chip is a word that means something read
+   aloud, and the tone only sharpens it. Text stays on ink tokens elsewhere —
+   these are status, which is the documented exception. */
+.q-chip {
+  font: 600 9.5px/1 var(--sans);
+  letter-spacing: 0.08em; text-transform: uppercase;
+  font-style: normal; white-space: nowrap;
+  color: var(--ink-2);
+}
+.q-chip.danger { color: var(--red); }
+.q-chip.warn   { color: var(--amber); }
+.q-chip.age    { color: var(--bronze); }
+.q-chip.urg    { color: var(--ink); }
+.q-chip.dim    { color: var(--muted); }
+
+/* The row already says "overdue" in words; this only stops the title from
+   reading as ordinary while its chip shouts. */
+.q-row.overdue .q-main { color: var(--amber); }

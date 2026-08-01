@@ -19,6 +19,7 @@ import Palette from "./palette";
 import Review from "./review";
 import StudyView from "./study";
 import BuildView from "./build";
+import WorkView from "./work";
 import CalendarStrip from "./calendar";
 import Capture from "./capture";
 import { Foot, Panel, ProjectsPanel, Rail, TodayPanel, TopStrip, WaitingPanel } from "./panels";
@@ -62,6 +63,7 @@ export default function App() {
   const [reviewing, setReviewing] = useState<string | null>(null);
   const [studyOpen, setStudyOpen] = useState(false);
   const [buildOpen, setBuildOpen] = useState(false);
+  const [workOpen, setWorkOpen] = useState(false);
   const [captureOpen, setCaptureOpen] = useState(false);
   // Fetched once for the rail's count badge; the view refetches on open.
   const [noSync, setNoSync] = useState<NoSync | null>(null);
@@ -155,6 +157,7 @@ export default function App() {
         // closing a view that took the filter with it.
         if (captureOpen) setCaptureOpen(false);
         else if (reviewing) setReviewing(null);
+        else if (workOpen) setWorkOpen(false);
         else if (studyOpen) setStudyOpen(false);
         else if (buildOpen) setBuildOpen(false);
         else if (paletteOpen) setPaletteOpen(false);
@@ -168,7 +171,7 @@ export default function App() {
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [paletteOpen, ledgerOpen, chatOpen, noSyncOpen, reviewing, studyOpen,
-      buildOpen, captureOpen, diving, brainFilter]);
+      buildOpen, workOpen, captureOpen, diving, brainFilter]);
 
   // Palette jobs stream here and take over the dock while they run; when one
   // finishes, the panels it may have changed refetch immediately.
@@ -223,7 +226,8 @@ export default function App() {
             noSyncOpen={noSyncOpen} onNoSync={() => setNoSyncOpen(o => !o)}
             noSyncCount={noSync?.ok ? noSync.total : null}
             studyOpen={studyOpen} onStudy={() => setStudyOpen(o => !o)}
-            buildOpen={buildOpen} onBuild={() => setBuildOpen(o => !o)} />
+            buildOpen={buildOpen} onBuild={() => setBuildOpen(o => !o)}
+            workOpen={workOpen} onWork={() => setWorkOpen(o => !o)} />
       {/* The centre stage: one scene, not a panel with a picture in it. The
           sky fills the cell, the reactor sits at its heart in a pool of
           darkened sky, and the chips ride the bottom edge. */}
@@ -263,6 +267,7 @@ export default function App() {
               onMutate={refresh} />
       <StudyView open={studyOpen} vault={vault} onClose={() => setStudyOpen(false)} />
       <BuildView open={buildOpen} vault={vault} onClose={() => setBuildOpen(false)} />
+      <WorkView open={workOpen} vault={vault} onClose={() => setWorkOpen(false)} />
       <Capture open={captureOpen} onClose={() => setCaptureOpen(false)} onDone={refresh} />
       <Palette open={paletteOpen} onClose={() => setPaletteOpen(false)}
                onLaunched={() => {}} />
