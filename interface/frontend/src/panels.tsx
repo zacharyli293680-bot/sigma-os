@@ -134,7 +134,11 @@ export function NoSyncMark() {
 
 // ---------------------------------------------------------------- right column
 
-export function WaitingPanel({ proposals, vault }: { proposals: Proposals | null; vault: string }) {
+// No `vault` any more: the rows stopped being Obsidian links when they became
+// the door to the diff, and the review overlay takes the vault name itself.
+export function WaitingPanel({ proposals, onReview }: {
+  proposals: Proposals | null; onReview: (name: string) => void;
+}) {
   if (!proposals) return <Panel label="WAITING ON YOU"><p className="dim">loading…</p></Panel>;
   const rows = [
     ...proposals.pending.map(p => ({ ...p, badge: "pending", hint: "review, then set status: approved" })),
@@ -149,11 +153,14 @@ export function WaitingPanel({ proposals, vault }: { proposals: Proposals | null
       ) : (
         <ul className="rows">
           {rows.map(p => (
+            // The row is now the door to the diff, not to Obsidian. Reviewing
+            // a proposal was the one loop that still required a terminal.
             <li key={p.file}>
-              <a href={obsidianHref(vault, `06-System/proposals/${p.file.replace(/\.md$/, "")}`)}
-                 title={`${p.kind ?? "?"} → ${p.target ?? "?"}\n${p.hint}`}>
+              <button className="waiting-row"
+                      onClick={() => onReview(p.file.replace(/\.md$/, ""))}
+                      title={`${p.kind ?? "?"} → ${p.target ?? "?"}\nreview the diff and decide`}>
                 <em className={`badge ${p.badge}`}>{p.badge}</em> {p.title}
-              </a>
+              </button>
             </li>
           ))}
         </ul>

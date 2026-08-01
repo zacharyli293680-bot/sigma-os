@@ -843,3 +843,72 @@ button.led-undo:disabled { cursor: progress; opacity: 0.6; }
 .nosync .files a { color: var(--ink-2); text-decoration: none; }
 .nosync .files a:hover { color: var(--bronze); }
 .nosync > .dim { padding: 0 14px 12px; font-size: 11.5px; }
+
+/* --------------------------------------------- Phase 6: reviewing a proposal */
+
+/* The waiting row is a button now — it opens the diff rather than Obsidian. */
+button.waiting-row {
+  background: none; border: 1px solid transparent; cursor: pointer;
+  font-family: var(--mono); font-size: 12.5px; color: var(--ink);
+  text-align: left; padding: 3px 6px; width: 100%;
+}
+button.waiting-row:hover { border-color: var(--panel-line-dim); color: var(--cyan); }
+
+.review {
+  margin-top: 7vh;
+  width: min(900px, 95vw);
+  max-height: 80vh;
+  background: var(--void);
+  border: 1px solid var(--panel-line);
+  box-shadow: 0 0 40px rgba(0, 229, 255, 0.08);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.review-head {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  padding: 10px 14px; border-bottom: 1px solid var(--panel-line-dim);
+}
+.review-head .label { color: var(--cyan); letter-spacing: 0.14em; font-size: 11px; }
+.review .pad { padding: 14px; }
+.review-meta {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 8px 14px; font-size: 12px;
+  border-bottom: 1px solid var(--panel-line-dim);
+}
+.review-meta a { color: var(--ink-2); text-decoration: none; }
+.review-meta a:hover { color: var(--cyan); }
+/* Says what the buttons will really do, before you press one. */
+.review-note {
+  margin: 0; padding: 9px 14px; font-size: 11.5px; line-height: 1.5;
+  color: var(--ink-2); border-bottom: 1px solid var(--panel-line-dim);
+}
+.review-note.warn { color: var(--amber); }
+
+pre.diff {
+  margin: 0; padding: 10px 14px; overflow: auto; flex: 1; min-height: 0;
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.5;
+  white-space: pre;
+}
+pre.diff .add  { color: #4ADE80; }
+pre.diff .del  { color: var(--red); }
+pre.diff .hunk { color: var(--cyan); opacity: 0.75; }
+pre.diff .meta { color: var(--muted); }
+
+.review-said {
+  margin: 0; padding: 8px 14px; font-size: 11.5px; color: var(--cyan);
+  border-top: 1px solid var(--panel-line-dim);
+}
+.review-actions {
+  display: flex; gap: 8px; justify-content: flex-end;
+  padding: 10px 14px; border-top: 1px solid var(--panel-line-dim);
+}
+.review-actions button {
+  font-family: var(--mono); font-size: 12px; cursor: pointer;
+  background: none; color: var(--ink);
+  border: 1px solid var(--panel-line-dim); padding: 5px 12px;
+}
+.review-actions button:hover:not(:disabled) { border-color: var(--cyan); color: var(--cyan); }
+.review-actions button:disabled { opacity: 0.35; cursor: default; }
+/* merge overwrites a note — the one place Sigma does. It should not look like
+   the other three. */
+.review-actions button.danger { color: var(--amber); border-color: rgba(255, 176, 32, 0.35); }
+.review-actions button.danger:hover:not(:disabled) { border-color: var(--amber); color: var(--amber); }

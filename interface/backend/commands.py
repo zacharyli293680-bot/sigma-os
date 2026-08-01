@@ -109,8 +109,12 @@ VERBS: dict = {
 
 DISABLED = [
     {"verb": "reflect-merge", "title": "Reflect — merge a staged change",
-     "reason": "overwrites a note; stays in the terminal (reflect-diff first) — "
-               "merges now land in the ledger, revertible like everything else"},
+     # Was "waiting on Phase 4's diff UI". That UI exists now (Phase 6), and it
+     # is the better home: merging needs a *name*, and a palette verb is a
+     # dictionary key with nothing user-supplied in it. Click a row in
+     # WAITING ON YOU, read the diff, merge from there.
+     "reason": "moved, not missing — review a proposal in WAITING ON YOU and "
+               "merge from its diff; a palette verb cannot name one file"},
     {"verb": "install", "title": "Install hooks & schedules",
      "reason": "system configuration stays in the terminal"},
     {"verb": "ui", "title": "Start the interface",

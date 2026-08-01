@@ -16,6 +16,7 @@ import ChatDrawer from "./chat";
 import Ledger from "./ledger";
 import NoSyncView from "./nosync";
 import Palette from "./palette";
+import Review from "./review";
 import { Foot, Panel, ProjectsPanel, Rail, TodayPanel, TopStrip, WaitingPanel } from "./panels";
 import Reactor, { activityLine, useElapsed } from "./reactor";
 
@@ -46,6 +47,7 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [ledgerOpen, setLedgerOpen] = useState(false);
   const [noSyncOpen, setNoSyncOpen] = useState(false);
+  const [reviewing, setReviewing] = useState<string | null>(null);
   // Fetched once for the rail's count badge; the view refetches on open.
   const [noSync, setNoSync] = useState<NoSync | null>(null);
   const [job, setJob] = useState<Job | null>(null);
@@ -116,8 +118,9 @@ export default function App() {
         e.preventDefault();
         setNoSyncOpen(o => !o);
       } else if (e.key === "Escape") {
-        // Esc peels one layer: palette, no-sync, ledger, the drawer, then the brain.
-        if (paletteOpen) setPaletteOpen(false);
+        // Esc peels one layer: review, palette, no-sync, ledger, drawer, brain.
+        if (reviewing) setReviewing(null);
+        else if (paletteOpen) setPaletteOpen(false);
         else if (noSyncOpen) setNoSyncOpen(false);
         else if (ledgerOpen) setLedgerOpen(false);
         else if (chatOpen) setChatOpen(false);
@@ -126,7 +129,7 @@ export default function App() {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [paletteOpen, ledgerOpen, chatOpen, noSyncOpen]);
+  }, [paletteOpen, ledgerOpen, chatOpen, noSyncOpen, reviewing]);
 
   // Palette jobs stream here and take over the dock while they run; when one
   // finishes, the panels it may have changed refetch immediately.
@@ -182,7 +185,7 @@ export default function App() {
             noSyncCount={noSync?.ok ? noSync.total : null} />
       <Reactor fleet={fleet ?? null} progress={progress} waitingCount={waitingCount} />
       <div className="right">
-        <WaitingPanel proposals={proposals ?? null} vault={vault} />
+        <WaitingPanel proposals={proposals ?? null} onReview={setReviewing} />
         <TodayPanel tasks={tasks ?? null} vault={vault} onMutate={refresh} />
       </div>
       <div className="lower">
@@ -198,6 +201,8 @@ export default function App() {
       <Ledger open={ledgerOpen} vault={vault} onClose={() => setLedgerOpen(false)}
               onMutate={refresh} />
       <NoSyncView open={noSyncOpen} vault={vault} onClose={() => setNoSyncOpen(false)} />
+      <Review name={reviewing} vault={vault} onClose={() => setReviewing(null)}
+              onMutate={refresh} />
       <Palette open={paletteOpen} onClose={() => setPaletteOpen(false)}
                onLaunched={() => {}} />
       <ChatDrawer open={chatOpen} vault={vault} onClose={() => setChatOpen(false)}

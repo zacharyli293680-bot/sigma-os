@@ -33,6 +33,17 @@ export type Proposals = {
   staged: ProposalRow[]; applied_recent: ProposalRow[];
 };
 
+/** One proposal, opened for review (Phase 6). */
+export type ProposalDetail = {
+  name: string; title: string;
+  kind: string | null; status: string | null; risk: string | null; date: string;
+  target: string;
+  target_exists: boolean;
+  /** True when applying stages rather than writes — applier.py's rule, surfaced. */
+  would_stage: boolean;
+  proposed: string; diff: string; body: string;
+};
+
 export type RepoState = {
   branch: string | null; dirty: number | null;
   last_commit: string | null; last_subject: string; unpushed: number | null;

@@ -228,6 +228,12 @@ app.include_router(commands.router)
 import writes  # noqa: E402
 app.include_router(writes.router)
 
+# Reviewing a proposal without leaving the dashboard (Phase 6). Mounted after
+# panels so `/api/proposals` (the list) and `/api/proposals/{name}` (one of
+# them) coexist — a literal path wins over a parameterised one.
+import review  # noqa: E402
+app.include_router(review.router)
+
 
 @app.on_event("shutdown")
 async def _shutdown_job():
