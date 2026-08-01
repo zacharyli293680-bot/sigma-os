@@ -7,6 +7,7 @@ cli.py  —  `sigma`, one front door for the whole OS.
     sigma doctor               health check (what SessionStart runs)
     sigma fleet run            run the specialists that are due
     sigma reflect diff         review staged changes
+    sigma todo                 the four priority queues
     sigma devlog               which projects have unlogged commits
     sigma new "<one line>"     scaffold a repo + hub note
     sigma install              hooks + scheduled tasks
@@ -53,6 +54,7 @@ DEVLOG = HERE / "devlog.py"
 MAPPER = HERE / "mapper.py"
 SCAFFOLD = HERE / "scaffold.py"
 HOOKS = HERE / "install_hooks.py"
+TODO = HERE / "todo.py"
 
 
 def interpreter(needs_sdk: bool = False) -> str:
@@ -262,6 +264,25 @@ def cmd_new(a):
     return run(SCAFFOLD, *args)
 
 
+def cmd_todo(a):
+    """The four queues, exactly as the dashboard computes them.
+
+    Reads only, but it does persist the sidecar index — which is how a task's
+    age and its completion date get recorded at all. `--no-persist` makes it a
+    pure read for when you only want to look.
+    """
+    args = []
+    if a.all:
+        args.append("--all")
+    if a.json:
+        args.append("--json")
+    if a.date:
+        args += ["--date", a.date]
+    if a.no_persist:
+        args.append("--no-persist")
+    return run(TODO, *args)
+
+
 def cmd_install(a):
     what = a.what or "all"
     rc = 0
@@ -371,6 +392,15 @@ def build_parser():
     nw.add_argument("--dry-run", action="store_true",
                     help="plan it and print what would be made; create nothing")
 
+    t = sub.add_parser("todo", help="the four priority queues")
+    t.add_argument("--all", action="store_true",
+                   help="the full queues, not just the visible windows")
+    t.add_argument("--json", action="store_true", help="the raw payload")
+    t.add_argument("--date", metavar="YYYY-MM-DD",
+                   help="score as of this date instead of today")
+    t.add_argument("--no-persist", action="store_true",
+                   help="do not update the index (a pure read)")
+
     i = sub.add_parser("install", help="git hooks and scheduled tasks")
     i.add_argument("what", nargs="?", choices=["all", "hooks", "schedules"])
 
@@ -411,7 +441,7 @@ def main(argv=None):
         "status": cmd_status, "doctor": cmd_doctor, "fleet": cmd_fleet,
         "reflect": cmd_reflect, "capture": cmd_capture, "intake": cmd_intake,
         "devlog": cmd_devlog, "map": cmd_map, "new": cmd_new,
-        "install": cmd_install, "ui": cmd_ui,
+        "todo": cmd_todo, "install": cmd_install, "ui": cmd_ui,
     }[a.cmd](a)
 
 
