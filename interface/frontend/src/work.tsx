@@ -163,8 +163,9 @@ function QuickAdd({ vault, sections, onAdded, inputRef }: {
           const s = sections[k];
           return s?.kind === "chain"
             ? (s.parents ?? []).map(p => (
-                <option key={`${k}:${p.key}`} value={`${k}:${p.key}`}>
-                  {SECTION_LABEL[k]} — {p.label}
+                <option key={`${k}:${p.key}`} value={`${k}:${p.key}`}
+                        title={p.label !== p.key ? p.label : undefined}>
+                  {SECTION_LABEL[k]} — {p.key}
                 </option>
               ))
             : [<option key={k} value={k}>{SECTION_LABEL[k]}</option>];
@@ -233,10 +234,24 @@ function RowMenu({ t, at, sections, onMeta, onMove, onClose }: {
   // scrolling grid, and an absolutely-positioned menu was clipped by it — the
   // bottom third of the list simply vanished. `fixed` escapes the overflow, and
   // measuring lets it open upward when it would otherwise run off the screen.
-  const MENU_H = 250;
-  const up = at.bottom + MENU_H > window.innerHeight;
+  //
+  // The height is measured rather than assumed. A flat 250px was close enough
+  // while "move to" was four fixed rows, but chain sections now expand to one
+  // row per course and project, so the menu can be twice that — and flipping
+  // upward only moves an over-tall menu off the *other* edge. Two changes fix
+  // it together: open toward whichever side has more room, and cap the height
+  // to the room that side actually has, so the remainder scrolls (see .q-menu).
+  const GUTTER = 8;        // never let it touch the viewport edge
+  const WANTED = 280;      // enough that a short menu never flips for no reason
+  const below = window.innerHeight - at.bottom - GUTTER;
+  const above = at.top - GUTTER;
+  const up = below < WANTED && above > below;
+  // The floor matters: a row near the bottom of a short window can leave ~30px
+  // below, and a 30px-tall scroller is worse than one that overhangs slightly.
+  const room = Math.max(160, up ? above : below);
   const style: React.CSSProperties = {
     position: "fixed", right: window.innerWidth - at.right,
+    maxHeight: room,
     ...(up ? { bottom: window.innerHeight - at.top + 2 } : { top: at.bottom + 2 }),
   };
   return (
@@ -269,8 +284,13 @@ function RowMenu({ t, at, sections, onMeta, onMove, onClose }: {
             return (s.parents ?? [])
               .filter(p => !(k === t.section && p.key === t.parent))
               .map(p => (
-                <button key={`${k}:${p.key}`} onClick={() => onMove(k, p.key)}>
-                  {p.label}
+                // The key, not the label: every task row identifies a course by
+                // code (AA-210), so a menu offering "Engineering Statics" asks
+                // you to translate. Projects already key on their own stem. The
+                // human name survives as the tooltip where the two differ.
+                <button key={`${k}:${p.key}`} onClick={() => onMove(k, p.key)}
+                        title={p.label !== p.key ? p.label : undefined}>
+                  {p.key}
                   <span className="q-menu-sub">{SECTION_LABEL[k]}</span>
                 </button>
               ));

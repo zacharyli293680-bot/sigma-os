@@ -1540,12 +1540,42 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--cyan); }
    menu escapes the grid's overflow instead of being clipped by it. */
 .q-menu {
   z-index: 41;
-  min-width: 158px; padding: 5px 0;
+  min-width: 158px;
+  /* No top padding: the first heading is sticky and has to sit flush against
+     the scroll box, or rows scroll through the gap above it. */
+  padding: 0 0 5px;
   background: var(--void); border: 1px solid var(--panel-line);
   box-shadow: 0 6px 22px rgba(2, 3, 5, 0.7);
+  /* `max-height` is set inline — it depends on where the row is on screen.
+     Without the overflow, everything past the viewport edge was unreachable:
+     the menu has no keyboard path to its own tail and the page behind it does
+     not scroll it. */
+  overflow-y: auto;
+  /* Do not chain the scroll to the card grid behind: reaching the end of the
+     menu should stop, not start scrolling the queue underneath it. */
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--panel-line-dim) transparent;
 }
+/* Firefox takes the two properties above; WebKit/Blink needs these. Scoped to
+   the menu rather than global — restyling every scrollbar in the app is a
+   design decision, not a side effect of fixing this one. */
+.q-menu::-webkit-scrollbar { width: 10px; }
+.q-menu::-webkit-scrollbar-track { background: transparent; }
+.q-menu::-webkit-scrollbar-thumb {
+  background: var(--panel-line);
+  border: 3px solid var(--void);      /* inset, so the thumb reads as a hairline */
+  border-radius: 5px;
+}
+.q-menu::-webkit-scrollbar-thumb:hover { background: var(--cyan); }
+/* Sticky, because a scrolling menu that loses its headings is a list of course
+   names with no indication of what choosing one does. Padding rather than
+   margin above: a sticky element's margin is not part of what sticks, so the
+   rows would slide through the gap it left. */
 .q-menu-head {
-  margin: 5px 0 2px; padding: 0 10px;
+  position: sticky; top: 0; z-index: 1;
+  background: var(--void);
+  margin: 0 0 2px; padding: 6px 10px 1px;
   font: 400 9.5px/1.6 var(--sans); letter-spacing: 0.14em;
   text-transform: uppercase; color: var(--muted);
 }
