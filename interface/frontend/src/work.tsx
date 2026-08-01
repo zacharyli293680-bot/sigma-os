@@ -18,7 +18,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { ApiError, get, obsidianHref, post, QUEUE_ORDER } from "./api";
-import type { Queue, QueueAdd, QueueSection, QueueTask } from "./api";
+import type { Queue, QueueAdd, QueueEdit, QueueSection, QueueTask, Reword, RewordResp } from "./api";
 import { NoSyncMark } from "./panels";
 import { breakdown, chipsFor, progressOf, useFreshIds, useQueueTick } from "./queue-bits";
 import type { RowState } from "./queue-bits";
@@ -51,11 +51,16 @@ function QuickAdd({ vault, onAdded, inputRef }: {
   const [said, setSaid] = useState<QueueAdd | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
+  // What the reword is *about*: the task as filed. Held separately from the
+  // input so typing the next task never applies a suggestion to the wrong one.
+  const [subject, setSubject] = useState<{ add: QueueAdd; typed: string } | null>(null);
+  const [sugg, setSugg] = useState<Reword | null | "waiting">(null);
+
   async function submit(e?: React.FormEvent) {
     e?.preventDefault();
     const t = text.trim();
     if (!t || busy) return;
-    setBusy(true); setErr(null); setSaid(null);
+    setBusy(true); setErr(null); setSaid(null); setSugg(null); setSubject(null);
     try {
       const r = await post<QueueAdd>("queue/add", {
         text: t,
@@ -68,11 +73,69 @@ function QuickAdd({ vault, onAdded, inputRef }: {
       setBusy(false);              // ProCertus tasks should not mean setting it
       onAdded();                   // three times
       inputRef.current?.focus();
+      askReword(r, t);             // deliberately not awaited
     } catch (e2) {
       setBusy(false);
       setErr(e2 instanceof ApiError ? (e2.detail || e2.code) : "backend unreachable");
     }
   }
+
+  /** Fires after the task is already saved, and is allowed to fail quietly. */
+  async function askReword(add: QueueAdd, typed: string) {
+    setSubject({ add, typed });
+    setSugg("waiting");
+    try {
+      const r = await post<RewordResp>("queue/reword", { text: typed });
+      setSugg(r.suggestion);
+    } catch {
+      // Refused, timed out, or the window is spent. The task is filed either
+      // way, so this is not something to interrupt anyone about.
+      setSugg(null);
+    }
+  }
+
+  async function accept() {
+    if (!subject || !sugg || sugg === "waiting") return;
+    const s = sugg;
+    const line = await findLine(subject.add);
+    if (line === null) { setSugg(null); return; }
+    try {
+      await post<QueueEdit>("queue/edit", {
+        file: subject.add.file, line, raw: subject.add.raw,
+        text: s.title, due: s.due, urgency: s.urgency,
+        section: s.section, parent: s.parent,
+        raw_input: subject.typed,
+      });
+      onAdded();
+    } catch (e) {
+      setErr(e instanceof ApiError ? (e.detail || e.code) : "backend unreachable");
+    }
+    setSugg(null); setSubject(null);
+  }
+
+  /** The add endpoint reports the file, not the offset; the edit needs both.
+   *  Asking the queue is cheaper and more honest than making the write path
+   *  return a line number that a concurrent pull could already have moved. */
+  async function findLine(add: QueueAdd): Promise<number | null> {
+    try {
+      const q = await get<Queue>("queue");
+      for (const k of QUEUE_ORDER) {
+        const s = q.sections[k];
+        for (const t of [...s.visible, ...s.queue, ...s.blocked, ...s.snoozed]) {
+          if (t.file === add.file && t.raw === add.raw) return t.line;
+        }
+      }
+    } catch { /* fall through */ }
+    return null;
+  }
+
+  // Narrowed once, so the JSX below reads as one condition rather than three.
+  // A suggestion identical to what was typed is not worth a strip: the point is
+  // to offer a change, and "we agree" is noise wearing the costume of a result.
+  const shown = subject && sugg && sugg !== "waiting" ? sugg : null;
+  const changed = !!shown && !!subject && (
+    shown.title !== subject.typed || !!shown.due || shown.urgency !== "medium"
+    || shown.section !== subject.add.section);
 
   return (
     <form className="q-add" onSubmit={submit}>
@@ -101,7 +164,26 @@ function QuickAdd({ vault, onAdded, inputRef }: {
           <a href={obsidianHref(vault, said.file.replace(/\.md$/, ""))}
              title={said.file}>{said.file.split("/").pop()}</a>
           {said.created_note && " (new note)"}
+          {sugg === "waiting" && <span className="q-sugg-wait"> · ◌ tidying…</span>}
         </span>
+      )}
+      {changed && shown && subject && (
+        <div className="q-sugg">
+          <span className="q-sugg-mark">✦</span>
+          <span className="q-sugg-body">
+            <b>{shown.title}</b>
+            <span className="q-sugg-meta">
+              {shown.section !== subject.add.section
+                && ` · move to ${SECTION_LABEL[shown.section] ?? shown.section}`}
+              {shown.parent && ` · ${shown.parent}`}
+              {shown.due && ` · 📅 ${shown.due}`}
+              {shown.urgency !== "medium" && ` · ${shown.urgency}`}
+            </span>
+          </span>
+          <button type="button" className="q-sugg-go" onClick={accept}>Accept</button>
+          <button type="button" className="ghost" onClick={() => setSugg(null)}
+                  title="keep what I typed">✕</button>
+        </div>
       )}
     </form>
   );

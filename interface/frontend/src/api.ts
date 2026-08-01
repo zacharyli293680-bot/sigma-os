@@ -77,6 +77,20 @@ export const QUEUE_ORDER = ["courses", "procertus", "projects", "misc"] as const
 export type QueueAdd = {
   ok: true; file: string; section: string; parent: string | null;
   raw: string; sha: string | null; created_note: boolean;
+  /** filled in by the client: the line number the add landed on, once known */
+  line?: number;
+};
+/** A reword suggestion. Every field is a proposal; nothing has been written. */
+export type Reword = {
+  title: string; section: string; parent: string | null;
+  due: string | null; urgency: "high" | "medium" | "low";
+};
+/** null suggestion = the model answered with nothing usable. Not an error:
+ *  the task is already filed and unchanged. */
+export type RewordResp = { ok: true; suggestion: Reword | null };
+export type QueueEdit = {
+  ok: true; file: string; section: string; parent: string | null;
+  raw: string; id: string; moved: boolean; sha: string | null;
 };
 
 export type ProposalRow = {

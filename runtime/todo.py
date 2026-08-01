@@ -372,6 +372,36 @@ def compose(text: str, due: str | None = None, urgency: str | None = None) -> st
     return line
 
 
+def unsplice(body: str, line_no: int, raw: str) -> str | None:
+    """Remove exactly line `line_no` if it still reads `raw`, else None.
+
+    Same staleness contract as the toggle: the caller shows the line it saw, and
+    a note that moved underneath it gets a refusal rather than a write to
+    whatever now occupies that offset.
+    """
+    lines = body.split("\n")
+    i = line_no - 1
+    if not (0 <= i < len(lines)):
+        return None
+    had_cr = lines[i].endswith("\r")
+    if (lines[i][:-1] if had_cr else lines[i]) != raw:
+        return None
+    return "\n".join(lines[:i] + lines[i + 1:])
+
+
+def replace_line(body: str, line_no: int, raw: str, new: str) -> str | None:
+    """Rewrite exactly line `line_no`, preserving its line ending. None if stale."""
+    lines = body.split("\n")
+    i = line_no - 1
+    if not (0 <= i < len(lines)):
+        return None
+    had_cr = lines[i].endswith("\r")
+    if (lines[i][:-1] if had_cr else lines[i]) != raw:
+        return None
+    lines[i] = new + ("\r" if had_cr else "")
+    return "\n".join(lines)
+
+
 def splice(body: str, heading: str, line: str) -> str:
     """Insert `line` at the end of `heading`'s section, creating it if absent.
 
@@ -599,6 +629,131 @@ def reconcile(index: dict, found: list, today: str) -> dict:
 # --------------------------------------------------------------------------
 # assembling the queues
 # --------------------------------------------------------------------------
+
+def set_meta(updates: dict, index_path=None) -> bool:
+    """Merge per-task fields into the index. `{task_id: {field: value}}`.
+
+    The only writer of sidecar-only state — snooze, pin, archive, the section
+    override, and the raw text a reword replaced. Refuses fields that are not
+    the sidecar's to hold: a title or a due date living here would be a second
+    source of truth for something the note already says, which is the whole
+    thing this design is avoiding.
+
+    Read-modify-write under no lock. That is survivable because every field is
+    last-write-wins per task and the writers are one browser and one person;
+    it would not be if anything scheduled ever wrote here.
+    """
+    allowed = {"section", "parent", "urgency", "snoozed_until", "pinned",
+               "status", "raw_input", "depends_on"}
+    index, readable = load_index(index_path)
+    if not readable:
+        return False                       # never write over an index we cannot read
+    for tid, fields in (updates or {}).items():
+        entry = index["tasks"].setdefault(tid, {
+            "file": "", "text": "", "section": None, "parent": None,
+            "created": datetime.date.today().isoformat(),
+            "urgency": None, "snoozed_until": None, "pinned": False,
+            "status": "active", "completed_at": None, "raw_input": None,
+            "depends_on": [],
+        })
+        for k, v in (fields or {}).items():
+            if k in allowed:
+                entry[k] = v
+    return save_index(index, index_path)
+
+
+# --------------------------------------------------------------------------
+# the AI reword — a suggestion, never an action
+# --------------------------------------------------------------------------
+
+REWORD_PROMPT = """\
+You clean up one hastily-typed todo item for a personal task queue. Today is \
+{today}.
+
+Raw input:
+{text}
+
+Reply with ONLY a JSON object, no prose and no code fence:
+
+{{"title": str, "section": str, "parent": str|null, "due": "YYYY-MM-DD"|null,
+  "urgency": "high"|"medium"|"low"}}
+
+- title: the same task, tidied. Fix casing and obvious typos, expand an
+  abbreviation only when it is unambiguous. Do NOT invent detail, do NOT add a
+  date or a course code that is not implied by the raw input, and do NOT
+  restate what the section already says. Keep it under 100 characters.
+- section: exactly one of courses, procertus, projects, misc.
+  courses = coursework. procertus = the internship. projects = the personal
+  projects listed below. misc = everything else.
+- parent: for courses, one of {courses}; for projects, one of {projects};
+  otherwise null. Use null rather than guessing.
+- due: only if the raw input implies a date. Resolve relative wording against
+  today ("friday" is the next {today} or later Friday). null if none is implied.
+- urgency: high only if the input says so ("urgent", "asap", "!"), low for
+  clearly optional work, otherwise medium.
+
+Return null for anything the input does not support. A field you invented is
+worse than a field you left alone."""
+
+
+def reword_prompt(text: str, vault, today: str | None = None) -> str:
+    today = today or datetime.date.today().isoformat()
+    return REWORD_PROMPT.format(
+        today=today, text=" ".join(str(text).split())[:500],
+        courses=", ".join(active_courses(vault)) or "(none)",
+        projects=", ".join(active_projects(vault)) or "(none)")
+
+
+def parse_reword(data, vault, today: str | None = None) -> dict | None:
+    """Validate a model's answer into a suggestion that is safe to show.
+
+    Everything here is untrusted input. It never reaches a path, a command line
+    or a write — the user accepts a suggestion and *that* is what writes — but
+    it is still checked field by field, because a suggestion carrying a course
+    code that does not exist would send the accept straight at a directory the
+    vault does not have.
+    """
+    if not isinstance(data, dict):
+        return None
+    today = today or datetime.date.today().isoformat()
+
+    title = " ".join(str(data.get("title") or "").split())
+    title = TASK_RE.sub(r"\2", title)          # a model that echoed "- [ ] x"
+    title = META_RE.sub("", title).strip()[:100]
+    if not title:
+        return None
+
+    section = str(data.get("section") or "").strip().lower()
+    if section not in SECTIONS:
+        section = "misc"
+    parent = str(data.get("parent") or "").strip() or None
+    known = (active_courses(vault) if section == "courses"
+             else active_projects(vault) if section == "projects" else {})
+    if parent not in known:
+        parent = None
+    if section in PER_PARENT and parent is None:
+        # A course task with no course has nowhere to live; misc is where a
+        # thing whose home is unknown belongs, and that is a visible answer.
+        section = "misc"
+
+    due = str(data.get("due") or "").strip() or None
+    if due:
+        try:
+            d = datetime.date.fromisoformat(due)
+        except ValueError:
+            due = None
+        else:
+            # A model that resolved "friday" against its own idea of today can
+            # land in the past. A deadline before today is not a deadline.
+            due = d.isoformat() if d.isoformat() >= today else None
+
+    urgency = str(data.get("urgency") or "").strip().lower()
+    if urgency not in URGENCY_WEIGHT:
+        urgency = "medium"
+
+    return {"title": title, "section": section, "parent": parent,
+            "due": due, "urgency": urgency}
+
 
 def _merge(f: dict, e: dict, today: str) -> dict:
     """One scan row + its index entry -> the task the UI renders."""

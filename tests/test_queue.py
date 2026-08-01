@@ -384,6 +384,90 @@ class TestSplice(unittest.TestCase):
             self.assertIn(line, out.split("\n"))
 
 
+class TestReword(QueueBase):
+    """The model's answer is untrusted input.
+
+    It never reaches a path, a command line or a write — the user accepts a
+    suggestion and *that* writes — but it is still checked field by field,
+    because a suggestion naming a course that does not exist would send the
+    accept at a directory the vault does not have.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.course("CSE-311", "- [ ] x\n")
+        self.project("sigma-os", "- [ ] y\n")
+
+    def parse(self, d, today=TODAY):
+        return todo.parse_reword(d, self.vault, today)
+
+    def test_a_good_answer_passes_through(self):
+        got = self.parse({"title": "Finish CSE 311 lab 4", "section": "courses",
+                          "parent": "CSE-311", "due": "2026-08-07", "urgency": "high"})
+        self.assertEqual(got, {"title": "Finish CSE 311 lab 4", "section": "courses",
+                               "parent": "CSE-311", "due": "2026-08-07",
+                               "urgency": "high"})
+
+    def test_an_invented_course_is_dropped_and_the_task_falls_to_misc(self):
+        """A course task with no course has nowhere to live."""
+        got = self.parse({"title": "read ch 4", "section": "courses",
+                          "parent": "PHYS-999", "due": None, "urgency": "medium"})
+        self.assertEqual((got["section"], got["parent"]), ("misc", None))
+
+    def test_a_deadline_in_the_past_is_not_a_deadline(self):
+        """A model resolving "friday" against its own idea of today lands there."""
+        self.assertIsNone(self.parse({"title": "a", "section": "misc",
+                                      "due": "2026-07-01", "urgency": "medium"})["due"])
+
+    def test_junk_fields_fall_back_rather_than_propagate(self):
+        got = self.parse({"title": "a", "section": "../../etc", "parent": "x",
+                          "due": "next friday", "urgency": "URGENT!!"})
+        self.assertEqual((got["section"], got["parent"], got["due"], got["urgency"]),
+                         ("misc", None, None, "medium"))
+
+    def test_a_model_that_echoed_the_checkbox_is_cleaned_up(self):
+        got = self.parse({"title": "- [ ] tidy the desk 📅 2026-08-09 🔺",
+                          "section": "misc", "urgency": "medium"})
+        self.assertEqual(got["title"], "tidy the desk")
+
+    def test_nothing_usable_yields_nothing(self):
+        for bad in (None, "a string", [], {}, {"title": "   "}):
+            self.assertIsNone(self.parse(bad))
+
+    def test_the_prompt_names_only_real_parents(self):
+        p = todo.reword_prompt("finish the lab", self.vault, TODAY)
+        self.assertIn("CSE-311", p)
+        self.assertIn("sigma-os", p)
+        self.assertIn(TODAY, p)
+
+
+class TestLineSurgery(unittest.TestCase):
+    """Both halves of a move, and the staleness contract they share."""
+
+    BODY = "# T\n\n## General\n- [ ] one\n- [ ] two\n"
+
+    def test_replace_rewrites_only_its_line(self):
+        out = todo.replace_line(self.BODY, 4, "- [ ] one", "- [ ] ONE 📅 2026-08-09")
+        self.assertEqual(out.split("\n")[3], "- [ ] ONE 📅 2026-08-09")
+        self.assertEqual(out.split("\n")[4], "- [ ] two")
+
+    def test_unsplice_removes_only_its_line(self):
+        out = todo.unsplice(self.BODY, 4, "- [ ] one")
+        self.assertNotIn("- [ ] one", out)
+        self.assertIn("- [ ] two", out)
+        self.assertIn("## General", out)
+
+    def test_both_refuse_a_line_that_moved(self):
+        self.assertIsNone(todo.replace_line(self.BODY, 4, "- [ ] NOT IT", "x"))
+        self.assertIsNone(todo.unsplice(self.BODY, 4, "- [ ] NOT IT"))
+        self.assertIsNone(todo.unsplice(self.BODY, 99, "- [ ] one"))
+
+    def test_crlf_survives(self):
+        body = "## General\r\n- [ ] one\r\n"
+        out = todo.replace_line(body, 2, "- [ ] one", "- [ ] two")
+        self.assertEqual(out, "## General\r\n- [ ] two\r\n")
+
+
 class TestWindows(QueueBase):
     def test_a_window_is_a_maximum_not_a_quota(self):
         self.note("02-Areas/ProCertus/Todo.md", "- [ ] one\n- [ ] two\n")

@@ -19,6 +19,7 @@ path-scoped commit whose SHA lands in the ledger. The toggle is line-verified
 (obsidian-git pulls every 15 minutes) the answer is 409 stale, never a write
 to the wrong line.
 """
+import asyncio
 import re
 import sys
 from pathlib import Path
@@ -33,9 +34,10 @@ from privacy import sealed_paths
 _RUNTIME = str(Path(__file__).resolve().parents[2] / "runtime")
 if _RUNTIME not in sys.path:
     sys.path.insert(0, _RUNTIME)
-from sigma import gitops, ledger, write_note  # noqa: E402
+from sigma import call_model, gitops, ledger, parse_model_json, write_note  # noqa: E402
 import todo as td  # noqa: E402  — section inference, destinations, line grammar
 
+import commands  # noqa: E402  — the one spend-window policy, not a second copy
 import panels  # noqa: E402  — to drop its caches after a write
 
 router = APIRouter(prefix="/api")
@@ -201,6 +203,153 @@ def api_queue_add(req: AddReq):
         panels._cache.pop(key, None)
     return {"ok": True, "file": rel, "section": section, "parent": parent,
             "raw": line, "sha": res["sha"], "created_note": not existed}
+
+
+class RewordReq(BaseModel):
+    text: str
+
+
+class EditReq(BaseModel):
+    file: str          # where the task is now
+    line: int
+    raw: str           # the exact line the client saw — the staleness check
+    text: str          # the new title
+    due: str | None = None
+    urgency: str | None = None
+    section: str | None = None     # a move when it differs from where it is
+    parent: str | None = None
+    raw_input: str | None = None   # what was originally typed, kept on reword
+
+
+@router.post("/queue/reword")
+async def api_queue_reword(req: RewordReq):
+    """Ask a model to tidy one typed line. Zero side effects — it proposes.
+
+    Two rules this endpoint exists inside:
+
+    - **Nothing user-supplied reaches a command line.** That is why
+      `sigma new "<description>"` is a disabled palette verb. The text arrives
+      in a JSON body and goes to `claude -p` on **stdin**, never argv, so the
+      rule holds rather than acquiring an exception.
+    - **The window belongs to the fleet.** The same hold the palette enforces
+      applies here: rate-limited in the last 45 minutes, or inside the 08:40
+      reservation, and this refuses. A suggestion is a luxury; the 09:00 run is
+      not.
+
+    call_model is a blocking subprocess, so it runs off the event loop. The
+    caller has already saved the task — this can fail, hang or be refused and
+    nothing is lost.
+    """
+    text = " ".join((req.text or "").split())
+    if not text:
+        return _err(400, "empty")
+    if len(text) > 500:
+        return _err(400, "too long")
+
+    hold = commands._window_hold()
+    if hold:
+        return _err(409, "window", detail=hold)
+
+    prompt = td.reword_prompt(text, VAULT)
+    try:
+        raw = await asyncio.wait_for(
+            asyncio.to_thread(call_model, prompt, "haiku", timeout=45,
+                              actor="reword"),
+            timeout=50)
+    except (asyncio.TimeoutError, Exception) as e:      # noqa: B014
+        return _err(502, "model", detail=f"{type(e).__name__}")
+
+    got = td.parse_reword(parse_model_json(raw), VAULT)
+    if not got:
+        # An unusable answer is not an error the user has to act on: the task is
+        # already filed and unchanged. Say so plainly rather than showing a
+        # broken suggestion.
+        return {"ok": True, "suggestion": None}
+    return {"ok": True, "suggestion": got}
+
+
+@router.post("/queue/edit")
+def api_queue_edit(req: EditReq):
+    """Rewrite one task line, moving it between notes if its section changed.
+
+    This is what Accept runs, and what the section fix runs. A move is one
+    commit touching both files — two commits would let an undo leave the task
+    in neither note or in both.
+    """
+    src = _vault_rel(req.file)
+    if src is None:
+        return _err(400, "bad path")
+    text = " ".join((req.text or "").split())
+    if not text:
+        return _err(400, "empty")
+    if len(text) > 500:
+        return _err(400, "too long")
+    if req.due and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", req.due):
+        return _err(400, "bad date", detail="expected YYYY-MM-DD")
+    if req.urgency not in (None, "high", "medium", "low"):
+        return _err(400, "bad urgency")
+
+    section, parent = req.section, req.parent
+    if section not in td.SECTIONS:
+        section, parent = td.section_of(src)
+    dst, heading = td.destination(section, parent)
+    if _vault_rel(dst) != dst:
+        return _err(400, "bad path")
+    moving = dst != src
+    if set(sealed_paths(VAULT, [src, dst])):
+        return _err(403, "sealed path")
+
+    line = td.compose(text, req.due, req.urgency)
+    src_p, dst_p = VAULT / src, VAULT / dst
+
+    try:
+        with gitops.vault_write(VAULT) as w:
+            try:
+                body = src_p.read_text(encoding="utf-8")
+            except OSError:
+                return _err(409, "stale", detail="the note is gone or unreadable")
+            if not moving:
+                out = td.replace_line(body, req.line, req.raw, line)
+                if out is None:
+                    return _err(409, "stale", detail="the line changed underneath you")
+                write_note(src_p, out)
+                touched = [src]
+            else:
+                cut = td.unsplice(body, req.line, req.raw)
+                if cut is None:
+                    return _err(409, "stale", detail="the line changed underneath you")
+                existed = dst_p.exists()
+                dst_body = (dst_p.read_text(encoding="utf-8", errors="replace")
+                            if existed else td.NEW_NOTE.format(
+                                course=parent if section == "courses" else "",
+                                title={"procertus": "ProCertus — Todo",
+                                       "misc": "Misc"}.get(section)
+                                      or f"{parent} — Tasks",
+                                heading=heading))
+                write_note(src_p, cut)
+                dst_p.parent.mkdir(parents=True, exist_ok=True)
+                write_note(dst_p, td.splice(dst_body, heading, line))
+                touched = [src, dst]
+            res = w.commit(touched, f"zach (dashboard): "
+                                    f"{'move' if moving else 'edit'} task in {dst}")
+    except gitops.GitBusy as e:
+        return _err(409, "busy", detail=f"another Sigma write is in progress ({e})")
+    except OSError as e:
+        return _err(500, "write failed", detail=str(e))
+
+    # Identity keys on (file, cleaned text), so a reword mints a new id. Seed it
+    # with what was originally typed before the next scan adopts the line, or
+    # the raw input is lost the moment the suggestion is accepted.
+    new_id = td.task_id(dst, text)
+    if req.raw_input:
+        td.set_meta({new_id: {"raw_input": " ".join(req.raw_input.split())[:500]}})
+
+    ledger.record("zach", "update", dst, res["sha"],
+                  f"{'moved' if moving else 'edited'} a task: {text[:60]}")
+    for key in panels.TASK_PANELS:
+        panels._cache.pop(key, None)
+    return {"ok": True, "file": dst, "section": section, "parent": parent,
+            "raw": line, "id": new_id, "moved": moving, "sha": res["sha"]}
 
 
 @router.get("/activity")

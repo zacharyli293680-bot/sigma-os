@@ -1427,3 +1427,32 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--cyan); }
 .q-add-said a { color: var(--cyan); text-decoration: none; }
 .q-add-said a:hover { text-decoration: underline; }
 .q-add-said.err { color: var(--red); }
+
+/* --- the reword suggestion strip ----------------------------------------- */
+
+/* Passive by construction: it appears under a task that is *already saved*, so
+   it never blocks and ignoring it costs nothing. ✦ rather than a robot glyph —
+   the dashboard's chrome is geometric, and this is one more instrument reading. */
+.q-sugg {
+  flex: 1 0 100%;
+  display: flex; align-items: baseline; gap: 10px;
+  margin-top: 2px; padding: 7px 9px;
+  border: 1px solid rgba(34, 211, 238, 0.22);
+  background: rgba(34, 211, 238, 0.04);
+  animation: q-promote 220ms var(--dive-ease) both;
+}
+.q-sugg-mark { color: var(--cyan); flex: none; }
+.q-sugg-body { flex: 1 1 auto; min-width: 0; font-size: 12.5px; }
+.q-sugg-body b { font-weight: 500; }
+.q-sugg-meta { color: var(--ink-2); font-family: var(--mono); font-size: 11px; }
+.q-sugg-go {
+  background: none; border: 1px solid var(--panel-line);
+  color: var(--cyan); font: inherit; font-size: 12px;
+  padding: 3px 12px; cursor: pointer; flex: none;
+}
+.q-sugg-go:hover { background: rgba(34, 211, 238, 0.1); }
+.q-sugg-wait { color: var(--muted); }
+
+@media (prefers-reduced-motion: reduce) {
+  .q-sugg { animation: none; }
+}

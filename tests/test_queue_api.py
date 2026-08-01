@@ -8,6 +8,7 @@ split, the 15s cache could serve one section's answer to another, and
 /api/tasks — which the calendar strip still reads — could be broken by the
 queue's extra folder exclusion.
 """
+import asyncio
 import json
 import subprocess
 import sys
@@ -322,6 +323,146 @@ class TestQuickAdd(QueueApiBase):
             self.assertEqual(self.refused(text="push the ProCertus repo"), 403)
         finally:
             privacy.model_allow_prefixes = saved
+
+
+class TestEdit(QueueApiBase):
+    """Accepting a reword, and the section fix that reuses the same endpoint."""
+
+    def setUp(self):
+        super().setUp()
+        _git(self.vault, "add", "-A")
+        _git(self.vault, "commit", "-m", "init")
+
+    def add(self, **kw):
+        r = writes.api_queue_add(writes.AddReq(**kw))
+        self.assertIsInstance(r, dict, f"add refused: {getattr(r, 'body', r)}")
+        return r
+
+    def find(self, text):
+        for k in todo.SECTIONS:
+            for t in panels.api_queue()["sections"][k]["visible"]:
+                if t["text"] == text:
+                    return t
+        self.fail(f"{text!r} is not in any visible queue")
+
+    def edit(self, t, **kw):
+        r = writes.api_queue_edit(writes.EditReq(
+            file=t["file"], line=t["line"], raw=t["raw"], **kw))
+        self.assertIsInstance(r, dict, f"edit refused: {getattr(r, 'body', r)}")
+        return r
+
+    def test_an_in_place_edit_rewrites_the_line_and_nothing_else(self):
+        self.add(text="push repo")
+        self.add(text="second thing")
+        t = self.find("push repo")
+        self.edit(t, text="Push the ProCertus repo", due="2026-08-07", urgency="high")
+        body = (self.vault / t["file"]).read_text(encoding="utf-8")
+        self.assertIn("- [ ] Push the ProCertus repo 📅 2026-08-07 🔺", body)
+        self.assertNotIn("- [ ] push repo\n", body)
+        self.assertIn("- [ ] second thing", body)          # untouched
+
+    def test_a_section_change_moves_the_line_between_notes(self):
+        self.note("02-Areas/Academics/CSE-311/cse-311.md",
+                  "---\ntype: course-index\nstatus: active\n---\n")
+        _git(self.vault, "add", "-A")
+        _git(self.vault, "commit", "-m", "course")
+
+        self.add(text="lab thing", section="misc")
+        t = self.find("lab thing")
+        r = self.edit(t, text="Finish CSE 311 lab 4",
+                      section="courses", parent="CSE-311")
+        self.assertTrue(r["moved"])
+        self.assertEqual(r["file"], "02-Areas/Academics/CSE-311/tasks.md")
+        self.assertNotIn("lab thing",
+                         (self.vault / "02-Areas/Personal/misc.md").read_text(encoding="utf-8"))
+        moved = self.find("Finish CSE 311 lab 4")
+        self.assertEqual(moved["section"], "courses")
+
+    def test_a_move_is_one_commit_touching_both_notes(self):
+        """Two commits would let an undo leave the task in neither note."""
+        self.note("02-Areas/Academics/CSE-311/cse-311.md",
+                  "---\ntype: course-index\nstatus: active\n---\n")
+        _git(self.vault, "add", "-A")
+        _git(self.vault, "commit", "-m", "course")
+        self.add(text="lab thing", section="misc")
+        head_before = _git(self.vault, "rev-parse", "HEAD").stdout.strip()
+
+        t = self.find("lab thing")
+        self.edit(t, text="lab thing", section="courses", parent="CSE-311")
+        log = _git(self.vault, "log", "--format=%H", f"{head_before}..HEAD").stdout.split()
+        self.assertEqual(len(log), 1)
+        files = _git(self.vault, "show", "--name-only", "--format=", "HEAD").stdout.split()
+        self.assertEqual(sorted(files), ["02-Areas/Academics/CSE-311/tasks.md",
+                                         "02-Areas/Personal/misc.md"])
+
+    def test_the_originally_typed_text_survives_a_reword(self):
+        self.add(text="pcertus repo push thing")
+        t = self.find("pcertus repo push thing")
+        r = self.edit(t, text="Push the ProCertus repo",
+                      raw_input="pcertus repo push thing")
+        entry = json.loads(todo.INDEX_PATH.read_text(encoding="utf-8"))["tasks"][r["id"]]
+        self.assertEqual(entry["raw_input"], "pcertus repo push thing")
+
+    def test_a_stale_line_is_refused_rather_than_written(self):
+        self.add(text="a thing")
+        t = self.find("a thing")
+        r = writes.api_queue_edit(writes.EditReq(
+            file=t["file"], line=t["line"], raw="- [ ] something else", text="x"))
+        self.assertEqual(r.status_code, 409)
+
+
+class TestRewordEndpoint(QueueApiBase):
+    def test_the_window_hold_is_honoured_not_reimplemented(self):
+        """The palette's policy, not a second copy of it — this must go quiet
+        for the same reasons ad-hoc palette verbs do."""
+        import commands
+        saved, commands._window_hold = commands._window_hold, lambda: "reserved for the 09:00 fleet run"
+        try:
+            r = asyncio.run(writes.api_queue_reword(writes.RewordReq(text="a thing")))
+            self.assertEqual(r.status_code, 409)
+        finally:
+            commands._window_hold = saved
+
+    def test_it_refuses_empty_and_oversized_input_before_spending_anything(self):
+        for bad in ("   ", "x" * 501):
+            r = asyncio.run(writes.api_queue_reword(writes.RewordReq(text=bad)))
+            self.assertEqual(r.status_code, 400)
+
+    def test_an_unusable_answer_is_reported_as_no_suggestion(self):
+        """The task is already filed and unchanged; a broken suggestion strip
+        would be worse than none."""
+        saved = writes.call_model
+        writes.call_model = lambda *a, **k: "I'm sorry, I can't help with that."
+        try:
+            r = asyncio.run(writes.api_queue_reword(writes.RewordReq(text="a thing")))
+            self.assertEqual(r, {"ok": True, "suggestion": None})
+        finally:
+            writes.call_model = saved
+
+    def test_a_model_failure_never_reaches_the_user_as_a_crash(self):
+        saved = writes.call_model
+        def boom(*a, **k):
+            raise RuntimeError("claude is not on PATH")
+        writes.call_model = boom
+        try:
+            r = asyncio.run(writes.api_queue_reword(writes.RewordReq(text="a thing")))
+            self.assertEqual(r.status_code, 502)
+        finally:
+            writes.call_model = saved
+
+    def test_a_good_answer_is_validated_and_returned(self):
+        self.note("02-Areas/Academics/CSE-311/cse-311.md",
+                  "---\ntype: course-index\nstatus: active\n---\n")
+        saved = writes.call_model
+        writes.call_model = lambda *a, **k: (
+            '```json\n{"title": "Finish CSE 311 lab 4", "section": "courses", '
+            '"parent": "CSE-311", "due": null, "urgency": "high"}\n```')
+        try:
+            r = asyncio.run(writes.api_queue_reword(writes.RewordReq(text="311 lab")))
+            self.assertEqual(r["suggestion"]["title"], "Finish CSE 311 lab 4")
+            self.assertEqual(r["suggestion"]["parent"], "CSE-311")
+        finally:
+            writes.call_model = saved
 
 
 class TestSerialisable(QueueApiBase):
