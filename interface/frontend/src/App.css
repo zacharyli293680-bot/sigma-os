@@ -1568,3 +1568,26 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--cyan); }
   padding: 1px 8px; cursor: pointer;
 }
 .q-more-act:hover { color: var(--cyan); border-color: var(--cyan); }
+
+/* --- the review strip ---------------------------------------------------- */
+
+/* Pinned to the bottom of the work view: yesterday, in one line, under today's
+   queues. The stars are arithmetic — the tooltip carries the components for the
+   same reason every task row carries its breakdown. */
+.q-review {
+  flex: none;
+  padding: 8px 14px;
+  border-top: 1px solid var(--panel-line-dim);
+  font: 400 11.5px/1.6 var(--mono);
+}
+.q-review a {
+  display: flex; align-items: baseline; gap: 12px;
+  color: var(--ink-2); text-decoration: none;
+  border: 1px solid transparent; padding: 2px 5px; margin: -2px -5px;
+}
+.q-review a:hover { border-color: var(--panel-line-dim); color: var(--ink); }
+/* Amber, like every other "this is your standing" reading in the dashboard, and
+   never colour alone — the count of filled stars is the signal. */
+.q-stars { color: var(--amber); font-weight: 400; letter-spacing: 0.1em; flex: none; }
+.q-review-date { color: var(--muted); flex: none; }
+.q-review-facts { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

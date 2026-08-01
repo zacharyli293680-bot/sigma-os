@@ -55,6 +55,9 @@ MAPPER = HERE / "mapper.py"
 SCAFFOLD = HERE / "scaffold.py"
 HOOKS = HERE / "install_hooks.py"
 TODO = HERE / "todo.py"
+# `sigma review` runs retro.py, not review.py — backend/review.py already owns
+# that module name and runtime/ sits ahead of it on sys.path.
+RETRO = HERE / "retro.py"
 
 
 def interpreter(needs_sdk: bool = False) -> str:
@@ -283,6 +286,21 @@ def cmd_todo(a):
     return run(TODO, *args)
 
 
+def cmd_review(a):
+    """Score yesterday and write it down. Calls a model for the narrative only —
+    the number is arithmetic, so --dry-run needs no window at all."""
+    if a.status:
+        return run(RETRO, "--status")
+    if a.install_schedule:
+        return run(RETRO, "--install-schedule", "--at", a.at)
+    args = []
+    if a.date:
+        args += ["--date", a.date]
+    if a.dry_run:
+        args.append("--dry-run")
+    return run(RETRO, *args, needs_sdk=False)
+
+
 def cmd_install(a):
     what = a.what or "all"
     rc = 0
@@ -293,6 +311,7 @@ def cmd_install(a):
         print("-- scheduled tasks")
         rc |= run(REFLECT, "--install-schedule")
         rc |= run(FLEET, "--install-schedule")
+        rc |= run(RETRO, "--install-schedule")
     return rc
 
 
@@ -332,7 +351,7 @@ def build_parser():
     fs.add_parser("status", help="what ran, when, and what it raised")
     fr = fs.add_parser("run", help="run the specialists that are due")
     fr.add_argument("--only", action="append", metavar="KEY",
-                    help="planner | coach | auditor | tracker (repeatable)")
+                    help="coach | auditor | tracker (repeatable)")
     fr.add_argument("--all", action="store_true", help="ignore cadence")
     fr.add_argument("--dry-run", action="store_true", help="print the order, call no model")
 
@@ -401,6 +420,14 @@ def build_parser():
     t.add_argument("--no-persist", action="store_true",
                    help="do not update the index (a pure read)")
 
+    rv = sub.add_parser("review", help="score yesterday and write it down")
+    rv.add_argument("--date", metavar="YYYY-MM-DD", help="review this day instead")
+    rv.add_argument("--dry-run", action="store_true",
+                    help="print the note; call no model and write nothing")
+    rv.add_argument("--status", action="store_true")
+    rv.add_argument("--install-schedule", action="store_true")
+    rv.add_argument("--at", default="06:00", help="time for --install-schedule")
+
     i = sub.add_parser("install", help="git hooks and scheduled tasks")
     i.add_argument("what", nargs="?", choices=["all", "hooks", "schedules"])
 
@@ -441,7 +468,8 @@ def main(argv=None):
         "status": cmd_status, "doctor": cmd_doctor, "fleet": cmd_fleet,
         "reflect": cmd_reflect, "capture": cmd_capture, "intake": cmd_intake,
         "devlog": cmd_devlog, "map": cmd_map, "new": cmd_new,
-        "todo": cmd_todo, "install": cmd_install, "ui": cmd_ui,
+        "todo": cmd_todo, "review": cmd_review,
+        "install": cmd_install, "ui": cmd_ui,
     }[a.cmd](a)
 
 

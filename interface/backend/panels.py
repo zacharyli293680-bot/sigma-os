@@ -49,6 +49,7 @@ if _RUNTIME not in sys.path:
     sys.path.insert(0, _RUNTIME)
 import fleet as fl          # noqa: E402
 import reflect as rf        # noqa: E402
+import retro                # noqa: E402  — the 06:00 review; NOT backend/review.py
 import specialists as sp    # noqa: E402
 import todo as td           # noqa: E402
 from sigma import frontmatter  # noqa: E402
@@ -290,6 +291,22 @@ def api_queue():
     return _cached("queue", 15,
                    lambda: td.build(vault=VAULT,
                                     split=lambda _vault, rels: _split(rels)))
+
+
+# --------------------------------------------------------------------------
+# GET /api/review — the latest 06:00 retrospective (retro.py)
+# --------------------------------------------------------------------------
+
+@router.get("/review")
+def api_review():
+    """The newest recorded review, or null when none has run.
+
+    Reads the JSONL rather than the note, because the strip wants the numbers
+    and the note is prose around them. Null is a real answer here — the strip
+    says "no review yet" instead of rendering zero stars, which would claim a
+    day was scored badly rather than not scored.
+    """
+    return {"latest": _cached("review", 60, retro.latest)}
 
 
 # --------------------------------------------------------------------------

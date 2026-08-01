@@ -3,7 +3,7 @@
 fleet.py  —  Phase 4: run Sigma's specialists, one at a time.
 
     fleet.py                    run everything due now
-    fleet.py --only planner     run one specialist
+    fleet.py --only coach       run one specialist
     fleet.py --all              run every specialist regardless of cadence
     fleet.py --status           what ran, when, and what it raised
     fleet.py --dry-run          pick and print the run order, call no model
@@ -146,9 +146,9 @@ def is_due(spec, state: dict, now: datetime.datetime) -> bool:
     **Calendar days, not a rolling window (changed 2026-07-31).** This used to
     ask whether `cadence_days × 24 − 1` hours had passed, which quietly made the
     scheduled run weakest on exactly the days Zach had been most active. Running
-    the planner by hand at 13:56 left it 19.1h old at 09:00 the next morning —
-    under the 23h bar — so the 09:00 run logged `nothing due` and wrote no daily
-    note. Three consecutive scheduled runs did nothing for this reason, each one
+    the (since-retired) planner by hand at 13:56 left it 19.1h old at 09:00 the
+    next morning — under the 23h bar — so the 09:00 run logged `nothing due` and
+    wrote no daily note. Three consecutive scheduled runs did nothing, each one
     reporting success, which is precisely the shape of failure this project
     keeps having to dig out.
 

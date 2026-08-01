@@ -18,7 +18,8 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { ApiError, get, obsidianHref, post, QUEUE_ORDER } from "./api";
-import type { Queue, QueueAdd, QueueEdit, QueueSection, QueueTask, Reword, RewordResp } from "./api";
+import type { Queue, QueueAdd, QueueEdit, QueueSection, QueueTask, Reword,
+              RewordResp, ReviewResp, ReviewRow } from "./api";
 import { NoSyncMark } from "./panels";
 import { breakdown, chipsFor, progressOf, useFreshIds, useQueueTick } from "./queue-bits";
 import type { RowState } from "./queue-bits";
@@ -487,10 +488,52 @@ function Card({ s, vault, rows, errs, fresh, onTick, onMeta, onMove }: {
   );
 }
 
+/**
+ * Yesterday, in one line, pinned to the bottom.
+ *
+ * The stars are arithmetic — Python computes them from throughput, deadline
+ * adherence and course momentum, and the model that wrote the sentence beside
+ * them never saw a number it could change. The tooltip carries the components
+ * for the same reason every task row carries its breakdown: a score you cannot
+ * take apart is one you stop believing.
+ */
+function ReviewStrip({ r, vault }: { r: ReviewRow | null; vault: string }) {
+  if (!r) {
+    return (
+      <footer className="q-review dim">
+        no review yet — <code>sigma review</code> scores yesterday, or it runs
+        itself at 06:00 once scheduled
+      </footer>
+    );
+  }
+  const parts = Object.entries(r.components)
+    .map(([k, v]) => `${{ T: "throughput", A: "adherence", M: "momentum" }[k]} ${v?.toFixed(1)}`)
+    .join(" · ");
+  return (
+    <footer className="q-review">
+      <a href={obsidianHref(vault, `06-System/reviews/${r.date}`)}
+         title={parts ? `${parts}\n(weights 0.40 / 0.35 / 0.25, renormalised over what could be measured)`
+                      : "not enough history to score yet"}>
+        <b className="q-stars">
+          {r.score === null ? "—" : "★".repeat(r.score) + "☆".repeat(5 - r.score)}
+        </b>
+        <span className="q-review-date">{r.date}</span>
+        <span className="q-review-facts">
+          {Object.entries(r.by_section).filter(([, n]) => n)
+            .map(([k, n]) => `${n} ${k}`).join(" · ") || "nothing completed"}
+          {r.deadlines_due > 0 && ` · ${r.deadlines_met}/${r.deadlines_due} deadlines`}
+          {r.courses > 0 && ` · ${r.advanced}/${r.courses} courses moved`}
+        </span>
+      </a>
+    </footer>
+  );
+}
+
 export default function WorkView({ open, vault, onClose, onMutate }: {
   open: boolean; vault: string; onClose: () => void; onMutate: () => void;
 }) {
   const [q, setQ] = useState<Queue | null | undefined>(undefined);
+  const [rev, setRev] = useState<ReviewRow | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const pull = () => get<Queue>("queue").then(setQ).catch(() => setQ(null));
@@ -499,6 +542,7 @@ export default function WorkView({ open, vault, onClose, onMutate }: {
     if (!open) return;
     setQ(undefined);
     pull();
+    get<ReviewResp>("review").then(r => setRev(r.latest)).catch(() => setRev(null));
     // Opening this view is almost always about adding something — Ctrl+; is
     // literally the add shortcut — so the caret starts where the typing goes.
     // Esc still closes: the shell's handler is on document, not the input.
@@ -577,6 +621,8 @@ export default function WorkView({ open, vault, onClose, onMutate }: {
             ))}
           </div>
         )}
+
+        <ReviewStrip r={rev} vault={vault} />
       </div>
     </div>
   );

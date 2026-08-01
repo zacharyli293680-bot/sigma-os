@@ -203,6 +203,44 @@ def check_schedule(out):
                     "tail reflect.log; python reflect.py"))
 
 
+def check_review(out):
+    """The 06:00 retrospective.
+
+    Its absence is silent by nature: the queues keep working without it, so
+    nothing else in the system notices that yesterday was never scored. That is
+    exactly the shape of failure this watchdog exists for.
+    """
+    import retro
+    try:
+        r = subprocess.run(["schtasks", "/query", "/tn", retro.TASK_NAME],
+                           capture_output=True, timeout=20)
+    except Exception:
+        return
+    if r.returncode != 0:
+        out.append((TODO, f"scheduled task '{retro.TASK_NAME}' is not installed",
+                    "sigma review --install-schedule"))
+        return
+
+    last = retro.latest()
+    if not last:
+        out.append((TODO, "the daily review is scheduled but has never run",
+                    "sigma review"))
+        return
+    # Two days without a review means the schedule fired and did nothing, or did
+    # not fire — either way the productivity journal has a hole in it.
+    try:
+        age = (datetime.date.today()
+               - datetime.date.fromisoformat(last["date"])).days
+    except (ValueError, KeyError, TypeError):
+        return
+    if age > 2:
+        out.append((ALERT, f"last review covers {last['date']} ({age}d ago) - "
+                           f"nothing has scored a day since",
+                    "tail review.log; sigma review"))
+    else:
+        out.append((OK, f"daily review current ({last['date']})", None))
+
+
 def _load_state() -> dict:
     return read_state(STATE_PATH)
 
@@ -499,8 +537,8 @@ def check_backup(out):
         out.append((TODO, f"backup check could not run: {type(e).__name__}: {e}", None))
 
 
-CHECKS = (check_capture, check_reflection, check_schedule, check_auth,
-          check_privacy, check_backup, check_fleet)
+CHECKS = (check_capture, check_reflection, check_schedule, check_review,
+          check_auth, check_privacy, check_backup, check_fleet)
 
 
 def collect():

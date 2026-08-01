@@ -59,11 +59,19 @@ class TestWindowPolicy(unittest.TestCase):
     def _progress(self):
         return json.loads(fleet.PROGRESS_PATH.read_text(encoding="utf-8"))
 
+    @property
+    def first(self) -> str:
+        """Whoever runs first, rather than a name. These tests are about the
+        window policy, not about the roster — hardcoding "planner" here meant
+        retiring it broke two tests that had nothing to do with it."""
+        return sp.in_run_order()[0].key
+
     def test_first_rate_limit_degrades_and_continues(self):
-        self._script({"planner": (False, "rate limit reached")})
+        first = self.first
+        self._script({first: (False, "rate limit reached")})
         asyncio.run(fleet.run_fleet(force=True))
-        # planner ran at full model, everyone after ran degraded
-        self.assertEqual(self.calls[0], ("planner", None))
+        # the first ran at full model, everyone after ran degraded
+        self.assertEqual(self.calls[0], (first, None))
         by_key = dict(self.calls[1:])
         for key, override in by_key.items():
             native = sp.BY_KEY[key].model
@@ -75,14 +83,15 @@ class TestWindowPolicy(unittest.TestCase):
         self.assertTrue(prog["degraded"])
         # the failed specialist made no progress and stays due
         state = fleet.load_state()
-        self.assertNotIn("last_ok", state["specialists"]["planner"])
-        self.assertTrue(fleet.is_due(sp.BY_KEY["planner"], state,
+        self.assertNotIn("last_ok", state["specialists"][first])
+        self.assertTrue(fleet.is_due(sp.BY_KEY[first], state,
                                      datetime.datetime.now()))
 
     def test_rate_limit_while_degraded_pauses_with_resume(self):
         # a rate limit 10 minutes ago: this run starts degraded
+        first = self.first
         spend.record_spend(actor="seed", model="sonnet", rate_limited=True)
-        self._script({"planner": (False, "usage limit reached")})
+        self._script({first: (False, "usage limit reached")})
         asyncio.run(fleet.run_fleet(force=True))
         self.assertEqual(len(self.calls), 1)                # stopped, not burned
         prog = self._progress()
@@ -92,7 +101,7 @@ class TestWindowPolicy(unittest.TestCase):
         state = fleet.load_state()
         self.assertIsNotNone(state.get("stopped_early_at"))
         self.assertEqual(state["paused"]["remaining"],
-                         [k for k in sp.BY_KEY if k != "planner"])
+                         [k for k in sp.BY_KEY if k != first])
 
     def test_clean_run_clears_the_pause(self):
         fleet.save_state({"specialists": {}, "stopped_early_at": "2026-07-30T09:00:00",

@@ -28,9 +28,9 @@ class Specialist:
     effort: str
     brief: str
     max_turns: int = 24
-    # Runs in this order. The planner is first because it is the one with a time
-    # of day attached to it: a plan that lands at 09:20 because three other
-    # agents went first is a plan for a morning that already started.
+    # Runs in this order. Order 10 is deliberately vacant: it belonged to the
+    # planner, which was first because it was the only specialist with a time of
+    # day attached to it. Nothing here is time-critical any more.
     order: int = 50
     tags: tuple = field(default_factory=tuple)
     # Optional zero-argument callable returning extra brief text, computed at
@@ -42,30 +42,23 @@ class Specialist:
     context: object = None
 
 
-PLANNER = Specialist(
-    key="planner", title="Daily planner", cadence="daily",
-    model="sonnet", effort="medium", order=10,
-    brief="""
-Build today's plan.
-
-Read `Home.md` for the live queries, then the notes behind whatever they surface:
-open assignments, upcoming exams, active project hubs, and today's daily note in
-`01-Daily/` if it exists.
-
-A good plan from you is **short and ordered, and it says why**. Lead with what is
-genuinely due or at risk today, not everything outstanding. Three well-chosen
-items beat a list of twelve. If something is due today and nothing has been
-started, say so plainly.
-
-Propose a `note` targeting today's daily note path (`01-Daily/YYYY-MM-DD.md`,
-using the date from the vault's most recent daily note or today's date). Content
-must be the **complete note**, following the `daily` frontmatter schema in
-`CLAUDE.md`. If today's daily note already exists, your proposal should be the
-updated whole file — the apply step writes files, it does not merge.
-
-If the day genuinely has nothing pressing, propose nothing and say so. A plan
-invented to justify running is worse than no plan.
-""".strip())
+# The planner was here: a daily Sonnet run that rewrote `01-Daily/YYYY-MM-DD.md`
+# whole with a short ordered plan built from Home.md's live queries.
+#
+# It was retired on 2026-08-01 when the todo list became four self-maintaining
+# priority queues. A daily rebuild only earns its cost if the list cannot
+# maintain itself, and the queue promotes the next task the moment one pops —
+# so the plan the planner wrote each morning had become a restatement of what
+# the WORK view already showed, in a note nobody read twice.
+#
+# Its output outlived it in an unwelcome way: seven daily notes full of
+# generated checkboxes that made Misc a seven-times-over copy of the other
+# three queues. That is why `todo.py` excludes `01-Daily/` outright.
+#
+# What replaced it is not another planner but `retro.py` — 06:00, about
+# yesterday rather than today, and its number is arithmetic rather than
+# judgement. Planning forward was the thing that stopped needing a model;
+# noticing what did not move still does.
 
 COACH = Specialist(
     key="coach", title="Study coach", cadence="weekly",
@@ -159,7 +152,7 @@ corrected file as content, and say in the rationale what specifically went stale
 """.strip())
 
 
-FLEET = (PLANNER, COACH, AUDITOR, TRACKER)
+FLEET = (COACH, AUDITOR, TRACKER)
 BY_KEY = {s.key: s for s in FLEET}
 
 

@@ -48,9 +48,13 @@ Five layers, raw → distilled:
 - **3 — Interface** ✅ local web app: Claude Agent SDK backend + React frontend. Asks the vault a
   question and cites the notes it read; proposes changes rather than making them; one process
   serves the API and the built UI.
-- **4 — Specialist fleet** ✅ planner / coach / auditor / tracker, on a daily schedule.
+- **4 — Specialist fleet** ✅ coach / auditor / tracker, on a daily schedule.
   **Sequenced, not fanned out** — one subscription means the ceiling is a rate-limit window, so
   concurrency is the budget and the runner has no parallel option.
+- **5 — Priority queues** ✅ the todo list is four self-maintaining queues — Courses, ProCertus,
+  Projects, Misc — sharing one inspectable scoring function. Days stopped being the organising
+  unit, so the 09:00 rebuild was replaced by a 06:00 retrospective whose 0–5 score is computed in
+  Python and only *narrated* by a model. `sigma todo`, `sigma review`, or WK / Ctrl+; in the UI.
 
 ## Commands
 

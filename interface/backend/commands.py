@@ -59,10 +59,16 @@ VERBS: dict = {
                         # 4 specialists × 420s + SDK cold starts; 1800 left a
                         # legitimate full run ~2 minutes from being killed.
                         "argv": _script("fleet.py"), "timeout": 2400, "model": True},
-    "fleet-run-planner": {"title": "Fleet — run the planner now",
-                          "hint": "today's plan as a daily-note proposal",
-                          "argv": _script("fleet.py", "--only", "planner"),
-                          "timeout": 600, "model": True},
+    # `fleet-run-planner` was here. The planner was retired when the todo list
+    # became self-maintaining queues — see specialists.py. What answers the
+    # question it used to is `review`, below, and the WORK view (Ctrl+;).
+    "review":            {"title": "Review — score yesterday",
+                          "hint": "the 06:00 retrospective, run now",
+                          "argv": _script("retro.py"),
+                          "timeout": 300, "model": True},
+    "review-status":     {"title": "Review — status",
+                          "hint": "last scored day, and the schedule",
+                          "argv": _script("retro.py", "--status"), "timeout": 60},
     "fleet-run-coach":   {"title": "Fleet — run the coach now",
                           "hint": "timeline drift check",
                           "argv": _script("fleet.py", "--only", "coach"),
@@ -169,6 +175,12 @@ def _window_hold() -> str | None:
     now = datetime.datetime.now()
     if now.hour == 8 and now.minute >= 40:
         return "reserved for the 09:00 fleet run"
+    # Same reservation for the 06:00 retrospective. It is a much smaller call
+    # than a fleet run, but it is the one that has to happen before the day
+    # starts, and an ad-hoc verb that rate-limits the window at 05:55 costs the
+    # whole review rather than delaying itself.
+    if now.hour == 5 and now.minute >= 40:
+        return "reserved for the 06:00 review"
     return None
 
 # The single job slot. `_rev` bumps on every mutation so the SSE feed knows

@@ -63,8 +63,9 @@ Sigma **summarises it, never parses it** as a contract.
 | **2 — Reflection & skills** | Weekly reflection → insights + proposals, propose-and-approve | ✅ built 2026-07-24 |
 | **2.5 — Watchdog** | `doctor.py` on `SessionStart` — reports Sigma's health into every session | ✅ built 2026-07-27 |
 | **3 — Interface** | Local web app: Agent SDK backend + React frontend | ✅ built 2026-07-27, completed 2026-07-28 |
-| **4 — Specialist fleet** | planner / coach / auditor / tracker, sequenced under one window | ✅ built 2026-07-28 |
+| **4 — Specialist fleet** | coach / auditor / tracker, sequenced under one window | ✅ built 2026-07-28 |
 | **CLI** | `sigma` — one front door over all of it | ✅ built 2026-07-29 |
+| **5 — Priority queues** | Four self-maintaining task queues + a 06:00 retrospective | ✅ built 2026-08-01 |
 
 Phase 2.5 was not in either plan. It exists because both shipped phases were found **dead** on
 2026-07-27 — Phase 1 had captured nothing for three days, Phase 2's first scheduled run had failed on
@@ -129,13 +130,16 @@ Both scheduled tasks carry `RestartCount 3`, added after one network blip cost a
 
 | Order | Specialist | Cadence | Model | Brief |
 |---|---|---|---|---|
-| 10 | **planner** | daily | Sonnet | Today's plan from `Home.md`'s live queries |
 | 30 | **coach** | weekly | Sonnet | Plan-vs-date drift in course timelines |
 | 40 | **auditor** | weekly | Haiku | Frontmatter against the contract |
 | 60 | **tracker** | weekly | Haiku | Stale entries in the job pipeline |
 
-The planner is first because it is the one with a time of day attached: a plan that lands at 09:20
-because three other agents went first is a plan for a morning that already started.
+**Order 10 is vacant.** It belonged to the *planner*, a daily Sonnet run that rewrote the day's note
+in `01-Daily/` with a short ordered plan. It was retired on 2026-08-01: a daily rebuild only earns
+its cost if the list cannot maintain itself, and the priority queues promote the next task the moment
+one pops. What replaced it is not another planner but `retro.py` — 06:00, about *yesterday* rather
+than today, and its number is arithmetic rather than judgement. Planning forward stopped needing a
+model; noticing what did not move still does.
 
 **There is no concurrency option**, deliberately — an option is a constraint you have already decided
 to break. A stale lock (>2h) is taken over rather than obeyed, so a crashed run cannot wedge the

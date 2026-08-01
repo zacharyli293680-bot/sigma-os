@@ -91,6 +91,18 @@ export type Reword = {
 /** null suggestion = the model answered with nothing usable. Not an error:
  *  the task is already filed and unchanged. */
 export type RewordResp = { ok: true; suggestion: Reword | null };
+/** One recorded 06:00 retrospective. `score` is null when nothing could be
+ *  measured — not zero, which would claim the day was scored badly. */
+export type ReviewRow = {
+  date: string; score: number | null; weighted: number;
+  by_section: Record<string, number>;
+  components: { T?: number; A?: number; M?: number };
+  deadlines_due: number; deadlines_met: number;
+  advanced: number; courses: number;
+  visible: number; queued: number;
+};
+export type ReviewResp = { latest: ReviewRow | null };
+
 export type QueueEdit = {
   ok: true; file: string; section: string; parent: string | null;
   raw: string; id: string; moved: boolean; sha: string | null;
