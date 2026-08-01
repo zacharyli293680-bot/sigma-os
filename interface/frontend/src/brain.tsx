@@ -62,6 +62,17 @@ const HOT_MS = FIRE_MS + 300;
  *  median instead, and re-armed whenever the canvas changes size class. */
 const SLOW_MS = 26;
 const WINDOW = 45;
+/** Must match the grid transition in App.css (`--dive-ms`). The sky renders at
+ *  full rate for this long whenever the stage changes size. */
+const DIVE_MS = 340;
+/** Backing-store granularity, in device pixels. The canvas box changes on every
+ *  frame of the expand, and reallocating a ~10MB buffer twenty times across one
+ *  animation is ~200MB of churn — a driver stall right where smoothness matters
+ *  most. Rounding up to a step means ~3 reallocations instead of ~20; the buffer
+ *  is then slightly larger than the box and the transform below stretches the
+ *  scene to fill it exactly, so the picture is very slightly supersampled rather
+ *  than distorted. */
+const STEP_PX = 64;
 
 function hash(s: string): number {
   let h = 2166136261;
@@ -107,9 +118,20 @@ function glow(color: string): HTMLCanvasElement {
   return c;
 }
 
-/** One-shot 3D force layout: repulsion, springs, centre gravity. Seeded from
- *  note ids, so the sky looks the same on every visit. */
-function layout(g: Graph): Float32Array {
+/** 3D force layout: repulsion, springs, centre gravity. Seeded from note ids,
+ *  so the sky looks the same on every visit.
+ *
+ *  Split into seed + relax so the 220 iterations can be spread across frames.
+ *  In one go it is ~4.4M pair evaluations — a 100–200ms main-thread block that
+ *  used to hide behind a fullscreen overlay's fade and now lands squarely in
+ *  the dashboard's first paint, which is exactly where a hitch is most visible.
+ */
+const ITERS = 220;
+/** Iterations per chunk. Small enough that a chunk fits in a frame, large
+ *  enough that the whole layout is done in well under a second. */
+const CHUNK = 22;
+
+function seed(g: Graph): { pos: Float32Array; vel: Float32Array } {
   const n = g.nodes.length;
   const pos = new Float32Array(n * 3);
   const vel = new Float32Array(n * 3);
@@ -119,7 +141,12 @@ function layout(g: Graph): Float32Array {
     pos[i * 3 + 1] = (rnd() - 0.5) * 420;
     pos[i * 3 + 2] = (rnd() - 0.5) * 420;
   }
-  for (let iter = 0; iter < 220; iter++) {
+  return { pos, vel };
+}
+
+function relax(g: Graph, pos: Float32Array, vel: Float32Array, iters: number) {
+  const n = g.nodes.length;
+  for (let iter = 0; iter < iters; iter++) {
     for (let i = 0; i < n; i++) {
       for (let j = i + 1; j < n; j++) {
         const dx = pos[i * 3] - pos[j * 3];
@@ -152,7 +179,6 @@ function layout(g: Graph): Float32Array {
       pos[i * 3 + 2] += (vel[i * 3 + 2] *= 0.82);
     }
   }
-  return pos;
 }
 
 /** Interstellar dust: parallax depth cues, so camera drift reads as motion
@@ -236,7 +262,16 @@ export default function Brain({ graph, vault, fireRef, filter, onStatic,
   // ambient cell says nothing about the expanded view, and vice versa. Without
   // this, one slow moment in a corner of the dashboard would leave the full
   // view permanently static.
-  useEffect(() => { setQuality(0); }, [mode]);
+  //
+  // And run flat out for the length of the expand/collapse. Going *in* was
+  // already smooth because focus means 60fps; coming *out* dropped to the
+  // ambient 15 the instant the class flipped, so the sky stuttered through
+  // roughly five frames of a 340ms animation while the box around it moved
+  // smoothly. The transition is the one moment ambient must not apply.
+  useEffect(() => {
+    setQuality(0);
+    hotUntil.current = performance.now() + DIVE_MS + 120;
+  }, [mode]);
   const world = useRef<World | null>(null);
   const mouse = useRef({ x: 0, y: 0 });
   const hover = useRef<number | null>(null);
@@ -264,15 +299,21 @@ export default function Brain({ graph, vault, fireRef, filter, onStatic,
       const touched = [...g.nodes].sort((a, b) =>
         (b.mtime ?? "").localeCompare(a.mtime ?? ""))[0];
 
-      // layout() is O(n²)·220 iterations synchronously on the main thread —
-      // ~3M distance computations at 164 notes. Behind a fullscreen overlay's
-      // fade that was invisible; with the brain permanently mounted it lands
-      // in the dashboard's cold load instead, so it waits for an idle slot.
-      const build = () => {
-        const pos = layout(g);
-        // Phase from position, not from index: neighbours in space breathe nearly
-        // in step, so the sky shows slow travelling swells the way cortex does,
-        // instead of 164 independently twinkling stars.
+      // The layout runs in chunks across frames rather than in one block. Done
+      // in one go it is a 100–200ms freeze at exactly the moment the dashboard
+      // is painting for the first time — the single most visible hitch the boot
+      // had. Nothing is drawn until it finishes: a sky that visibly settles
+      // would contradict this view's one promise, that motion means something
+      // happened.
+      const { pos, vel } = seed(g);
+      let iter = 0;
+      let cancelled = false;
+      let timer = 0;
+
+      const finish = () => {
+        // Phase from position, not from index: neighbours in space breathe
+        // nearly in step, so the sky shows slow travelling swells the way
+        // cortex does, instead of 200 independently twinkling stars.
         const phase = new Float32Array(g.nodes.length);
         for (let i = 0; i < g.nodes.length; i++) {
           phase[i] = (pos[i * 3] + pos[i * 3 + 1] * 0.6 + pos[i * 3 + 2] * 0.3) * 0.006;
@@ -284,19 +325,19 @@ export default function Brain({ graph, vault, fireRef, filter, onStatic,
         };
         setReady(true);
       };
-      // Whichever fires first. requestIdleCallback's `timeout` is supposed to
-      // guarantee the callback runs, but a background tab defers it hard — and
-      // this dashboard is exactly the kind of thing you open in a background
-      // tab and switch to later, which would leave the sky permanently unbuilt.
-      // The timer is the floor; the idle slot is the optimisation.
-      let done = false;
-      const once = () => { if (!done) { done = true; build(); } };
-      const idle = (window as Window & {
-        requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => void;
-      }).requestIdleCallback;
-      if (idle) idle(once, { timeout: 1200 });
-      const t = setTimeout(once, 1400);
-      return () => clearTimeout(t);
+
+      const step = () => {
+        if (cancelled) return;
+        relax(g, pos, vel, Math.min(CHUNK, ITERS - iter));
+        iter += CHUNK;
+        if (iter >= ITERS) { finish(); return; }
+        // setTimeout, not rAF: a background tab suspends rAF entirely, and this
+        // dashboard is exactly the kind of thing you open in one and switch to
+        // later. Slower there, but it finishes.
+        timer = setTimeout(step, 0);
+      };
+      timer = setTimeout(step, 0);
+      return () => { cancelled = true; clearTimeout(timer); };
     }
   }, [graph, vault]);
 
@@ -340,9 +381,16 @@ export default function Brain({ graph, vault, fireRef, filter, onStatic,
       // fractional DPR (Windows 125%/150%) an un-rounded comparison is true
       // every frame — the backing store reallocates 60×/s, frame time blows
       // the budget, and the sky degrades to static "randomly".
-      const cw = Math.round(W * dpr), ch = Math.round(H * dpr);
-      if (canvas.width !== cw) { canvas.width = cw; canvas.height = ch; }
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      // Quantised, so a smooth resize does not reallocate every frame. The
+      // transform then maps the scene onto whatever buffer we actually have
+      // rather than assuming it is exactly W*dpr — which is what keeps a
+      // slightly-too-large buffer looking supersampled instead of stretched.
+      const cw = Math.ceil((W * dpr) / STEP_PX) * STEP_PX;
+      const ch = Math.ceil((H * dpr) / STEP_PX) * STEP_PX;
+      if (canvas.width !== cw || canvas.height !== ch) {
+        canvas.width = cw; canvas.height = ch;
+      }
+      ctx.setTransform(cw / W, 0, 0, ch / H, 0, 0);
       ctx.clearRect(0, 0, W, H);
 
       const rotY = driftRef.current + mouse.current.x * 0.35;
@@ -619,7 +667,7 @@ export default function Brain({ graph, vault, fireRef, filter, onStatic,
   // the ambient state they live on the stage's edges rather than over the
   // canvas — and the two need to be positioned independently.
   return (
-    <div className={`brain-field ${mode}`}>
+    <div className={`brain-field ${mode} ${ready ? "lit" : ""}`}>
       <div className="brain-nebula" aria-hidden="true" />
       <canvas ref={canvasRef} className="brain-canvas" />
     </div>

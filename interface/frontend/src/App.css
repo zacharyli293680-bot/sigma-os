@@ -64,13 +64,34 @@ body {
   .haze { animation: none; }
 }
 
+/* The two tracks that collapse when the sky expands, as *registered* custom
+   properties so they interpolate.
+
+   This is the whole reason the expand used to snap. The row was
+   `minmax(180px, auto)` and `auto` is not an animatable value — so
+   `grid-template-rows` fell back to a discrete jump while
+   `grid-template-columns` (360px → 0) animated beside it. Half the layout slid
+   and half of it teleported, which reads as broken rather than fast.
+   A `<length>` in both states animates properly, and @property is what makes a
+   custom property a length rather than a string. */
+@property --right-w {
+  syntax: "<length>"; inherits: false; initial-value: 360px;
+}
+@property --lower-h {
+  syntax: "<length>"; inherits: false; initial-value: 210px;
+}
+:root { --dive-ms: 340ms; --dive-ease: cubic-bezier(0.32, 0.72, 0, 1); }
+
 .shell {
   position: relative;
   display: grid;
   height: 100%;
   min-width: 920px;
-  grid-template-columns: 72px minmax(0, 1fr) 360px;
-  grid-template-rows: 44px minmax(220px, 1fr) minmax(180px, auto) 30px;
+  grid-template-columns: 72px minmax(0, 1fr) var(--right-w);
+  /* The lower row loses `auto` sizing to gain the animation. It is a strip by
+     design — a 14-day calendar line plus the project rows, 200px of content
+     today — and `.lower` scrolls if it ever needs more. */
+  grid-template-rows: 44px minmax(220px, 1fr) var(--lower-h) 30px;
   grid-template-areas:
     "strip strip strip"
     "rail  center right"
@@ -78,6 +99,8 @@ body {
     "foot  foot   foot";
   gap: 12px;
   padding: 12px 14px;
+  transition: --right-w var(--dive-ms) var(--dive-ease),
+              --lower-h var(--dive-ms) var(--dive-ease);
 }
 
 /* ---------------------------------------------------------------- panels */
@@ -636,10 +659,17 @@ kbd {
 
 /* The sky is a layer of the centre stage now, not a view of its own. It fills
    the cell behind the reactor and stays mounted at every zoom level — there is
-   no screen on which you can see one and not the other. */
+   no screen on which you can see one and not the other.
+
+   It fades in when the layout finishes rather than appearing at full strength
+   in a single frame. The force sim now runs in chunks across ~10 frames, so
+   without this the sky would still *arrive* abruptly even though nothing
+   blocks any more — the hitch would be gone and the pop would remain. */
 .brain-field {
   position: absolute; inset: 0; z-index: 1;
   overflow: hidden;
+  opacity: 0;
+  transition: opacity 900ms ease-out;
   /* Fade at the edges instead of vignetting to opaque dark: the cell has no
      border, so a dark ring would draw the box the design spent its whole
      budget avoiding. This way the sky dissolves into the haze. */
@@ -648,6 +678,7 @@ kbd {
   mask-image: radial-gradient(ellipse 82% 82% at 50% 50%,
     #000 46%, rgba(0,0,0,0.72) 76%, transparent 100%);
 }
+.brain-field.lit { opacity: 1; }
 .brain-canvas {
   position: relative; z-index: 1;
   width: 100%; height: 100%; display: block;
@@ -1172,14 +1203,34 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--cyan); }
    nothing and the centre stage takes the space — in flow, so the global
    z-index ladder is untouched and the chat drawer still opens over it. The
    reactor rides along at the heart the whole way. */
-.shell.diving {
-  grid-template-columns: 72px minmax(0, 1fr) 0;
-  grid-template-rows: 44px minmax(220px, 1fr) 0 30px;
+.shell.diving { --right-w: 0px; --lower-h: 0px; }
+
+/* Staggered, not simultaneous. Going in, the panels clear out fast and ahead of
+   the tracks, so the stage grows into space that already looks empty rather
+   than shoving content aside. Coming back they wait until the tracks have most
+   of the way opened, so nothing appears squashed on its way in. The asymmetry
+   is what makes it read as deliberate instead of mushy. */
+.right, .lower {
+  transform: none;
+  /* Returning: wait until the tracks are most of the way open, so nothing
+     appears squashed on its way in. */
+  transition: opacity 190ms ease calc(var(--dive-ms) - 170ms),
+              transform 240ms var(--dive-ease) calc(var(--dive-ms) - 210ms);
 }
+.lower { overflow-y: auto; }
 .shell.diving .right,
-.shell.diving .lower { opacity: 0; overflow: hidden; pointer-events: none; }
-.right, .lower { transition: opacity 160ms linear; }
-.shell, .shell.diving { transition: grid-template-rows 200ms ease, grid-template-columns 200ms ease; }
+.shell.diving .lower {
+  opacity: 0;
+  pointer-events: none;
+  overflow: hidden;              /* nothing may spill mid-collapse */
+  /* Leaving: clear out fast and ahead of the tracks, so the stage grows into
+     space that already looks empty rather than shoving content aside. */
+  transition: opacity 130ms ease, transform 180ms var(--dive-ease);
+}
+/* Compositor-only movement carrying the fade — a few pixels in the direction
+   each panel is leaving. */
+.shell.diving .right { transform: translateX(14px); }
+.shell.diving .lower { transform: translateY(14px); }
 /* Expanded, the stage has room for the full V.A.U.L.T. column again, and the
    scrim shrinks relative to the sky because the cloud is no longer crowding
    the instrument. Same cqmin basis as above, for the same reason. */
@@ -1187,5 +1238,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--cyan); }
 .shell.diving .brain-nebula { opacity: 0.8; }
 
 @media (prefers-reduced-motion: reduce) {
-  .right, .lower, .shell, .shell.diving { transition: none; }
+  .shell, .right, .lower,
+  .shell.diving .right, .shell.diving .lower { transition: none; }
+  .shell.diving .right, .shell.diving .lower { transform: none; }
 }
