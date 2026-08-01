@@ -12,11 +12,11 @@ system and extend it without re-deriving it. Read this end to end before changin
 code repo, and `03-Projects/sigma-os/sigma-os-reference.md` in the Obsidian vault. The vault copy
 adds YAML frontmatter and a Related section; the body is the same. If you change one, change both.
 
-**Its siblings.** `README.md` is the one-page introduction. `SYSTEM.md` was the previous full picture
-and is accurate through 2026-07-31 for Phases 0–4 but predates the priority queues, the retrospective,
-and most of dashboard Phase 6 — where the two disagree, this file is newer. The vault's
-`03-Projects/sigma-os.md` hub holds the dev log, which is still the best narrative account of *how*
-this got here, and `03-Projects/sigma-os/` holds fourteen atomic notes explaining individual
+**Its siblings.** `README.md` is the one-page introduction. `SYSTEM.md` is the **state** document —
+what is built, what actually executes, what is healthy, what is left — and it was brought current on
+the same day as this file; where this one goes function-by-function, that one stays at the level of
+*does it run*. The vault's `03-Projects/sigma-os.md` hub holds the dev log, still the best narrative
+account of *how* this got here, and `03-Projects/sigma-os/` holds the atomic notes arguing individual
 decisions in depth.
 
 ---
@@ -1245,8 +1245,8 @@ reactor · the activity ledger · the no-sync lens · quick capture · proposal 
 | Skills | **4** — 3 user-scoped (`browser-verify-before-merge`, `env-secrets-audit`, `graphify-to-atomic-notes`), 1 vault-scoped (`reflect`) |
 | Reviews | **0** — `SigmaOS-DailyReview` is installed and `Ready` but has never fired yet |
 | Scheduled tasks | all three installed and `Ready` |
-| Python modules | 20 in `runtime/` (incl. 4 in `sigma/`), 8 in `interface/backend/` |
-| Frontend modules | 16 TS/TSX + one 1,630-line stylesheet |
+| Python modules | 19 in `runtime/` (incl. 4 in `sigma/`), 8 in `interface/backend/` |
+| Frontend modules | 18 TS/TSX + one 1,630-line stylesheet |
 | Tests | **18 suites, 333 test functions** in `tests/` — all green 2026-08-01 (`Ran 333 tests in 433.887s … OK`) |
 | Doctor | 0 alerts; one item waiting (the review has never run) |
 

@@ -1,24 +1,30 @@
 # Sigma — system state
 
-*What exists, how it works, and what it does not do yet. Written 2026-07-29.*
+*What exists, what is actually running, and what it does not do yet. Rewritten 2026-08-01.*
 
-[`README.md`](README.md) is the introduction. This is the full picture: every component, how the
-pieces reach each other, the guarantees and how they are enforced, and the gaps. If you are picking
-this up after a gap, read this first.
+Three documents, and the split is deliberate:
 
-> **Superseded 2026-08-01 by [`CONTEXT.md`](CONTEXT.md).** This file is accurate through 2026-07-31
-> for Phases 0–4 and is kept for its §12 account of the recurring failure mode, but it predates the
-> priority queues, the 06:00 retrospective, and most of dashboard Phase 6 — so §4 (components),
-> §9 (the command line), §10 (current state) and §11 (known gaps) are all stale. Where the two
-> disagree, CONTEXT.md is newer.
+| | |
+|---|---|
+| [`README.md`](README.md) | the introduction — what Sigma is, in a page |
+| **`SYSTEM.md`** (this) | **the state of the system** — what is built, what executes, what is healthy, what is left. The thing to read when you come back after a gap and want to know where the machine stands. |
+| [`CONTEXT.md`](CONTEXT.md) | the reference — every module's functions, all 27 endpoints, the data formats, the algorithms written out. The thing to read when you are about to change something. |
+
+Where this file and `CONTEXT.md` cover the same ground, this one stays at the level of *what exists
+and whether it runs*, and defers the function-by-function detail. Both were brought current on
+2026-08-01; if they ever disagree, check the dates at the top of each and trust the newer.
+
+**The vault is the more complete design record.** This file summarises; `03-Projects/sigma-os.md` in
+the vault explains *why* each decision went the way it did, and its dev log is the best account of how
+this got here.
 
 ---
 
 ## 1. What Sigma is
 
 An agentic OS with an **Obsidian vault as its memory substrate**. Agents perceive state (frontmatter,
-checkboxes, dates), reason, act (draft notes, plans, reports), and remember (git history) — with the
-vault co-writable by human and agents alike.
+checkboxes, dates), reason, act (draft notes, plans, reports, dev logs), and remember (git history) —
+with the vault co-writable by human and agents alike.
 
 Three systems, deliberately separate:
 
@@ -28,18 +34,19 @@ Three systems, deliberately separate:
 | **Agent Memory** | Sigma's record of *its own* work | `06-System/` inside that vault |
 | **OS Application** | The engine | this repo |
 
-The vault works as agent memory because it is human/machine co-writable, its frontmatter contract is
-a queryable API, git is temporal memory, and wikilinks are a retrieval graph.
+The vault works as agent memory because it is human/machine co-writable, its frontmatter contract is a
+queryable API, git is temporal memory, and wikilinks are a retrieval graph.
 
 **One credential.** Sigma has no `ANTHROPIC_API_KEY` and no `.env`. Both paths to a model end at the
-same Claude Code CLI riding this machine's subscription login: `claude -p` for Phases 1–2 and the
-watchdog, and the Claude Agent SDK (which *is* Claude Code packaged as a library, spawning that same
-binary) for Phases 3–4. Verified on both paths with the key explicitly unset.
+same Claude Code CLI riding this machine's subscription login: `claude -p` for capture, reflection, the
+watchdog's auth probe and the retrospective's narration, and the Claude Agent SDK (which *is* Claude
+Code packaged as a library, spawning that same binary) for the interface, the fleet, intake, devlog,
+the mapper and the scaffolder. Verified on both paths with the key explicitly unset.
 
 The consequence shapes everything downstream: **the budget is a rate-limit window, not an invoice.**
-Nothing is billed per token, so the question for the fleet is not *what does this cost* but *how many
-agents can run before the window is spent*. That is why specialists are sequenced rather than fanned
-out, and why model tiering (Haiku vs Sonnet) exists for headroom rather than for money.
+Nothing is billed per token, so the question is not *what does this cost* but *how many agents can run
+before the window is spent*. That is why specialists are sequenced rather than fanned out, why there is
+no concurrency option, and why model tiering (Haiku vs Sonnet) exists for headroom rather than money.
 
 ---
 
@@ -50,65 +57,109 @@ Five layers, raw → distilled:
 | Layer | What | Where | Written by |
 |---|---|---|---|
 | **L0** | Raw transcripts | `~/.claude/projects/**/*.jsonl` | Claude Code |
-| **L1** | Session logs — one per session | `06-System/sessions/` | `session_logger.py` (Phase 1) |
-| **L2** | Knowledge notes | the vault at large | Zach, and proposals |
-| **L3** | Procedural memory — skills | `~/.claude/skills/`, `<vault>/.claude/skills/` | approved proposals |
-| **L4** | Insights — durable lessons | `06-System/insights/` | `reflect.py` (Phase 2) |
+| **L1** | Session logs — one per session | `06-System/sessions/` | `session_logger.py` |
+| **L2** | Knowledge notes | the vault at large | Zach, and applied proposals |
+| **L3** | Procedural memory — skills + the contract | `~/.claude/skills/`, `<vault>/.claude/skills/`, `CLAUDE.md` | approved proposals |
+| **L4** | Insights — durable lessons | `06-System/insights/` | `reflect.py` |
 
 L0 is treated as opaque: the JSONL schema is internal to Claude Code and shifts between versions, so
 Sigma **summarises it, never parses it** as a contract.
 
+Two records sit alongside the ladder rather than inside it, both added with the autonomy flip:
+**reviews** (`06-System/reviews/`, one note per day, written by `retro.py`) are about the human's
+throughput, and the **activity ledger** (`runtime/ledger.jsonl`) is about the machine's actions — every
+write, with the commit that carries it.
+
 ---
 
-## 3. Phases — all built
+## 3. Phases — where each track stands
+
+There are two numbering schemes and they collide, so both are laid out here. **The OS's own phases run
+0–5. The dashboard has its own D0–D6 track**, which the vault's project hub confusingly calls "Phase
+5". They are different things; anything new should pick one or name itself something else.
+
+### The OS track
 
 | Phase | What | Status |
 |---|---|---|
 | **0 — Foundation** | Structured vault, `CLAUDE.md` contract, course study systems | ✅ done |
-| **1 — Session logging** | `SessionEnd` hook + `SessionStart` sweep + Haiku summariser → L1 notes | ✅ built 2026-07-23, capture fixed 2026-07-24 |
-| **2 — Reflection & skills** | Weekly reflection → insights + proposals, propose-and-approve | ✅ built 2026-07-24 |
-| **2.5 — Watchdog** | `doctor.py` on `SessionStart` — reports Sigma's health into every session | ✅ built 2026-07-27 |
-| **3 — Interface** | Local web app: Agent SDK backend + React frontend | ✅ built 2026-07-27, completed 2026-07-28 |
-| **4 — Specialist fleet** | coach / auditor / tracker, sequenced under one window | ✅ built 2026-07-28 |
-| **CLI** | `sigma` — one front door over all of it | ✅ built 2026-07-29 |
-| **5 — Priority queues** | Four self-maintaining task queues + a 06:00 retrospective | ✅ built 2026-08-01 |
+| **1 — Session logging** | `SessionEnd` hook + `SessionStart` sweep + Haiku summariser → L1 notes | ✅ 2026-07-23, capture fixed 07-24 |
+| **2 — Reflection & skills** | Weekly reflection → insights + proposals, propose-and-approve | ✅ 2026-07-24 |
+| **2.5 — Watchdog** | `doctor.py` on `SessionStart` — reports Sigma's health into every session | ✅ 2026-07-27 |
+| **3 — Interface** | Local web app: Agent SDK backend + React frontend | ✅ 2026-07-27, closed 07-28 |
+| **4 — Specialist fleet** | coach / auditor / tracker, sequenced under one window | ✅ 2026-07-28 |
+| **CLI** | `sigma` — one front door over all of it | ✅ 2026-07-29 |
+| **5 — Priority queues** | Four self-maintaining queues + a 06:00 retrospective; the 09:00 planner retired | ✅ 2026-08-01 |
 
-Phase 2.5 was not in either plan. It exists because both shipped phases were found **dead** on
-2026-07-27 — Phase 1 had captured nothing for three days, Phase 2's first scheduled run had failed on
-`ENOTFOUND` with the next attempt a week out — while both `--status` self-checks reported green and
-were *correct*. Nothing had run them.
+Phase 2.5 was in neither plan. It exists because both shipped phases were found **dead** on 2026-07-27
+— Phase 1 had captured nothing for three days, Phase 2's first scheduled run had failed on `ENOTFOUND`
+with the next attempt a week out — while both `--status` self-checks reported green and were *correct*.
+Nothing had run them.
+
+### The dashboard track
+
+| | What | Status |
+|---|---|---|
+| **D0** | The shell and the read API — five endpoints, the §3 layout, chat into a drawer | ✅ 2026-07-29 |
+| **D1** | The reactor and the live SSE progress feed | ✅ 2026-07-29 |
+| **D2** | The wikilink resolver, `GET /api/graph`, the live-firing brain | ✅ 2026-07-29 |
+| **D3** | The Ctrl+K command palette over a server-side whitelist | ✅ 2026-07-30 |
+| **D4** | **The autonomy flip** — gitops, the ledger, the spend log, `applier.py`, real checkboxes, one-click undo, degrade→pause | ✅ 2026-07-30 |
+| **D5** | The no-sync boundary: one scan, two opposite failure directions; the mark, the ring, the Ctrl+. lens | ✅ 2026-07-31 |
+| **D6** | Domain panels — study intake, exam mode, repo awareness, calendar strip, quick capture, brain filters, approve-from-dashboard, dev log, codebase mapping, project scaffolding | ✅ 2026-07-31 → 08-01 |
+
+D6 was always "a list to pull from, not a commitment to build all of it". What was pulled is above;
+what was checked and deliberately **not** pulled is in §11.
 
 ---
 
 ## 4. Components
 
+One line per file. `CONTEXT.md` §7 is the same map with the functions in it.
+
 ```
-sigma.cmd / sigma       front door → runtime/cli.py
+sigma.cmd / sigma       front door → runtime/cli.py   (sigma.cmd must stay CRLF)
 runtime/
   sigma/__init__.py     shared core: settings precedence, frontmatter, kebab, `claude -p`,
-                        project resolution, JSON state files, UTF-8 output
+                        project resolution, JSON state files, UTF-8 output, detached spawn
+  sigma/gitops.py       the ONE place anything commits: mutex, pull, path-scoped commit, revert
+  sigma/ledger.py       the append-only activity ledger (ledger.jsonl)
+  sigma/spend.py        the rate-limit window proxy (spend.jsonl)
   cli.py                the `sigma` command — dispatcher, picks the interpreter
   session_logger.py     Phase 1 — transcript → session log
-  reflect.py            Phase 2 — logs → insights + proposals; --apply / --diff / --merge
-  doctor.py             Phase 2.5 — seven health checks, exit code always 0
-  inventory.py          the vault's frontmatter, precomputed for the auditor
+  reflect.py            Phase 2 — logs → insights + proposals; apply / diff / merge
+  doctor.py             Phase 2.5 — eight health checks, exit code always 0
   fleet.py              Phase 4 — runs specialists one at a time under a lock
-  specialists.py        who the four specialists are and what each is briefed to do
+  specialists.py        who the three specialists are and what each is briefed to do
+  inventory.py          the vault's frontmatter, precomputed for the auditor
+  applier.py            deterministic auto-apply — the script half of the autonomy flip
+  todo.py               the four priority queues and their scoring function
+  retro.py              the 06:00 retrospective — arithmetic score, model writes only the sentence
+  intake.py             study intake — dropped course material → contract-shaped notes
+  devlog.py             commits + session logs → a project hub's dev log entry
+  mapper.py             a codebase → linked architecture notes
+  scaffold.py           `sigma new` — repo, gitignore, README, hub note from one line
   install_hooks.py      copies the pre-push guard into each repo
   hooks/pre-push        refuses a push where a tracked file is also gitignored
 interface/
   backend/app.py        FastAPI: /api/ask (SSE), /api/health, serves the built frontend
-  backend/agent.py      Agent SDK options — the single guarded construction both consumers use
+  backend/agent.py      Agent SDK options — the single guarded construction every consumer uses
   backend/privacy.py    the model boundary
-  backend/propose.py    the only way an agent affects disk
-  frontend/             React + Vite
-tools/convert_pdfs.py   vault utility, not part of Sigma
+  backend/propose.py    the only way an agent affects disk — writes a *pending* proposal
+  backend/panels.py     every read endpoint, plus the wikilink resolver behind the brain
+  backend/commands.py   the palette's whitelisted command runner
+  backend/writes.py     every mutation: toggle, queue add/edit/reword/meta, capture, revert
+  backend/review.py     read one proposal with its diff, and decide
+  frontend/             React 19 + Vite 8 — 18 modules and one hand-written stylesheet
+tests/                  18 stdlib-unittest suites
+tools/convert_pdfs.py   a vault utility, not part of Sigma (imported by intake)
 ```
 
-**Two interpreters.** `fleet.py` and the interface need the Agent SDK, which lives in
-`interface/backend/.venv`. Everything else is pure stdlib. That venv is a superset, so `cli.py`
-prefers it for every subcommand and falls back to system Python. `fleet` imports the SDK *lazily*,
-so `fleet status` and `fleet run --dry-run` work without it.
+**Two interpreters, resolved for you.** `fleet.py`, `intake.py`, `devlog.py`, `mapper.py`,
+`scaffold.py` and the interface need the Agent SDK, which lives in `interface/backend/.venv`.
+Everything else is pure stdlib. That venv is a superset, so `cli.py` prefers it for every subcommand
+and falls back to system Python. The SDK is imported *lazily*, so `--status` and `--dry-run` work
+without it.
 
 ---
 
@@ -118,114 +169,158 @@ so `fleet status` and `fleet run --dry-run` work without it.
 
 | Trigger | Runs | Purpose |
 |---|---|---|
-| `SessionEnd` hook | `session_logger.py` | Log the session that just ended |
-| `SessionStart` hook | `session_logger.py --sweep --detach` | Catch sessions the above missed |
-| `SessionStart` hook | `doctor.py --quiet` | Put Sigma's health in the session's context |
-| Scheduled, Sundays 09:00 | `reflect.py` | Distil the week into insights + proposals |
-| Scheduled, daily 09:00 | `fleet.py` | Run the specialists that are due |
+| `SessionEnd` hook | `session_logger.py` | log the session that just ended |
+| `SessionStart` hook | `session_logger.py --sweep --detach` | catch sessions the above missed |
+| `SessionStart` hook | `doctor.py --quiet` | put Sigma's health in the session's context |
+| `SigmaOS-DailyReview`, 06:00 | `retro.py` | score yesterday, write the review note |
+| `SigmaOS-DailyFleet`, 09:00 | `fleet.py` | run the specialists that are due |
+| `SigmaOS-WeeklyReflection`, Sun 09:00 | `reflect.py` | distil the week into insights + proposals |
 
 `SessionEnd` only fires on a *clean* exit — closing the terminal skips it. That cost three days of
 capture once. The `SessionStart` sweep is the safety net, so capture is **eventually consistent**: a
 session missed today is picked up on the next launch.
 
-Both scheduled tasks carry `RestartCount 3`, added after one network blip cost a week of learning.
+All three tasks carry `RestartCount 3`, added after one network blip cost a week of learning, and the
+fleet carries `-StartWhenAvailable`, so a machine asleep at 09:00 runs late instead of skipping the day.
 
 ### The daily fleet, in order
 
-`fleet.py` takes a lock, then runs each due specialist **to completion before starting the next**:
+`fleet.py` takes an exclusive-create lock (check-then-write could race a palette click at 09:00:00 into
+two concurrent fleets), then runs each due specialist **to completion before starting the next**:
 
-| Order | Specialist | Cadence | Model | Brief |
-|---|---|---|---|---|
-| 30 | **coach** | weekly | Sonnet | Plan-vs-date drift in course timelines |
-| 40 | **auditor** | weekly | Haiku | Frontmatter against the contract |
-| 60 | **tracker** | weekly | Haiku | Stale entries in the job pipeline |
+| Order | Specialist | Cadence | Model | Turns | Brief |
+|---|---|---|---|---|---|
+| 30 | **coach** | weekly | Sonnet | 24 | plan-vs-date drift in course timelines |
+| 40 | **auditor** | weekly | Haiku | 40 | frontmatter against the contract |
+| 60 | **tracker** | weekly | Haiku | 24 | stale entries in the job pipeline |
 
-**Order 10 is vacant.** It belonged to the *planner*, a daily Sonnet run that rewrote the day's note
-in `01-Daily/` with a short ordered plan. It was retired on 2026-08-01: a daily rebuild only earns
-its cost if the list cannot maintain itself, and the priority queues promote the next task the moment
-one pops. What replaced it is not another planner but `retro.py` — 06:00, about *yesterday* rather
-than today, and its number is arithmetic rather than judgement. Planning forward stopped needing a
-model; noticing what did not move still does.
+**Order 10 is vacant.** It belonged to the *planner*, a daily Sonnet run that rewrote the day's note in
+`01-Daily/`. It was retired on 2026-08-01: a daily rebuild only earns its cost if the list cannot
+maintain itself, and the priority queues promote the next task the moment one pops. What replaced it is
+not another planner but `retro.py` — 06:00, about *yesterday* rather than today, and its number is
+arithmetic rather than judgement. Planning forward stopped needing a model; noticing what did not move
+still does.
 
 **There is no concurrency option**, deliberately — an option is a constraint you have already decided
-to break. A stale lock (>2h) is taken over rather than obeyed, so a crashed run cannot wedge the
-fleet forever. Hitting a rate limit **stops** the run; the remaining specialists stay due and go on
-the next invocation rather than burning the rest of the window on retries.
+to break. A stale lock (>2h) is taken over rather than obeyed. Each specialist has a 420s timeout
+applied via `asyncio.wait_for`. `is_due()` compares **calendar days**, not rolling hours, so an
+afternoon hand-run no longer suppresses the next morning's scheduled run.
 
-Each specialist has a 420s timeout, applied via `asyncio.wait_for`.
+A rate limit **degrades** Sonnet → Haiku and continues; a second one while already degraded **pauses**
+cleanly with a resume point persisted, and the remaining specialists stay due for the next invocation
+rather than burning the rest of the window on retries.
+
+### The write path
+
+```
+model ──propose_change──▶ 06-System/proposals/<name>.md  (always status: pending)
+             │
+   kind: note ├──▶ applier.py: nine mechanical holds, then
+             │      gitops (mutex → pull → write → commit → SHA) → ledger row → [undo] in the UI
+             │
+   everything else ──▶ waits for Zach: status: approved, then `sigma reflect apply`
+                       (target exists? staged to 06-System/proposed/ for diff + merge)
+```
 
 ---
 
 ## 6. The guarantees, and how each is enforced
 
-These are mechanical, not promised. Every one of them exists because something failed.
+Mechanical, not promised. Every one exists because something failed.
 
-### Propose, never apply
+### No agent writes to the vault
 
-No agent writes to the vault. The interface and every specialist get **`propose_change`**, an
-in-process MCP tool taking structured fields — the *backend* writes the proposal note. The agent holds
-no filesystem write primitive at all, so "cannot apply its own changes" is a fact about which tools
-exist rather than a rule it might route around.
+The interface and every specialist get **`propose_change`**, an in-process MCP tool taking structured
+fields — the *backend* writes the proposal note. The agent holds no filesystem write primitive at all,
+so "cannot apply its own changes" is a fact about which tools exist rather than a rule it might route
+around. The alternative — a scoped `Write` fenced by a path check — is the bet that already lost twice
+here.
 
-The alternative — a scoped `Write` fenced by a path check — is the bet that already lost twice here.
+Proposals land in `06-System/proposals/` as `status: pending`, in **one shape**, whether raised by the
+weekly reflection, a chat question, a 09:00 specialist, study intake, the dev logger or the mapper.
 
-Proposals land in `06-System/proposals/` as `status: pending`. Zach edits the content block if he
-wants it different, sets `status: approved`, and `sigma reflect apply` executes it. **One approval
-path in the whole OS**, whether the proposal came from the weekly reflection, a chat, or a specialist.
+### Applying is deterministic, and reversible
 
-### Apply is additive; corrections are staged
+*(Changed 2026-07-30 by dashboard D4. Before that, everything waited for a human.)*
 
-`--apply` creates files that do not exist and appends to the contract. It **never overwrites**. That
-guarantee earned its keep: it is the only reason a Haiku-drafted `MAP.md` did not flatten a
-hand-built one.
+Script code — never the model — applies each fresh `kind: note` proposal as **its own git commit**,
+recorded in an append-only ledger with one-click revert in the UI. `applier.py` **holds** a proposal if
+it is not `kind: note`, targets `CLAUDE.md`, targets the proposal machinery itself, resolves outside the
+vault, is gitignored, ticks a checkbox, would shrink the note below 40% of its size, has an empty
+content block, or arrives while the git mutex is busy. Each hold is adversarially tested.
 
-But correcting existing notes is the entire job of two specialists, so a proposal whose target exists
-is **staged** rather than skipped: the proposed version is written to
-`06-System/proposed/<target's path>`, recorded in `staged:`, and left `approved`.
+**`CLAUDE.md` is the single held category.** It governs the schema every other note obeys, and an agent
+has already produced a malformed contract edit once.
+
+Undo is `git revert` of exactly that one commit, surfaced as a button — not a bespoke rollback with its
+own bugs.
+
+### Corrections are staged, never overwritten
+
+`reflect --apply` creates files that do not exist and appends to the contract. It **never overwrites** —
+the only reason a Haiku-drafted `MAP.md` did not once flatten a hand-built one. But correcting existing
+notes is the entire job of two specialists, so a proposal whose target exists is **staged** to
+`06-System/proposed/<the target's path>` and left `approved`:
 
 ```
 sigma reflect diff            git diff of each staged change vs its target
 sigma reflect merge NAME      copy one over its target, mark it applied
 ```
 
-`merge` is **the one place Sigma overwrites a note**, and it is human-only by construction: one
-explicit name, refuses anything not already approved *and* staged, no bulk mode, and no scheduled job
-calls it. Editing the staged file before merging is how a change is accepted *partly*. Git holds the
-previous version.
+`merge` is **the one place Sigma overwrites a note**, and it is human-only by construction: one explicit
+name, refuses anything not already approved *and* staged, no bulk mode, no scheduled job calls it. Since
+D6 the dashboard's proposal view does the same job with a diff on screen. The mirror path matters: a
+`timeline.proposed.md` beside the real one would carry its `type:` frontmatter and appear in Dataview as
+a phantom second note.
 
-The mirror path matters: a `timeline.proposed.md` beside the real one would carry its `type:`
-frontmatter and appear in Dataview as a phantom second note.
-
-### Privacy — one rule, two boundaries
+### Privacy — one declaration, three boundaries
 
 > **If git will not sync it, the model does not see it.**
 
-`.gitignore` already declares the carve-out: the ProCertus area, the Interface project folder and its
-hub, and seven named session logs — **24 files rewritten out of git history** on 2026-07-25
-(including the root commit), gitignored, and restored to disk. Today that is 13 ignore entries
-covering **18 files** present on disk and absent from the repo.
+The vault's `.gitignore` is the single declaration. **24 Markdown files were rewritten out of git
+history on 2026-07-25** (including the root commit), gitignored, and restored to disk: readable in
+Obsidian, never synced. Today that is 15 ignore entries covering 28 files present on disk and absent
+from the repo — 24 of them notes.
 
-The `pre-push` hook enforces it at the *push* boundary; `privacy.py` enforces the same declaration at
-the *model* boundary. One statement, no parallel list to drift.
+| Boundary | Enforced by |
+|---|---|
+| **push** | `runtime/hooks/pre-push`, installed in both repos — checks the working tree *and* the outgoing commit range |
+| **model** | `privacy.py` as a `PreToolUse` hook on every agent run |
+| **display** | `panels.py` + `privacy.gitignore_scan` — sealed paths dropped, exempt paths *marked* |
 
-The precise invariant the guard checks is **a file may not be both tracked and gitignored** — one
-rule covering every carved-out path, self-maintaining, and zero false positives. Grepping a diff for
-the client's name was the first attempt and flagged two files that legitimately mention it: Sigma's
-own insight about the carve-out, and the proposal that asked for the grep.
+The precise invariant the push guard checks is **a file may not be both tracked and gitignored** — one
+rule covering every carved-out path, self-maintaining, zero false positives. Grepping a diff for the
+client's name was the first attempt and flagged two files that legitimately mention it: Sigma's own
+insight about the carve-out, and the proposal asking for the grep.
 
-Enforcement is a **`PreToolUse` hook**, not the permission callback. That distinction was learned
-expensively: `can_use_tool` is only consulted for calls that would otherwise prompt, and in
-`permission_mode="default"` Claude Code treats Read/Grep/Glob as safe and never prompts — so the
-callback was never reached, no error was raised, and the run reported *zero denials*. Twice that
-looked exactly like a guard working. Hooks fire for every tool call regardless of mode.
+**Option B (2026-07-30) opened the model boundary and left the sync boundary shut.** Zach's internship
+agreement permits AI tools, so `privacy.config.json` carries a `model_allow` prefix list — currently
+three prefixes covering **17 notes** — that the guard, the panels and the graph all honour while the
+files stay gitignored and untracked. GitHub never gets them. Because an exemption list is exactly the
+second-declaration-that-drifts the original design refused, the drift is surfaced rather than trusted:
+the doctor names the active exemptions in **every** session, at `info` level, which is shown even in
+`--quiet` mode and never costs the all-clear.
 
-`VaultPrivacy` is constructed `allow_writes=False` **unconditionally**; the proposals flag does not
-reach it. Two switches, because "may propose" and "may edit a note" must never be the same one. Fails
-closed: if `git check-ignore` errors, the path is refused.
+The **capture deny list deliberately did not move.** New session logs land in *tracked* `06-System/`, so
+summarising internship sessions would leak them through the side door. That asymmetry is visible as a
+number: 24 carved-out notes = 17 model-exempt + **7 sealed session logs** the model still cannot read.
+
+Marking and hiding **fail in opposite directions on purpose**: hiding is a safety measure, so it fails
+*on*; marking is a confidentiality *claim*, so it fails *off*. An unanswered `git check-ignore` yields
+no marks at all, and a mark needs two independent yeses — git refuses it *and* the operator listed it.
+
+Enforcement is a **`PreToolUse` hook, not the permission callback**: `can_use_tool` is only consulted
+for calls that would otherwise prompt, and in `permission_mode="default"` Claude Code treats
+Read/Grep/Glob as safe and never prompts — so the callback was never reached, no error was raised, and
+the run reported *zero denials*. Twice, that looked exactly like a guard working. `VaultPrivacy` is
+constructed `allow_writes=False` **unconditionally**; the proposals flag does not reach it, because "may
+propose" and "may edit a note" must never be one switch. It fails closed: a `git check-ignore` error
+refuses the path, and NTFS `::$DATA` stream suffixes — a verified bypass — are refused outright.
 
 ### Never deletes, never checks your boxes
 
-Agents observe freely, write additively, and never tick a checkbox on Zach's behalf.
+Agents observe freely, write additively, and never tick a checkbox on Zach's behalf. `retro.py` reports
+and completes nothing; `applier.py` refuses any proposal that ticks a box.
 
 ---
 
@@ -234,23 +329,25 @@ Agents observe freely, write additively, and never tick a checkbox on Zach's beh
 `doctor.py` runs on every `SessionStart` and speaks only when something is wrong. Its exit code is
 **always 0** — a broken watchdog must not block a session from starting.
 
-Six checks:
+**Eight checks** (six at first; `review` and `backup` were added 2026-07-31):
 
 1. **capture** — is any finished session still unlogged?
 2. **reflection** — did the weekly loop run, and is anything waiting on Zach?
-3. **schedule** — did the scheduled task fire *and succeed*? (It can fire and fail.)
-4. **auth** — is the login still live?
-5. **privacy** — is anything gitignored also tracked, and is the pre-push guard installed?
-6. **fleet** — per *specialist*: any failing, overdue by >2 cycles, or a run that stopped on a limit?
+3. **schedule** — did each scheduled task fire *and succeed*? (It can fire and fail.)
+4. **review** — has the 06:00 retrospective run, and is it current?
+5. **auth** — is the login still live?
+6. **privacy** — is anything gitignored also tracked, is the pre-push guard installed, and which model
+   exemptions are active?
+7. **backup** — has the vault pushed recently? (obsidian-git pushes every 30 min; stale after 2h)
+8. **fleet** — per *specialist*: any failing, overdue by >2 cycles, or a run that stopped on a limit?
 
 Two design rules it follows:
 
 - **It is not a fourth source of truth.** Facts come from the tools that own them —
-  `session_logger.capture_candidates()`, `reflect.load_state()`, `fleet.load_state()`. A watchdog
-  with its own private copy of "is capture healthy?" is just another thing that can disagree.
-- **It does not cry wolf.** A backlog the concurrent sweep is already clearing is not an alert. A
-  failed scheduled run stops nagging once re-run by hand. A network blip is never reported as an
-  expired login.
+  `session_logger.capture_candidates()`, `reflect.load_state()`, `fleet.load_state()`. A watchdog with
+  its own private copy of "is capture healthy?" is just another thing that can disagree.
+- **It does not cry wolf.** A backlog the concurrent sweep is already clearing is not an alert. A failed
+  scheduled run stops nagging once re-run by hand. A network blip is never reported as an expired login.
 
 The auth check is the subtle one: the only honest test is a real model call, but the budget *is* the
 rate-limit window — so a good result is cached for 12h and only failures re-probe. A failing probe is
@@ -258,133 +355,153 @@ free, since it errors before a call is spent.
 
 ---
 
-## 8. The interface (Phase 3)
+## 8. The interface
 
-`sigma ui` → one process on `127.0.0.1:8787` serving both the API and the built frontend.
+`sigma ui` → one process on `127.0.0.1:8787` serving the API and the built frontend. Local-first and
+unauthenticated on purpose: it binds to loopback, reads a vault on this disk, and inherits a *machine*
+login — so the machine is the natural boundary. **Do not expose it.**
 
-- **Reads the vault live** — no index to rebuild, so answers reflect what is on disk now.
-- **Cites by `[[wikilink]]`**, rendered as `obsidian://` links. That is the difference between an
-  answer and a copy of one.
-- **Streams tokens** over SSE, with a collapsible trail of every lookup.
-- **Surfaces the watchdog** — `/api/health` runs `doctor.collect()`.
-- **Proposes, never edits.**
+**As an agent** it reads the vault live (no index to rebuild), cites by `[[wikilink]]` rendered as
+`obsidian://` links, streams tokens over SSE with a collapsible trail of every lookup, surfaces the
+watchdog at `/api/health`, and proposes rather than edits.
 
-Local-first and unauthenticated on purpose: it binds to loopback, reads a vault on this disk, and
-inherits a *machine* login — so the machine is the natural boundary. Do not expose it.
+**As a dashboard** it is a dark instrument, not a dark-mode web app: top strip (health · window meter ·
+study block · clock), left rail, a centre stage where the **brain** (the vault's link graph as a nebula
+that lights up along the path an agent actually reads) carries the **reactor** (arcs per specialist,
+five states, the status bar and the agent visual in one object) at its heart, a right column of
+waiting-on-you and the queue digest, a lower row of calendar strip and projects, and a foot with the
+live activity dock.
+
+One keystroke each: `Ctrl+K` palette · `Ctrl+/` chat · `Ctrl+G` expand the brain · `Ctrl+J` the activity
+ledger with per-row undo · `Ctrl+.` the no-sync lens · `Ctrl+N` quick capture · `Ctrl+;` the four
+queues. Every binding has a clickable twin in the foot, because Chrome intermittently eats Ctrl+K and
+Ctrl+G at the browser level. Rail slots `AG`, `CR` and `SY` are rendered **disabled rather than hidden**
+— disabled beats hidden, the same doctrine the palette applies to its four disabled verbs.
+
+27 endpoints, 21 palette verbs. Both are enumerated in `CONTEXT.md` §8 and §9.
 
 ---
 
 ## 9. The command line
 
 ```
-sigma                     what needs your attention right now
-sigma doctor              health check          --json --quiet
-sigma fleet status        what ran, when, what it raised
-sigma fleet run           specialists that are due   --only KEY --all --dry-run
-sigma reflect run         distil insights + proposals   --all --since --dry-run
-sigma reflect apply       execute approved proposals
-sigma reflect diff        review staged changes
-sigma reflect merge NAME  apply one staged change
-sigma capture status      session-logging self-check + backlog
-sigma capture sweep       log any session the hook missed   --max N
-sigma install [what]      git hooks and scheduled tasks (all | hooks | schedules)
-sigma ui                  start the interface   --port
+sigma                       what needs your attention right now
+sigma doctor                health check          --json --quiet
+sigma fleet status|run      what ran / run what is due   --only KEY --all --dry-run
+sigma reflect status|run    distil insights + proposals  --all --since --dry-run
+sigma reflect apply         execute approved proposals
+sigma reflect diff|merge    review, then land, a staged change
+sigma capture status|sweep  session-logging self-check / log what the hook missed   --max N
+sigma intake [run]          course material → notes      --course --dry-run --keep --max N
+sigma devlog [run]          commits → the project hub's dev log   --project --dry-run --max N
+sigma map [run]             a codebase → architecture notes       --project --dry-run --max N
+sigma new "<description>"   scaffold a project           --dry-run
+sigma todo                  the four priority queues     --all --json --date --no-persist
+sigma review                score yesterday              --date --dry-run --status
+                                                         --install-schedule --at
+sigma install [what]        git hooks and scheduled tasks (all | hooks | schedules)
+sigma ui                    start the interface          --port
 ```
 
-A dispatcher, not a rewrite — each subcommand shells out to the script that owns the job, so there is
-one implementation of each behaviour. A group with no verb prints that group's *state* rather than
-guessing at intent: `sigma fleet` shows status, it does not run anything.
+A dispatcher, not a rewrite — each subcommand shells out to the script that already owns the job, so
+there is one implementation of each behaviour. A group with no verb prints that group's *state* rather
+than guessing at intent: `sigma fleet` shows status, it does not run anything, and bare `sigma intake`
+reports while `sigma intake run` spends the window.
 
 ---
 
 ## 10. Current state
 
+*Measured 2026-08-01, not recalled.*
+
 | | |
 |---|---|
-*(Refreshed 2026-07-31 during the Phase 5 readiness check.)*
+| Code repo | `sigma-os`, private, **71 commits** |
+| Vault repo | `sigma-vault`, private, **183 commits** |
+| Notes | **174 on disk, 150 tracked** — the 24-note carve-out is the difference |
+| Session logs | **31**, backlog 0 |
+| Insights | **8** |
+| Proposals | **39 raised** — 37 applied, 2 rejected, 0 pending, 0 staged. The folder was collapsed on 2026-08-01 into `06-System/proposals/ledger.md`, one row per proposal; full text stays recoverable from git |
+| Skills | **4** — 3 user-scoped, 1 vault-scoped (`reflect`) |
+| Reviews | **0** — the schedule is installed and `Ready` but has never fired |
+| Code | 19 Python modules in `runtime/`, 8 in `interface/backend/`, 18 frontend modules |
+| Tests | **333 across 18 suites**, green 2026-08-01 (`Ran 333 tests in 433.887s … OK`). Stdlib `unittest`: `interface\backend\.venv\Scripts\python -m unittest discover -s tests -t tests` — the backend venv supplies `fastapi`/`httpx`, and `-t tests` is required because `tests/` is not a package. It takes about seven minutes; several suites shell out to real git. |
+| Doctor | **7 of 8 checks OK**, one item waiting: the daily review has never run |
 
-| Code repo | `sigma-os`, private, 34 commits |
-| Vault repo | `sigma-vault`, private, 105 commits, 140 tracked notes (165 on disk — the carve-out) |
-| Session logs | 27, backlog 0 |
-| Insights | 8 |
-| Proposals | 13 — 11 applied, 2 rejected, 0 pending, 0 staged |
-| Skills | 3 user-scoped, 1 vault-scoped (`reflect`) |
-| Doctor | `all clear` on all **seven** checks (backup added 2026-07-31); fleet 4/4 |
-| Tests | **98 across eleven committed suites in `tests/`, green 2026-07-31** (41 + 11 Phase 5 boundary + 20 study intake incl. slides + 6 backup check + 6 fleet cadence + 12 inventory). Stdlib `unittest`, no pytest: `interface\backend\.venv\Scripts\python -m unittest discover -s tests -t tests`. Both halves matter — the backend venv supplies `fastapi`/`httpx`, and `-t tests` is required because `tests/` is not a package (a bare `discover` dies on *"Start directory is not importable"*). |
+**Scheduled tasks — all installed, all `Ready`:**
 
-**Both scheduled tasks are installed and `Ready`.** The weekly reflection's 2026-07-26 run failed on
-`ENOTFOUND` and was re-run by hand; it has not been due since, and `LastTaskResult` is still `1` from
-that failure. Next 2026-08-02 — worth watching rather than assuming.
+| Task | Last run | Result |
+|---|---|---|
+| `SigmaOS-DailyFleet` | 2026-08-01 09:00:01 | `0` — *nothing due*, correctly |
+| `SigmaOS-DailyReview` | never | installed 2026-08-01; first fire 06:00 tomorrow |
+| `SigmaOS-WeeklyReflection` | 2026-07-26 09:00 | `1` — the `ENOTFOUND` failure, re-run by hand 07-27; next due 08-02 |
 
-**The fleet runs on a schedule — verified.** `SigmaOS-DailyFleet` fired 2026-07-29, 07-30 and 07-31,
-each at 09:00:0x with result `0`. What has *not* happened unattended is a specialist actually
-working: all three scheduled runs logged `nothing due`, and every real specialist run to date was
-invoked by hand. See gap 1 for why, which is a live design question rather than a bug.
+**The fleet runs on a schedule — verified.** `SigmaOS-DailyFleet` has fired at 09:00:0x with result `0`
+on 07-29, 07-30, 07-31 and 08-01. What has **still** not happened is a specialist actually working
+unattended: all four scheduled runs logged *nothing due*, and every real specialist run to date was
+invoked by hand. Since the cadence fix that is now the *correct* answer rather than the bug it was —
+the three specialists are weekly and each had been hand-run inside its window — but it means the
+scheduled path has never been exercised end to end with real work in it. See gap 1.
 
 ---
 
 ## 11. Known gaps
 
-**Not yet done, in rough priority order:**
+**Open, in rough priority order:**
 
-1. ~~**A hand-run silently suppresses the next morning's scheduled run.**~~ **Fixed 2026-07-31.**
-   `is_due()` now compares calendar days rather than a rolling `cadence_days × 24 − 1` hours, so an
-   afternoon hand-run no longer costs the next morning's plan. Six tests pin it.
-   *(Kept for the lesson, twice over. This entry first read "the fleet's first scheduled run has not
-   happened — watch it." Watching it is what surfaced the cadence bug, which no self-check would ever
-   have reported: three consecutive 09:00 runs did nothing and each reported success. A green run and
-   a correct run are not the same thing, and only the calendar could tell them apart.)*
-2. **Scheduled tasks still hardcode interpreter paths.** Repointing them at `sigma` would leave one
-   path per task instead of two, surviving a venv rebuild or Python upgrade. Both shims are verified
-   working when called by absolute path from an unrelated cwd. Deliberately deferred until after (1),
-   so a rewire does not confuse the run being observed.
-3. **Multi-turn continuity is wired but untested on long threads** (`session_id` round-trips).
-4. **The interface is not packaged.** `sigma ui` runs uvicorn; Tauri would make it an app.
-5. **`06-System/proposed/` has no expiry.** A staged change ignored for months just sits there.
-6. **The auditor and coach can propose contradictory fixes** to the same drift — as they did on
-   2026-07-28, one proposing to amend the contract and two to amend the notes. That is a real
-   decision for a human, but nothing flags that two proposals conflict.
-7. ~~**The test suites exist only as history.**~~ **Closed.** `tests/` is committed — five suites,
-   41 tests, green on 2026-07-31 (see §10 for the exact command, which is the part that was
-   genuinely missing: the suite was runnable all along and nothing recorded how).
+1. **No specialist has ever done real work unattended.** Every scheduled run so far found nothing due.
+   The next natural test is 2026-08-04, when the coach comes due and nobody has hand-run it. Watch that
+   one rather than assuming it.
+2. **Scheduled tasks still hardcode interpreter paths.** Repointing them at `sigma` would leave one path
+   per task instead of two, surviving a venv rebuild or a Python upgrade. Both shims are verified working
+   when called by absolute path from an unrelated cwd. Deliberately deferred so a rewire never confuses a
+   run being observed.
+3. **`fleet.state.json` still carries the retired planner**, so the doctor reports *"4/3 specialists
+   reporting"*. Cosmetic today, and exactly the kind of stale-state-inflates-a-count wart this project
+   has been bitten by before.
+4. **No doctor check for the paused fleet state** introduced in D4.
+5. **Multi-turn chat continuity is wired but untested on long threads** (`session_id` round-trips).
+6. **`06-System/proposed/` has no expiry.** A staged change ignored for months just sits there.
+7. **The auditor and coach can propose contradictory fixes** to the same drift — as they did on
+   2026-07-28, one proposing to amend the contract and two to amend the notes. That is a real decision
+   for a human, but nothing flags that two proposals conflict.
+8. **The interface is not packaged.** `sigma ui` runs uvicorn; Tauri would make it an app.
+9. **The window meter is a proxy** — spend rows, call counts, and the last rate-limit event. No
+   documented API exposes subscription headroom, so it never claims a percentage. Reservation is a fixed
+   08:40–09:00 hold rather than a real budget.
+10. **Nothing has been profiled past ~175 notes.** The auditor's inventory, the graph, the queue scan
+    and the no-sync scan each walk every note; they are cached with TTLs and nothing more.
+11. **The auditor's turn budget scales with the vault, not with the number of checks.** 24 stopped being
+    enough somewhere between 157 and 175 notes; `inventory.py` fixed the cause, but 40 is a number that
+    will need revisiting.
 
-8. ~~**The auditor cannot finish a run.**~~ **Fixed 2026-07-31** — `runtime/inventory.py`
-   precomputes the scan and hands it over in the brief. Measured against the three failures below:
-   **`ok in 123.3s`**, first clean completion. `Specialist.context` is the general hook (any
-   specialist whose expensive part is gathering rather than judging can use it); the inventory
-   reports facts only and never judges them, because which `type` is legal lives in `CLAUDE.md` and
-   a second copy in Python is the drift this vault has already paid for once. The diagnosis, kept
-   because two earlier fixes were wrong:
-   Three runs on 2026-07-31, all `error_max_turns`: 24 turns/1 proposal/138.7s, then 40 turns/3
-   proposals/139.6s, then 40 turns/**0 proposals**/129.2s. The third is the diagnostic one — with no
-   drift left to find it still exhausted 40 turns, so the *search* alone does not fit. That also
-   rules out "tell it to stop after the first finding": there was nothing to stop at. Per-turn cost
-   differs (5.8s when drafting a proposal, 3.2s when only grepping), which is why the wall-clock
-   times look suspiciously alike and are not evidence of a hidden time limit — `max_turns` does
-   reach the SDK (`fleet.py` → `build_options` → `ClaudeAgentOptions`).
-   The brief asks Haiku to sweep 175 notes across five classes of check by Grep. The fix is probably
-   not a bigger number but a cheaper search: **precompute the frontmatter inventory in script code
-   and hand it to the model**, the way intake hands over extracted text instead of making the model
-   read PDFs. That turns ~40 search turns into zero and leaves the model doing the part it is
-   actually for — judging a schema against its notes. Not attempted yet; two guesses were already
-   wrong here, and this one deserves measuring rather than assuming.
-   *Consequence while it stands:* the auditor still finds real drift (it caught a contract rule
-   twenty minutes old), but the fleet applies proposals only from successful runs, so its findings
-   never land unattended.
+**Checked and deliberately not built** *(both were on D6's menu; each is a panel with nothing to show)*:
+the **application pipeline**, because `02-Areas/Career/Applications/` is empty and the tracker has
+reported "pipeline is clear" every week since it started; and **quick reference**, because
+`04-Resources/` holds one file. Exam mode's third question — *what did you get wrong last time* — is
+absent for a stronger reason: nothing in the vault records a wrong answer, so the panel would be a
+confident guess wearing the costume of data, and the view says so out loud rather than quietly omitting
+it. The larger unbuilt list (agent control, browser and Google Suite, deep research, résumé tailoring,
+phone access) lives in `CONTEXT.md` §16.
 
 **Accepted, not bugs:**
 
 - `CLAUDE.md` has no frontmatter, deliberately — it is the contract, read as instructions.
-- The carved-out ProCertus files live on one disk only, by design. They are excluded from the vault
-  repo, so they have no off-machine backup. *(Open task, dated 2026-08-01.)*
-- The employer's name and task titles remain in daily notes and MOCs; only the 24 files were carved
-  out.
+- The carved-out files live on one disk only, by design: excluded from the vault repo, so no off-machine
+  backup. The Ctrl+. lens now gives the exact list; the backup itself is unbuilt.
+- The employer's name and task titles remain in daily notes and MOCs; only those 24 files were carved out.
+- Reverting a toggle on a note younger than one obsidian-git backup cycle deletes the file — the commit
+  being reverted is the file's *creation*. Git-exact, recoverable, self-limiting.
+- `SYSTEM.md` and `CONTEXT.md` both describe this system and nothing mechanically keeps them in step.
+  Same for the vault twin of `CONTEXT.md`. This is the parallel-list failure the privacy model refuses
+  to make; here it is accepted because the audience differs, and the mitigation is the date at the top
+  of each file.
 
 ---
 
 ## 12. The recurring failure mode
 
-Worth stating plainly, because it has now happened five times and will happen again:
+Worth stating plainly, because it has now happened eight times and will happen again:
 
 > **"Configured" and "executes" are different claims, and only the second one matters.**
 
@@ -393,19 +510,36 @@ Worth stating plainly, because it has now happened five times and will happen ag
    through a POSIX shell where `\P` collapses to `P`. The hook died before Python started.
 3. The privacy callback was shadowed by `allowed_tools`, then skipped by `permission_mode`. Both runs
    reported *zero denials* — zero because nothing had been denied, not because nothing needed denying.
-4. The fleet's per-specialist timeout was declared and caught but never *applied* — `wait_for` was
-   never called, so the `except` was unreachable and a hung specialist would have blocked the daily
-   run indefinitely while holding the lock.
+4. The fleet's per-specialist timeout was declared and caught but never *applied* — `wait_for` was never
+   called, so the `except` was unreachable and a hung specialist would have blocked the daily run
+   indefinitely while holding the lock.
 5. A logged-out CLI fails silently. Nothing checked it until the auth check was added.
+6. On Windows, stdout is cp1252 whenever redirected — which is every scheduled task. cp1252 *contains*
+   the em-dash, which is why this hid for weeks while the fleet logged model summaries full of them. It
+   does not contain `→` or emoji. One arrow in a specialist's summary would have killed the daily run
+   with its output going nowhere.
+7. **`is_due()` compared rolling hours, not calendar days.** Three consecutive 09:00 runs did nothing and
+   each reported success. No self-check would ever have caught it; only the calendar could tell a green
+   run from a correct one.
+8. **A counter counted the wrong thing.** The fleet reported "2 proposals" when one file existed — it was
+   counting tool *calls*, including refused ones. The same defect this project had already fixed once in
+   `--dry-run`, which wrote *"logged 3"* into the failure log while writing nothing.
 
 Every one looked like success from the outside. The countermeasures are the same each time: run the
-thing rather than reading it, test the adversarial case rather than the happy path, and make the
-watchdog report what a resolver can *see* rather than that it ran.
+thing rather than reading it, test the adversarial case rather than the happy path, make the watchdog
+report what a resolver can *see* rather than that it ran, and count what appeared on disk rather than
+what was attempted.
 
-A sixth, of a different shape, is worth adding: on Windows, stdout is cp1252 whenever redirected —
-which is every scheduled task. cp1252 *contains* the em-dash, which is why this hid for weeks while
-the fleet logged model summaries full of them. It does not contain `→` or emoji. One arrow in a
-specialist's summary would have killed the daily run with its output going nowhere.
+Three corollaries earned the same way:
+
+- **A fix that lives in a module only protects the files that import it.** `cli.py` did not import
+  `sigma`, so it missed the UTF-8 reconfiguration and mangled the em-dash in its own `--help` text.
+- **A sealed test has to try to leak.** The Windows-newline bug in the batch `check-ignore` call was
+  caught by an adversarial check (*procertus-interface must not appear*), not by anything passing.
+- **The first real run finds what reasoning did not.** Intake's first live run exposed two defects in the
+  write layer and one environment failure. The no-sync marker moved from ▦ to ⊘ only because live
+  rendering showed `🏁` falling back to a near-identical hatched box — and a confidentiality mark that
+  tofu can imitate is worse than none.
 
 ---
 
@@ -415,26 +549,25 @@ specialist's summary would have killed the daily run with its output going nowhe
 |---|---|
 | Vault | `C:\Users\tusha\Documents\Obsidian Vault` |
 | This repo | `C:\Users\tusha\Documents\CS Projects\sigma-os` |
+| Other repos | `C:\Users\tusha\Documents\CS Projects\` — never inside the vault |
 | Transcripts (L0) | `C:\Users\tusha\.claude\projects\` |
 | Hooks config | `C:\Users\tusha\.claude\settings.json` |
 | User skills | `C:\Users\tusha\.claude\skills\` |
-| Machine-local state | `runtime/*.state.json`, `*.log`, `*.lock` — all gitignored |
+| Machine-local state | `runtime/*.config.json`, `*.state.json`, `*.progress.json`, `*.log`, `*.lock`, `*.jsonl` — all gitignored |
 | GitHub | `zacharyli293680-bot/sigma-os`, `zacharyli293680-bot/sigma-vault` — both private |
 
-Config, state and logs stay behind `.gitignore`: they carry the vault path, the privacy denylist
-(which names the very client it exists to hide), and private working directories. The repo ships
-`.example` files instead.
+Config, state and logs stay behind `.gitignore`: they carry the vault path, the privacy denylist (which
+names the very client it exists to hide), the model-exemption list, and private working directories. The
+repo ships `.example` files instead.
 
 **The vault is the design record**, and it is the more complete one — this file summarises; the vault
 explains *why* each decision went the way it did.
 
-- `03-Projects/sigma-os.md` — the hub: live phase table, architecture map, and the full dev log,
-  which is the single best account of how this got here.
-- `03-Projects/sigma-os-plan.md` — the original design doc, kept as a record rather than a status
-  board. Two of its five predicted problems were answered *by construction* (there is no API key to
-  leak, and nothing is billed per token).
-- `03-Projects/sigma-os/` — 13 atomic notes, one per concept: `three-systems`, `memory-layers`,
-  `vault-as-memory-substrate`, `session-logger`, `reflection-loop`, `watchdog`, `interface`,
-  `fleet`, `command-line`, `agent-guardrails`, `repo-and-privacy-model`, `subscription-only`,
-  `open-decisions`.
-- `06-System/system.md` — the live dashboards over sessions, insights and proposals.
+- `03-Projects/sigma-os.md` — the hub: live phase table, architecture map, and the full dev log, which
+  is the single best account of how this got here.
+- `03-Projects/sigma-os/` — 17 notes, one per concept: `three-systems`, `memory-layers`,
+  `vault-as-memory-substrate`, `session-logger`, `reflection-loop`, `watchdog`, `interface`, `fleet`,
+  `command-line`, `agent-guardrails`, `repo-and-privacy-model`, `subscription-only`, `open-decisions`,
+  `dashboard-vision`, `dashboard-plan`, `sigma-os-plan` (the original blueprint, kept as a record), and
+  `sigma-os-reference` (the vault twin of `CONTEXT.md`).
+- `06-System/system.md` — the live Dataview dashboards over sessions, insights and proposals.

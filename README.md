@@ -35,13 +35,15 @@ Five layers, raw → distilled:
 | **L3** | procedural memory — skills + `CLAUDE.md` contract | approved proposals |
 | **L4** | durable insights distilled from L1 | `reflect.py` (Phase 2) |
 
-> **[CONTEXT.md](CONTEXT.md) is the full picture** — every component and function, the invariants and
-> how each is enforced, the API, the UI, the data formats, the algorithms, current state, and the
-> honest list of what is not built. Read that if you are picking this up after a break, or if you are
-> an AI agent that needs the whole system in one pass. This file is the introduction.
+> **Two documents sit behind this one**, and the split is what each is for:
 >
-> [SYSTEM.md](SYSTEM.md) was the previous full picture and is accurate through 2026-07-31 for
-> Phases 0–4; where the two disagree, CONTEXT.md is newer.
+> - **[SYSTEM.md](SYSTEM.md) — the state.** What is built, what actually executes on a schedule, what
+>   is healthy, and what is left. Read it when you come back after a gap.
+> - **[CONTEXT.md](CONTEXT.md) — the reference.** Every module's functions, all 27 endpoints, the data
+>   formats, the algorithms written out, and the honest list of what is designed and not built. Read it
+>   when you are about to change something, or if you are an AI agent that needs the system in one pass.
+>
+> This file is the introduction.
 
 ## Phases
 
