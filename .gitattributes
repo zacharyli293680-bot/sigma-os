@@ -1,0 +1,5 @@
+# cmd.exe parses batch files by byte offset; LF-only endings make it resume
+# mid-token and try to execute the tail of a REM. Checkout must be CRLF on
+# every platform, not just wherever core.autocrlf happens to be on.
+*.cmd text eol=crlf
+*.bat text eol=crlf
