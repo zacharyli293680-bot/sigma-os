@@ -6,6 +6,12 @@
 pieces reach each other, the guarantees and how they are enforced, and the gaps. If you are picking
 this up after a gap, read this first.
 
+> **Superseded 2026-08-01 by [`CONTEXT.md`](CONTEXT.md).** This file is accurate through 2026-07-31
+> for Phases 0–4 and is kept for its §12 account of the recurring failure mode, but it predates the
+> priority queues, the 06:00 retrospective, and most of dashboard Phase 6 — so §4 (components),
+> §9 (the command line), §10 (current state) and §11 (known gaps) are all stale. Where the two
+> disagree, CONTEXT.md is newer.
+
 ---
 
 ## 1. What Sigma is
