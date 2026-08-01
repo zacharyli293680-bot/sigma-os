@@ -118,7 +118,11 @@ def api_toggle(req: ToggleReq):
     summary = f"{'ticked' if req.done else 'unticked'} a task in {rel}"
     ledger.record("zach", "toggle", rel, res["sha"], summary,
                   extra={"line": req.line})
-    panels._cache.pop("tasks", None)
+    # Both task panels, not just /api/tasks. The work view's window promotes the
+    # next task the moment one pops, and a 15s stale cache would make the queue
+    # feel broken at exactly the moment it is meant to feel immediate.
+    for key in panels.TASK_PANELS:
+        panels._cache.pop(key, None)
     return {"ok": True, "sha": res["sha"], "absorbed": res["absorbed"],
             "note": res["note"], "raw": flipped}
 
@@ -151,7 +155,7 @@ def api_revert(req: RevertReq):
     ledger.record("zach", "revert", target.get("target", ""), r["sha"],
                   f"reverted: {target.get('summary', target.get('sha', ''))}",
                   extra={"reverts": req.sha})
-    for key in ("tasks", "proposals", "projects"):
+    for key in (*panels.TASK_PANELS, "proposals", "projects"):
         panels._cache.pop(key, None)
     return {"ok": True, "sha": r["sha"]}
 
@@ -220,6 +224,6 @@ def api_capture(body: Capture):
         return _err(500, "write failed", detail=str(e))
 
     ledger.record("zach", "create", rel, res["sha"], f"captured: {first[:60]}")
-    for key in ("tasks", "graph", "study"):
+    for key in (*panels.TASK_PANELS, "graph", "study"):
         panels._cache.pop(key, None)
     return {"ok": True, "file": rel, "sha": res["sha"], "note": res["note"]}

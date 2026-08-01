@@ -7,15 +7,9 @@
  * showing a small window of its highest-scoring *eligible* task. Completing one
  * pops it and promotes the next; there is no daily rebuild.
  *
- * Two house rules are load-bearing here:
- *
- * - **Status is never colour alone.** Every chip pairs a word with its tone —
- *   `overdue 3d`, `due Fri`, `aging 9d`, `high`. A red pill that only means
- *   something if you know the legend is not a status.
- * - **The ordering must be interrogable.** Every row's tooltip carries the
- *   score arithmetic that put it there (`due Fri +33 · high +30 · age +2 = 65`).
- *   A priority list nobody can question is one nobody trusts, and the breakdown
- *   also says which constant to turn when the order looks wrong.
+ * The chips, the score breakdown and the completion flow live in queue-bits.ts
+ * because the QUEUE digest in the right column renders the same queue smaller
+ * and must say the same things about it.
  *
  * No per-card icon, deliberately. Every other panel in this dashboard is titled
  * by a bare word in the `.panel > h2` treatment, and the one time chrome reached
@@ -26,85 +20,25 @@ import { useEffect, useState } from "react";
 import { get, obsidianHref, QUEUE_ORDER } from "./api";
 import type { Queue, QueueSection, QueueTask } from "./api";
 import { NoSyncMark } from "./panels";
+import { breakdown, chipsFor, progressOf, useFreshIds, useQueueTick } from "./queue-bits";
+import type { RowState } from "./queue-bits";
 
-type Chip = { label: string; tone: string };
-
-const WEEKDAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-/** Deadline, aging and urgency, as words that carry their own meaning. */
-function chipsFor(t: QueueTask): Chip[] {
-  const out: Chip[] = [];
-  const d = t.parts.days_until;
-  if (t.deadline && d !== null) {
-    if (d < 0) out.push({ label: `overdue ${-d}d`, tone: "danger" });
-    else if (d === 0) out.push({ label: "due today", tone: "danger" });
-    else if (d === 1) out.push({ label: "due tomorrow", tone: "warn" });
-    else if (d <= 6) {
-      // Date-only parsing, so this is a local calendar day rather than UTC —
-      // `new Date("2026-08-07")` is midnight UTC and lands on the 6th in any
-      // negative offset, which would print the wrong weekday half the year.
-      const [y, m, day] = t.deadline.split("-").map(Number);
-      out.push({ label: `due ${WEEKDAY[new Date(y, m - 1, day).getDay()]}`, tone: "warn" });
-    } else out.push({ label: `due ${t.deadline.slice(5)}`, tone: "dim" });
-  }
-  // The anti-starvation term, surfaced: this is *why* a long-ignored task with
-  // no deadline eventually climbs into view.
-  if (t.parts.aging >= 1) {
-    out.push({ label: `aging ${t.parts.age_days}d`, tone: "age" });
-  }
-  if (t.urgency === "high") out.push({ label: "high", tone: "urg" });
-  else if (t.urgency === "low") out.push({ label: "low", tone: "dim" });
-  return out;
-}
-
-/** The tooltip that answers "why is this here?". Local until the digest panel
- *  needs it too, at which point it and chipsFor belong in their own module —
- *  exporting them from here trips the fast-refresh rule for no present gain. */
-function breakdown(t: QueueTask): string {
-  const p = t.parts;
-  const bits: string[] = [];
-  if (p.deadline) {
-    const d = p.days_until;
-    bits.push(`${d !== null && d < 0 ? "overdue" : "due"} +${Math.round(p.deadline)}`);
-  }
-  bits.push(`${t.urgency} +${Math.round(p.urgency)}`);
-  if (p.aging) bits.push(`age +${Math.round(p.aging)}`);
-  const math = `${bits.join(" · ")} = ${Math.round(p.total)}`;
-  return t.pinned ? `pinned — shown regardless of score\n(${math})` : math;
-}
-
-/** "Block 3 of 10 · next: strong induction notes" for a course frontier. */
-function progressOf(s: QueueSection, t: QueueTask): string | null {
-  const g = s.groups.find(x => x.parent === t.parent);
-  if (!g) return null;
-  if (s.key === "projects") {
-    const behind = g.open - 1;
-    return behind > 0 ? `${behind} queued behind` : null;
-  }
-  const headings: string[] = [];
-  for (const c of g.chain) {
-    if (c.heading && headings[headings.length - 1] !== c.heading) headings.push(c.heading);
-  }
-  const at = t.heading ? headings.indexOf(t.heading) + 1 : 0;
-  // The heading is a full block title ("Block 3 — Distributed Loads"); the
-  // leading label alone is what fits on a sub-line.
-  const label = (t.heading ?? "").split("—")[0].trim() || `${at}`;
-  const next = g.chain[1];
-  const where = at && headings.length ? `${label} of ${headings.length}` : label;
-  if (!next) return where || null;
-  // Elide rather than cut: "…examples; packet" reads as a finished phrase and
-  // silently misstates what the next task is.
-  const peek = next.text.length > 46 ? `${next.text.slice(0, 45).trimEnd()}…` : next.text;
-  return `${where} · next: ${peek}`;
-}
-
-function Row({ t, s, vault }: { t: QueueTask; s: QueueSection; vault: string }) {
+function Row({ t, s, vault, rows, errs, fresh, onTick }: {
+  t: QueueTask; s: QueueSection; vault: string;
+  rows: RowState; errs: Record<string, string>; fresh: Set<string>;
+  onTick: (t: QueueTask) => void;
+}) {
+  const st = rows[t.id];
   const sub = s.kind === "chain" ? progressOf(s, t) : null;
   return (
-    <li className={`q-row ${t.overdue ? "overdue" : ""}`}>
-      {/* Inert until the completion slice — the box is here so the layout is
-          the real one, not a sketch of it. */}
-      <span className="q-box" aria-hidden="true">☐</span>
+    <li className={`q-row ${t.overdue ? "overdue" : ""} ${st ?? ""}`
+                   + (fresh.has(t.id) ? " promoted" : "")}>
+      <button className={`q-box ${st ?? ""}`} disabled={!!st} onClick={() => onTick(t)}
+              title={st === "leaving"
+                ? "ticked — one commit of its own, revertible in the ledger (Ctrl+J)"
+                : "tick it — writes to the note as its own revertible commit"}>
+        {st === "leaving" ? "☑" : st === "busy" ? "◌" : "☐"}
+      </button>
       <a className="q-main" href={obsidianHref(vault, t.file.replace(/\.md$/, ""))}
          title={`${t.file}:${t.line}\n${breakdown(t)}`}>
         <span className="q-text">
@@ -114,6 +48,7 @@ function Row({ t, s, vault }: { t: QueueTask; s: QueueSection; vault: string }) 
           {t.text}
         </span>
         {sub && <span className="q-sub">{sub}</span>}
+        {errs[t.id] && <span className="row-err">{errs[t.id]}</span>}
       </a>
       <span className="q-chips">
         {chipsFor(t).map(c => (
@@ -124,7 +59,11 @@ function Row({ t, s, vault }: { t: QueueTask; s: QueueSection; vault: string }) 
   );
 }
 
-function Card({ s, vault }: { s: QueueSection; vault: string }) {
+function Card({ s, vault, rows, errs, fresh, onTick }: {
+  s: QueueSection; vault: string;
+  rows: RowState; errs: Record<string, string>; fresh: Set<string>;
+  onTick: (t: QueueTask) => void;
+}) {
   const tail: string[] = [];
   if (s.queue.length) tail.push(`${s.queue.length} queued`);
   if (s.blocked.length) tail.push(`${s.blocked.length} blocked`);
@@ -151,23 +90,37 @@ function Card({ s, vault }: { s: QueueSection; vault: string }) {
         </p>
       ) : (
         <ul className="rows q-rows">
-          {s.visible.map(t => <Row key={t.id} t={t} s={s} vault={vault} />)}
+          {s.visible.map(t => (
+            <Row key={t.id} t={t} s={s} vault={vault}
+                 rows={rows} errs={errs} fresh={fresh} onTick={onTick} />
+          ))}
         </ul>
       )}
     </section>
   );
 }
 
-export default function WorkView({ open, vault, onClose }: {
-  open: boolean; vault: string; onClose: () => void;
+export default function WorkView({ open, vault, onClose, onMutate }: {
+  open: boolean; vault: string; onClose: () => void; onMutate: () => void;
 }) {
   const [q, setQ] = useState<Queue | null | undefined>(undefined);
+
+  const pull = () => get<Queue>("queue").then(setQ).catch(() => setQ(null));
 
   useEffect(() => {
     if (!open) return;
     setQ(undefined);
-    get<Queue>("queue").then(setQ).catch(() => setQ(null));
+    pull();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // A completion changes both this view and the shell's digest, so the refetch
+  // is both: our own payload, and the panels App owns.
+  const { rows, errs, tick } = useQueueTick(() => { pull(); onMutate(); });
+  const visibleIds = q
+    ? QUEUE_ORDER.flatMap(k => q.sections[k].visible.map(t => t.id))
+    : [];
+  const fresh = useFreshIds(visibleIds);
 
   if (!open) return null;
 
@@ -201,7 +154,8 @@ export default function WorkView({ open, vault, onClose }: {
         {q && (
           <div className="work-grid">
             {QUEUE_ORDER.map(k => (
-              <Card key={k} s={q.sections[k]} vault={vault} />
+              <Card key={k} s={q.sections[k]} vault={vault}
+                    rows={rows} errs={errs} fresh={fresh} onTick={tick} />
             ))}
           </div>
         )}

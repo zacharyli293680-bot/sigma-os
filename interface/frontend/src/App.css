@@ -1329,3 +1329,62 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--cyan); }
 /* The row already says "overdue" in words; this only stops the title from
    reading as ordinary while its chip shouts. */
 .q-row.overdue .q-main { color: var(--amber); }
+
+/* --- completion: the queue's one piece of motion ------------------------- */
+
+/* A queue is meant to *feel* like one: check, the row leaves, the next slides
+   in. Both halves are deliberately short — 240ms out matches the shell's own
+   --dive-ms, and anything longer turns "done" into "waiting". */
+.q-row {
+  transition: opacity 130ms linear, transform 200ms var(--dive-ease);
+}
+.q-row.busy { opacity: 0.6; }
+.q-row.leaving {
+  opacity: 0;
+  transform: translateX(20px);
+  pointer-events: none;      /* nothing may be clicked on its way out */
+}
+/* Only a genuine promotion animates. Every row would twitch on each 60s poll
+   if this keyed on mount — useFreshIds is what keeps it to the real thing. */
+@keyframes q-promote {
+  from { opacity: 0; transform: translateY(-7px); }
+  to   { opacity: 1; transform: none; }
+}
+.q-row.promoted { animation: q-promote 260ms var(--dive-ease) both; }
+
+.q-box {
+  background: none; border: 1px solid transparent;
+  color: var(--muted); font: inherit; cursor: pointer;
+  padding: 3px 4px; flex: none;
+  transition: color 200ms linear;
+}
+.q-box:hover:not(:disabled) { color: var(--cyan); }
+.q-box.busy { color: var(--amber); }
+.q-box.leaving { color: var(--cyan); }
+.q-box:disabled { cursor: default; }
+
+@media (prefers-reduced-motion: reduce) {
+  .q-row, .q-box { transition: none; }
+  .q-row.promoted { animation: none; }
+  .q-row.leaving { transform: none; }
+}
+
+/* --- the QUEUE digest, in the right column ------------------------------- */
+
+/* The counts double as the door to the full view — the same idiom the foot
+   dock uses, where what-is-happening is also how you open the ledger. */
+.q-open {
+  background: none; border: 1px solid transparent;
+  color: var(--ink-2); font: 400 11px/1.5 var(--mono);
+  cursor: pointer; padding: 2px 4px; margin: 0 0 4px; width: 100%;
+  text-align: left;
+}
+.q-open:hover { color: var(--cyan); border-color: var(--panel-line-dim); }
+/* Section names inside the digest: the same small-caps rule as `next up` was,
+   but they name a queue rather than a day-bucket. */
+.today .sub { margin: 8px 0 1px; color: var(--ink-2); }
+.today .q-parent { margin-right: 6px; }
+/* One chip only in 360px, and it is the first — chipsFor orders by what most
+   decides the row's position, so the deadline wins over aging over urgency. */
+.today .q-chips { margin-left: auto; padding-left: 8px; }
+.today .task-row { align-items: baseline; }

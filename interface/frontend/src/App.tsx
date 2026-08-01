@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./App.css";
 import { API, get } from "./api";
-import type { Fleet, Graph, Health, Job, NoSync, Progress, Projects, Proposals, Tasks, Window_ } from "./api";
+import type { Fleet, Graph, Health, Job, NoSync, Progress, Projects, Proposals, Queue, Tasks, Window_ } from "./api";
 import Brain, { VaultHud } from "./brain";
 import ChatDrawer from "./chat";
 import Ledger from "./ledger";
@@ -22,7 +22,7 @@ import BuildView from "./build";
 import WorkView from "./work";
 import CalendarStrip from "./calendar";
 import Capture from "./capture";
-import { Foot, Panel, ProjectsPanel, Rail, TodayPanel, TopStrip, WaitingPanel } from "./panels";
+import { Foot, Panel, ProjectsPanel, QueuePanel, Rail, TopStrip, WaitingPanel } from "./panels";
 import Reactor, { activityLine, useElapsed } from "./reactor";
 
 const REFRESH_MS = 60_000;
@@ -45,7 +45,11 @@ export default function App() {
   // flashed "backend unreachable" on every cold load.
   const [health, setHealth] = useState<Health | null | undefined>(undefined);
   const [fleet, setFleet] = useState<Fleet | null | undefined>(undefined);
+  // Both, and they are not redundant: `tasks` is dated work anywhere in the
+  // vault (the calendar strip, the top strip's study block), `queue` is the
+  // four priority queues, which ignore 01-Daily entirely.
   const [tasks, setTasks] = useState<Tasks | null | undefined>(undefined);
+  const [queue, setQueue] = useState<Queue | null | undefined>(undefined);
   const [proposals, setProposals] = useState<Proposals | null | undefined>(undefined);
   const [projects, setProjects] = useState<Projects | null | undefined>(undefined);
   const [window_, setWindow] = useState<Window_ | null | undefined>(undefined);
@@ -74,6 +78,7 @@ export default function App() {
   const refresh = useCallback(() => {
     get<Fleet>("fleet").then(setFleet).catch(() => setFleet(null));
     get<Tasks>("tasks").then(setTasks).catch(() => setTasks(null));
+    get<Queue>("queue").then(setQueue).catch(() => setQueue(null));
     get<Proposals>("proposals").then(setProposals).catch(() => setProposals(null));
     get<Projects>("projects").then(setProjects).catch(() => setProjects(null));
     get<Window_>("window").then(setWindow).catch(() => setWindow(null));
@@ -247,7 +252,8 @@ export default function App() {
       </section>
       <div className="right">
         <WaitingPanel proposals={proposals ?? null} onReview={setReviewing} />
-        <TodayPanel tasks={tasks ?? null} vault={vault} onMutate={refresh} />
+        <QueuePanel queue={queue ?? null} vault={vault} onMutate={refresh}
+                    onOpen={() => setWorkOpen(true)} />
       </div>
       <div className="lower">
         <CalendarStrip tasks={tasks ?? null} onOpen={() => setStudyOpen(true)} />
@@ -267,7 +273,8 @@ export default function App() {
               onMutate={refresh} />
       <StudyView open={studyOpen} vault={vault} onClose={() => setStudyOpen(false)} />
       <BuildView open={buildOpen} vault={vault} onClose={() => setBuildOpen(false)} />
-      <WorkView open={workOpen} vault={vault} onClose={() => setWorkOpen(false)} />
+      <WorkView open={workOpen} vault={vault} onClose={() => setWorkOpen(false)}
+                onMutate={refresh} />
       <Capture open={captureOpen} onClose={() => setCaptureOpen(false)} onDone={refresh} />
       <Palette open={paletteOpen} onClose={() => setPaletteOpen(false)}
                onLaunched={() => {}} />

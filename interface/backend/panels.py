@@ -62,6 +62,17 @@ router = APIRouter(prefix="/api")
 
 _cache: dict = {}
 
+# The panels derived from checkbox state. Both must be dropped together after
+# any write that ticks, unticks or adds a task — they are two views of one fact,
+# and three call sites in writes.py each spelled their own key list. Naming the
+# coupling once is the difference between "the work view lags 15 seconds after a
+# tick" being a bug someone finds and it being impossible.
+#
+# Deliberately not a blanket invalidate-everything: `graph` is cached for 300s
+# because rebuilding it is expensive, and a new graph identity relays the sky —
+# ticking a box must not do that.
+TASK_PANELS = ("tasks", "queue")
+
 
 def _cached(key: str, ttl: float, compute):
     """A tiny TTL cache. Several panels shell out (schtasks, git); the browser

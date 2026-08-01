@@ -367,7 +367,7 @@ def scan(vault: Path, split=None) -> list:
 # the sidecar index
 # --------------------------------------------------------------------------
 
-def load_index(path=INDEX_PATH) -> tuple:
+def load_index(path=None) -> tuple:
     """(index, readable). `readable` is False only when a file exists but did not parse.
 
     The caller must not persist over an unreadable index. A torn read looks
@@ -375,7 +375,7 @@ def load_index(path=INDEX_PATH) -> tuple:
     task in the vault with today's date — silently resetting the age of all of
     them, which is the one piece of state this file exists to hold.
     """
-    p = Path(path)
+    p = Path(path or INDEX_PATH)
     if not p.exists():
         return {"version": INDEX_VERSION, "adopted": None, "tasks": {}}, True
     try:
@@ -389,12 +389,12 @@ def load_index(path=INDEX_PATH) -> tuple:
     return data, True
 
 
-def save_index(index: dict, path=INDEX_PATH) -> bool:
+def save_index(index: dict, path=None) -> bool:
     """Atomic replace, because the backend rewrites this every cache miss while
     `sigma todo` may be reading it. Returns False rather than raising: losing an
     index costs task ages, losing the request that was serving the dashboard
     costs the dashboard."""
-    p = Path(path)
+    p = Path(path or INDEX_PATH)
     tmp = p.with_suffix(p.suffix + ".tmp")
     try:
         tmp.write_text(json.dumps(index, indent=2, ensure_ascii=False),
@@ -518,10 +518,18 @@ def _chain(tasks: list) -> list:
     return ordered
 
 
-def build(vault=None, index_path=INDEX_PATH, today=None, split=None,
+def build(vault=None, index_path=None, today=None, split=None,
           persist=True) -> dict:
-    """Scan, reconcile, score, window. The whole payload behind GET /api/queue."""
+    """Scan, reconcile, score, window. The whole payload behind GET /api/queue.
+
+    Every path is resolved at call time, not bound as a default. A default of
+    `index_path=INDEX_PATH` captures the module constant when this function is
+    *defined*, so reassigning todo.INDEX_PATH afterwards silently does nothing —
+    which is how a test suite that believed it was writing to a temp directory
+    was in fact rewriting the live index.
+    """
     vault = Path(vault or DEFAULT_VAULT)
+    index_path = Path(index_path or INDEX_PATH)
     today = today or datetime.date.today().isoformat()
 
     found = scan(vault, split=split)

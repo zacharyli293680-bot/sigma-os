@@ -22,6 +22,7 @@ sys.path.insert(0, str(REPO / "interface" / "backend"))
 import panels                                      # noqa: E402
 import privacy                                     # noqa: E402
 import todo                                        # noqa: E402
+import writes                                      # noqa: E402
 
 
 def _git(repo, *a):
@@ -38,17 +39,24 @@ class QueueApiBase(unittest.TestCase):
         _git(self.vault, "config", "user.name", "T")
         _git(self.vault, "config", "user.email", "t@e.com")
 
-        self._saved_vault = panels.VAULT
-        self._saved_index = todo.INDEX_PATH
-        panels.VAULT = self.vault
+        # panels.VAULT and writes.VAULT are two module-level bindings to one
+        # object; patching only the first left the toggle addressing the *real*
+        # vault. It refused — the line-verification guard answered 409 stale
+        # rather than writing to a line it had not been shown — but a test that
+        # depends on a safety net catching it is not a hermetic test.
+        self._saved = {"panels": panels.VAULT, "writes": writes.VAULT,
+                       "index": todo.INDEX_PATH}
+        panels.VAULT = writes.VAULT = self.vault
         todo.INDEX_PATH = Path(self.tmp.name) / "todo.state.json"
         panels._cache.clear()
         privacy.VaultPrivacy._git_ignored.cache_clear()
 
     def tearDown(self):
-        panels.VAULT = self._saved_vault
-        todo.INDEX_PATH = self._saved_index
+        panels.VAULT = self._saved["panels"]
+        writes.VAULT = self._saved["writes"]
+        todo.INDEX_PATH = self._saved["index"]
         panels._cache.clear()
+        privacy.VaultPrivacy._git_ignored.cache_clear()
         self.tmp.cleanup()
 
     def note(self, rel: str, body: str):
@@ -146,6 +154,77 @@ class TestTasksEndpointStillWorks(QueueApiBase):
         self.assertIs(panels._DUE_RE, todo.DUE_RE)
         self.assertIs(panels._META_RE, todo.META_RE)
         self.assertIs(panels._PRIORITY, todo.PRIORITY)
+
+
+class TestCompletionPromotes(QueueApiBase):
+    """Ticking a visible task must promote the next one *now*.
+
+    The queue's whole claim is that it maintains itself, and a 15s stale cache
+    would break that at exactly the moment it is meant to feel immediate — the
+    row leaves, and the slot it vacated sits empty until the TTL rolls.
+    """
+
+    def setUp(self):
+        super().setUp()
+        _git(self.vault, "add", "-A")
+        _git(self.vault, "commit", "-m", "init")
+
+    def toggle(self, t, done=True):
+        """The endpoint returns a plain dict on success and a JSONResponse on
+        refusal, so a failure must be read as a failure rather than duck-typed
+        into one."""
+        r = writes.api_toggle(writes.ToggleReq(
+            file=t["file"], line=t["line"], raw=t["raw"], done=done))
+        self.assertIsInstance(r, dict, f"toggle refused: {getattr(r, 'body', r)}")
+        return r
+
+    def test_ticking_drops_both_task_caches(self):
+        self.note("02-Areas/ProCertus/Todo.md", "- [ ] first\n- [ ] second\n")
+        _git(self.vault, "add", "-A")
+        _git(self.vault, "commit", "-m", "todo")
+
+        first = panels.api_queue()["sections"]["procertus"]["visible"][0]
+        panels.api_tasks()
+        self.assertIn("queue", panels._cache)
+
+        self.assertTrue(self.toggle(first).get("ok"))
+        # Not merely expired — actively dropped, both of them.
+        self.assertNotIn("queue", panels._cache)
+        self.assertNotIn("tasks", panels._cache)
+
+        after = panels.api_queue()["sections"]["procertus"]["visible"]
+        self.assertEqual([t["text"] for t in after], ["second"])
+
+    def test_the_tick_is_recorded_as_a_completion(self):
+        """What the 06:00 review counts. Reading the ledger instead would miss
+        every tick made in Obsidian rather than on the dashboard."""
+        self.note("02-Areas/ProCertus/Todo.md", "- [ ] first\n")
+        _git(self.vault, "add", "-A")
+        _git(self.vault, "commit", "-m", "todo")
+
+        t = panels.api_queue()["sections"]["procertus"]["visible"][0]
+        self.toggle(t)
+        panels.api_queue()
+        entry = json.loads(todo.INDEX_PATH.read_text(encoding="utf-8"))["tasks"][t["id"]]
+        self.assertEqual(entry["completed_at"], todo.datetime.date.today().isoformat())
+
+    def test_unticking_puts_it_back_at_the_head_of_its_chain(self):
+        self.note("02-Areas/Academics/AA-210/timeline.md", "- [ ] day 2\n- [ ] day 3\n")
+        _git(self.vault, "add", "-A")
+        _git(self.vault, "commit", "-m", "timeline")
+
+        head = panels.api_queue()["sections"]["courses"]["visible"][0]
+        self.toggle(head)
+        self.assertEqual(
+            [t["text"] for t in panels.api_queue()["sections"]["courses"]["visible"]],
+            ["day 3"])
+
+        # The undo path: the same endpoint, done=False.
+        back = self.toggle({**head, "raw": head["raw"].replace("[ ]", "[x]")}, done=False)
+        self.assertTrue(back.get("ok"))
+        s = panels.api_queue()["sections"]["courses"]
+        self.assertEqual([t["text"] for t in s["visible"]], ["day 2"])
+        self.assertEqual([t["text"] for t in s["blocked"]], ["day 3"])
 
 
 class TestSerialisable(QueueApiBase):
