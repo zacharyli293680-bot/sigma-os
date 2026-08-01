@@ -666,10 +666,32 @@ def api_study():
 STALE_DAYS = 21
 
 
+def _hub_notes() -> list:
+    """Project hubs, active and archived, minus anything sealed.
+
+    `05-Archive/Projects/` counts. A finished project is not a gap: reporting an
+    archived repo as "no hub note" would train you to ignore the one signal this
+    panel exists to give. Found immediately — `team20` was archived the day this
+    shipped and promptly reappeared as a fault.
+    """
+    out = []
+    for folder in (VAULT / "03-Projects", VAULT / "05-Archive" / "Projects"):
+        if not folder.is_dir():
+            continue
+        out.extend(sorted(folder.glob("*.md")))
+    rels = [_rel(p) for p in out]
+    sealed, _ = _split(rels)
+    return [p for p, r in zip(out, rels) if r not in sealed]
+
+
+def _archived(p: Path) -> bool:
+    return "05-Archive" in p.parts
+
+
 def _code_root() -> Path | None:
     """The folder most project hubs point into."""
     parents: dict = {}
-    for p in sorted((VAULT / "03-Projects").glob("*.md")):
+    for p in _hub_notes():
         rel = _rel(p)
         sealed, _ = _split([rel])
         if rel in sealed:
@@ -698,10 +720,8 @@ def _scan_repos() -> dict:
 
     # Hub notes by the repo path they claim, so a repo can find its hub.
     hubs: dict = {}
-    for p in sorted((VAULT / "03-Projects").glob("*.md")):
+    for p in _hub_notes():
         rel = _rel(p)
-        if rel in _split([rel])[0]:
-            continue
         try:
             text = p.read_text(encoding="utf-8", errors="replace")
             fm = frontmatter(text) or {}
@@ -754,6 +774,7 @@ def _scan_repos() -> dict:
             "last_commit": last, "last_subject": state.get("last_subject", ""),
             "idle_days": idle,
             "hub": hub_p.stem if hub_p is not None else None,
+            "hub_archived": bool(hub_p is not None and _archived(hub_p)),
             "hub_status": (hub_fm or {}).get("status") if hub_fm else None,
             "hub_stale_days": hub_stale,
         })
@@ -762,10 +783,14 @@ def _scan_repos() -> dict:
         "root": str(root),
         "repos": out,
         "orphans": [r["name"] for r in out if r["hub"] is None],
+        # An archived project is finished, so neither a stale hub nor an idle
+        # repo is a finding for it — that is what archiving means.
         "stale_hubs": [r["name"] for r in out
-                       if r["hub"] and (r["hub_stale_days"] or 0) > 0],
+                       if r["hub"] and not r["hub_archived"]
+                       and (r["hub_stale_days"] or 0) > 0],
         "idle": [r["name"] for r in out
-                 if r["idle_days"] is not None and r["idle_days"] >= STALE_DAYS],
+                 if not r["hub_archived"] and r["idle_days"] is not None
+                 and r["idle_days"] >= STALE_DAYS],
         "stale_days": STALE_DAYS,
     }
 
