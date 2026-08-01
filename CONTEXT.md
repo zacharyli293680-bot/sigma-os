@@ -252,7 +252,26 @@ tracked file cannot invent one.
 Enforcement is a **`PreToolUse` hook, not the permission callback**. That distinction was learned
 expensively — see §17.
 
-### 3.5 Observe freely, write additively, never delete
+### 3.5 An agent may only call tools it was granted
+
+*(Added 2026-08-01, ahead of the browser lane — the plan is the vault's `browser-plan` note.)*
+
+`agent.build_options()` builds **one list and uses it twice**: as the grant (`tools=`) and as the gate
+(`VaultPrivacy(granted_tools=...)`). `privacy._classify()` refuses anything outside it with rule
+`unvetted-tool`, so granting a tool necessarily adds it to what the guard vets, and forgetting fails
+closed rather than open.
+
+Before this the guard returned "allowed" for any tool it had no rule for — an allowlist of things to
+*check* rather than a denylist of things to *permit*. It held only while every tool's argument was a
+path. A tool whose argument is a URL (`browser_navigate`) has no `file_path`, so every loop in the
+guard would skip it and the call would pass unvetted with the run reporting **zero denials** — which
+is exactly what this guard reported the two times it was already found not to be running (§17).
+
+Every refusal is appended to `runtime/audit.jsonl`, and `doctor` reports `unvetted-tool` hits, because
+the danger of a fail-closed default is not that it blocks an attacker: it is that it blocks something
+legitimate *silently*, leaving a run that looks successful and quietly answered worse.
+
+### 3.6 Observe freely, write additively, never delete
 
 Agents may read anything they are allowed to see. They append and create; they do not rewrite or
 remove Zach's words. They never tick his checkboxes — completion is a human signal. They pull before
@@ -306,12 +325,13 @@ sigma-os/
 │   │   ├── __init__.py           settings precedence, frontmatter, kebab, `claude -p`, state files,
 │   │   │                         project resolution, UTF-8 output, detached spawn
 │   │   ├── gitops.py             the ONE place anything commits to the vault
-│   │   ├── ledger.py             the append-only activity ledger
+│   │   ├── ledger.py             the append-only activity ledger — what CHANGED
+│   │   ├── audit.py              the append-only attempt log — what was TRIED, incl. refusals
 │   │   └── spend.py              the rate-limit window proxy meter
 │   ├── cli.py                    the `sigma` command — a dispatcher, not a rewrite
 │   ├── session_logger.py         Phase 1 — transcript → session log
 │   ├── reflect.py                Phase 2 — logs → insights + proposals; apply / diff / merge
-│   ├── doctor.py                 Phase 2.5 — eight health checks, exit code always 0
+│   ├── doctor.py                 Phase 2.5 — nine health checks, exit code always 0
 │   ├── fleet.py                  Phase 4 — runs specialists one at a time under a lock
 │   ├── specialists.py            who the specialists are and what each is briefed to do
 │   ├── inventory.py              deterministic frontmatter scan, precomputed for the auditor
@@ -360,7 +380,7 @@ sigma-os/
 │       ├── src/App.css           the entire visual language, hand-written (~1,630 lines)
 │       └── (gitignored)          node_modules/, dist/
 │
-├── tests/                        stdlib unittest, 18 suites (see §19 for the exact command)
+├── tests/                        stdlib unittest, 19 suites (see §19 for the exact command)
 ├── tools/                        vault utilities that are NOT Sigma
 │   ├── convert_pdfs.py           batch PDF → Markdown (imported by intake.py, not rewritten)
 │   └── convert.cmd
@@ -464,6 +484,14 @@ grown their own copy of the same helpers.
 `runtime/ledger.jsonl`; `entries(limit)` reads them back. Actions: `create`, `update`, `toggle`,
 `revert`, `append`. Append-only by design — a reverted row stays visible, struck through.
 
+**`audit.py`** (new 2026-08-01) — the append-only record of what an agent *tried*, as distinct from
+the ledger's record of what changed. `record(kind, actor, tool, detail, rule)` appends to
+`runtime/audit.jsonl`; `entries(limit)` and `recent(hours, kind, rule)` read it back — the latter is
+what `doctor.check_toolgate` asks. Kinds: `refused` (live), `navigated` and `fetched` (the browser
+lane's, declared early so two modules do not guess at the shape). An entry with an unparseable
+timestamp is *included* by `recent`, never dropped: this log's failure direction should be one row too
+many, never one hidden.
+
 **`spend.py`** (107 lines) — the window proxy. `record_spend()` appends to `spend.jsonl` at every model
 call site; `window(hours=5)` summarises the rolling window; `rate_limited_within(minutes)` and
 `resume_estimate()` drive the fleet's degrade-then-pause policy and the UI's meter. Deliberately
@@ -553,8 +581,8 @@ The weekly loop: read the session logs since last time, distil **insights** (L4)
 Runs on **every** `SessionStart` and speaks only when something is wrong. **Exit code is always 0** —
 a broken watchdog must not block a session from starting.
 
-Eight checks, in order: `capture`, `reflection`, `schedule`, `review`, `auth`, `privacy`, `backup`,
-`fleet`.
+Nine checks, in order: `capture`, `reflection`, `schedule`, `review`, `auth`, `privacy`, `toolgate`,
+`backup`, `fleet`.
 
 | Check | What it actually verifies |
 |---|---|
@@ -1245,9 +1273,9 @@ reactor · the activity ledger · the no-sync lens · quick capture · proposal 
 | Skills | **4** — 3 user-scoped (`browser-verify-before-merge`, `env-secrets-audit`, `graphify-to-atomic-notes`), 1 vault-scoped (`reflect`) |
 | Reviews | **0** — `SigmaOS-DailyReview` is installed and `Ready` but has never fired yet |
 | Scheduled tasks | all three installed and `Ready` |
-| Python modules | 19 in `runtime/` (incl. 4 in `sigma/`), 8 in `interface/backend/` |
+| Python modules | 20 in `runtime/` (incl. 5 in `sigma/`), 8 in `interface/backend/` |
 | Frontend modules | 18 TS/TSX + one 1,630-line stylesheet |
-| Tests | **18 suites, 333 test functions** in `tests/` — all green 2026-08-01 (`Ran 333 tests in 433.887s … OK`) |
+| Tests | **19 suites, 358 test functions** in `tests/` — all green 2026-08-01 |
 | Doctor | 0 alerts; one item waiting (the review has never run) |
 
 ---
@@ -1402,7 +1430,7 @@ Three more lessons worth carrying:
 
 ```powershell
 sigma                       # what needs your attention right now
-sigma doctor                # the eight health checks
+sigma doctor                # the nine health checks
 sigma ui                    # backend + built frontend on http://127.0.0.1:8787
 ```
 
@@ -1421,14 +1449,14 @@ suites import; `-t tests` is required because `tests/` deliberately has no `__in
 `discover` dies with *"Start directory is not importable"* rather than anything that names the cause.
 There is no `sigma` verb for the tests, on purpose.
 
-**It takes about seven minutes** (`Ran 333 tests in 433.887s`, 2026-08-01) — several suites shell out
+**Budget three to eight minutes** (measured 148s and 434s on the same machine, same day) — several suites shell out
 to git against throwaway repos, which is the point: the write path is tested against real git rather
 than a mock of it. Do not add a timeout that assumes it is fast.
 
 The suites: `test_applier`, `test_devlog`, `test_doctor_backup`, `test_fleet_due`, `test_fleet_window`,
 `test_intake`, `test_inventory`, `test_mapper`, `test_nosync`, `test_proposal_content`, `test_queue`,
 `test_queue_api`, `test_review_api`, `test_review_score`, `test_scaffold`, `test_sigma_core`,
-`test_study_api`, `test_writes_api`.
+`test_study_api`, `test_tool_gate`, `test_writes_api`.
 
 ### Add something
 

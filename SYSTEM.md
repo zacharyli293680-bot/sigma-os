@@ -123,7 +123,8 @@ runtime/
   sigma/__init__.py     shared core: settings precedence, frontmatter, kebab, `claude -p`,
                         project resolution, JSON state files, UTF-8 output, detached spawn
   sigma/gitops.py       the ONE place anything commits: mutex, pull, path-scoped commit, revert
-  sigma/ledger.py       the append-only activity ledger (ledger.jsonl)
+  sigma/ledger.py       the append-only activity ledger (ledger.jsonl) — what CHANGED
+  sigma/audit.py        the append-only attempt log (audit.jsonl) — what was TRIED, incl. refusals
   sigma/spend.py        the rate-limit window proxy (spend.jsonl)
   cli.py                the `sigma` command — dispatcher, picks the interpreter
   session_logger.py     Phase 1 — transcript → session log
@@ -317,6 +318,23 @@ constructed `allow_writes=False` **unconditionally**; the proposals flag does no
 propose" and "may edit a note" must never be one switch. It fails closed: a `git check-ignore` error
 refuses the path, and NTFS `::$DATA` stream suffixes — a verified bypass — are refused outright.
 
+### An agent may only call tools it was granted
+
+*(Added 2026-08-01, ahead of the browser lane — see the vault's `browser-plan`.)*
+
+`build_options` builds **one list and uses it twice**: as the grant (`tools=`) and as the gate
+(`granted_tools=`). `privacy.py` refuses anything outside it, so adding a tool to a run necessarily
+adds it to what the guard vets, and *forgetting* fails closed rather than open.
+
+Before this the guard returned "allowed" for any tool it had no rule for — an allowlist of things to
+*check* rather than a denylist of things to *permit*. That was survivable only while every tool's
+argument was a path. A tool whose argument is a URL would have sailed through unvetted with the run
+reporting **zero denials**, which is exactly what this guard reported the two times it was already
+found not to be running.
+
+Refusals are written to `runtime/audit.jsonl`, because the danger of a fail-closed default is not that
+it blocks an attacker — it is that it blocks something legitimate *silently*.
+
 ### Never deletes, never checks your boxes
 
 Agents observe freely, write additively, and never tick a checkbox on Zach's behalf. `retro.py` reports
@@ -329,7 +347,7 @@ and completes nothing; `applier.py` refuses any proposal that ticks a box.
 `doctor.py` runs on every `SessionStart` and speaks only when something is wrong. Its exit code is
 **always 0** — a broken watchdog must not block a session from starting.
 
-**Eight checks** (six at first; `review` and `backup` were added 2026-07-31):
+**Nine checks** (six at first; `review` and `backup` added 2026-07-31, `toolgate` 2026-08-01):
 
 1. **capture** — is any finished session still unlogged?
 2. **reflection** — did the weekly loop run, and is anything waiting on Zach?
@@ -338,8 +356,11 @@ and completes nothing; `applier.py` refuses any proposal that ticks a box.
 5. **auth** — is the login still live?
 6. **privacy** — is anything gitignored also tracked, is the pre-push guard installed, and which model
    exemptions are active?
-7. **backup** — has the vault pushed recently? (obsidian-git pushes every 30 min; stale after 2h)
-8. **fleet** — per *specialist*: any failing, overdue by >2 cycles, or a run that stopped on a limit?
+7. **toolgate** — did the gate refuse a call to a tool it was not granted? Reports `unvetted-tool`
+   hits only: the older rules have a track record, that one does not, so its hits are surfaced until
+   it earns one. A false refusal is otherwise invisible.
+8. **backup** — has the vault pushed recently? (obsidian-git pushes every 30 min; stale after 2h)
+9. **fleet** — per *specialist*: any failing, overdue by >2 cycles, or a run that stopped on a limit?
 
 Two design rules it follows:
 
@@ -424,9 +445,9 @@ reports while `sigma intake run` spends the window.
 | Proposals | **39 raised** — 37 applied, 2 rejected, 0 pending, 0 staged. The folder was collapsed on 2026-08-01 into `06-System/proposals/ledger.md`, one row per proposal; full text stays recoverable from git |
 | Skills | **4** — 3 user-scoped, 1 vault-scoped (`reflect`) |
 | Reviews | **0** — the schedule is installed and `Ready` but has never fired |
-| Code | 19 Python modules in `runtime/`, 8 in `interface/backend/`, 18 frontend modules |
-| Tests | **333 across 18 suites**, green 2026-08-01 (`Ran 333 tests in 433.887s … OK`). Stdlib `unittest`: `interface\backend\.venv\Scripts\python -m unittest discover -s tests -t tests` — the backend venv supplies `fastapi`/`httpx`, and `-t tests` is required because `tests/` is not a package. It takes about seven minutes; several suites shell out to real git. |
-| Doctor | **7 of 8 checks OK**, one item waiting: the daily review has never run |
+| Code | 20 Python modules in `runtime/`, 8 in `interface/backend/`, 18 frontend modules |
+| Tests | **358 across 19 suites**, green 2026-08-01. Stdlib `unittest`: `interface\backend\.venv\Scripts\python -m unittest discover -s tests -t tests` — the backend venv supplies `fastapi`/`httpx`, and `-t tests` is required because `tests/` is not a package. Budget 3–8 minutes; several suites shell out to real git. |
+| Doctor | **8 of 9 checks OK**, one item waiting: the daily review has never run |
 
 **Scheduled tasks — all installed, all `Ready`:**
 
