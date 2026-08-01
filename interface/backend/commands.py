@@ -126,6 +126,13 @@ VERBS: dict = {
 }
 
 DISABLED = [
+    {"verb": "new", "title": "New — scaffold a project from a description",
+     # The one verb whose whole input is a sentence Zach writes. Every other
+     # verb is a fixed argv, which is the property that makes this list safe to
+     # POST to by name; a description has to arrive some other way. Same
+     # doctrine as reflect-merge below — disabled and explained, not hidden.
+     "reason": "needs a description, and a palette verb is a fixed argv — "
+               "run `sigma new \"what it is\"` in the terminal"},
     {"verb": "reflect-merge", "title": "Reflect — merge a staged change",
      # Was "waiting on Phase 4's diff UI". That UI exists now (Phase 6), and it
      # is the better home: merging needs a *name*, and a palette verb is a

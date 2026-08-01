@@ -8,6 +8,7 @@ cli.py  —  `sigma`, one front door for the whole OS.
     sigma fleet run            run the specialists that are due
     sigma reflect diff         review staged changes
     sigma devlog               which projects have unlogged commits
+    sigma new "<one line>"     scaffold a repo + hub note
     sigma install              hooks + scheduled tasks
 
 Sigma grew as five scripts, each with its own flag vocabulary, and the seams
@@ -50,6 +51,7 @@ CAPTURE = HERE / "session_logger.py"
 INTAKE = HERE / "intake.py"
 DEVLOG = HERE / "devlog.py"
 MAPPER = HERE / "mapper.py"
+SCAFFOLD = HERE / "scaffold.py"
 HOOKS = HERE / "install_hooks.py"
 
 
@@ -251,6 +253,15 @@ def cmd_map(a):
     return run(MAPPER, *args, needs_sdk=not a.dry_run)
 
 
+def cmd_new(a):
+    args = [" ".join(a.description)]
+    if a.dry_run:
+        args.append("--dry-run")
+    # Uses `claude -p` rather than the SDK, and that reads its prompt from
+    # stdin — so the description never reaches a command line either.
+    return run(SCAFFOLD, *args)
+
+
 def cmd_install(a):
     what = a.what or "all"
     rc = 0
@@ -355,6 +366,11 @@ def build_parser():
                        help="build the survey and report its size; call no model")
         p.add_argument("--max", metavar="N")
 
+    nw = sub.add_parser("new", help="scaffold a project from a one-line description")
+    nw.add_argument("description", nargs="+", help="what the project is, in one line")
+    nw.add_argument("--dry-run", action="store_true",
+                    help="plan it and print what would be made; create nothing")
+
     i = sub.add_parser("install", help="git hooks and scheduled tasks")
     i.add_argument("what", nargs="?", choices=["all", "hooks", "schedules"])
 
@@ -394,7 +410,8 @@ def main(argv=None):
     return {
         "status": cmd_status, "doctor": cmd_doctor, "fleet": cmd_fleet,
         "reflect": cmd_reflect, "capture": cmd_capture, "intake": cmd_intake,
-        "devlog": cmd_devlog, "map": cmd_map, "install": cmd_install, "ui": cmd_ui,
+        "devlog": cmd_devlog, "map": cmd_map, "new": cmd_new,
+        "install": cmd_install, "ui": cmd_ui,
     }[a.cmd](a)
 
 
