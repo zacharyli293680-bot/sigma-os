@@ -1518,3 +1518,53 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--cyan); }
    same rows printed twice. */
 .q-more-row.shown .q-more-text { color: var(--ink); }
 .q-more-row.shown .q-more-mark { color: var(--ink-2); }
+
+/* --- the row menu: snooze, pin, archive, move ---------------------------- */
+
+.q-menu-wrap { position: relative; flex: none; }
+.q-dots {
+  background: none; border: 1px solid transparent;
+  color: var(--muted); font: inherit; cursor: pointer;
+  padding: 0 5px; line-height: 1;
+  opacity: 0; transition: opacity 120ms linear;
+}
+/* Revealed on hover or focus, never on neither: keyboard users must be able to
+   reach it, and a permanent ⋯ on every row is chrome competing with the task. */
+.q-row:hover .q-dots, .q-dots:focus-visible { opacity: 1; }
+.q-dots:hover { color: var(--cyan); border-color: var(--panel-line-dim); }
+
+/* Click-anywhere-to-close, and it also stops a click landing on the row under
+   the menu — which would have opened Obsidian mid-decision. */
+.q-menu-scrim { position: fixed; inset: 0; z-index: 40; }
+/* Placement is inline: `fixed` coordinates are measured from the button, so the
+   menu escapes the grid's overflow instead of being clipped by it. */
+.q-menu {
+  z-index: 41;
+  min-width: 158px; padding: 5px 0;
+  background: var(--void); border: 1px solid var(--panel-line);
+  box-shadow: 0 6px 22px rgba(2, 3, 5, 0.7);
+}
+.q-menu-head {
+  margin: 5px 0 2px; padding: 0 10px;
+  font: 400 9.5px/1.6 var(--sans); letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--muted);
+}
+.q-menu button, .q-menu-pick {
+  display: block; width: 100%; text-align: left;
+  background: none; border: none; color: var(--ink);
+  font: inherit; font-size: 12.5px; padding: 4px 10px; cursor: pointer;
+}
+.q-menu button:hover, .q-menu-pick:hover { background: rgba(34, 211, 238, 0.09); }
+.q-menu-pick { display: flex; align-items: center; gap: 8px; }
+.q-menu-pick input {
+  flex: 1 1 auto; min-width: 0;
+  background: none; border: 1px solid var(--panel-line-dim);
+  color: var(--ink); font: inherit; font-size: 11px; color-scheme: dark;
+}
+/* The release control, beside the thing it releases. */
+.q-more-act {
+  flex: none; background: none; border: 1px solid var(--panel-line-dim);
+  color: var(--ink-2); font: inherit; font-size: 10.5px;
+  padding: 1px 8px; cursor: pointer;
+}
+.q-more-act:hover { color: var(--cyan); border-color: var(--cyan); }

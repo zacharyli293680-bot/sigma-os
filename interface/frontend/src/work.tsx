@@ -189,11 +189,73 @@ function QuickAdd({ vault, onAdded, inputRef }: {
   );
 }
 
-function Row({ t, s, vault, rows, errs, fresh, onTick }: {
+function iso(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  // Local calendar arithmetic, then a local ISO string — toISOString() is UTC
+  // and would hand back yesterday for anyone west of Greenwich.
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-`
+       + `${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/**
+ * Snooze, pin, archive, move.
+ *
+ * The first three are index-only and instant. Move is a real commit, because
+ * which queue a task is in *is* where its note lives — an override that left
+ * the task in the wrong file would give the note and the sidecar two different
+ * answers to one question.
+ */
+function RowMenu({ t, at, onMeta, onMove, onClose }: {
+  t: QueueTask; at: DOMRect;
+  onMeta: (body: Record<string, unknown>) => void;
+  onMove: (section: string) => void;
+  onClose: () => void;
+}) {
+  // Positioned against the viewport rather than the row. The cards live in a
+  // scrolling grid, and an absolutely-positioned menu was clipped by it — the
+  // bottom third of the list simply vanished. `fixed` escapes the overflow, and
+  // measuring lets it open upward when it would otherwise run off the screen.
+  const MENU_H = 250;
+  const up = at.bottom + MENU_H > window.innerHeight;
+  const style: React.CSSProperties = {
+    position: "fixed", right: window.innerWidth - at.right,
+    ...(up ? { bottom: window.innerHeight - at.top + 2 } : { top: at.bottom + 2 }),
+  };
+  return (
+    <>
+      <div className="q-menu-scrim" onClick={onClose} />
+      <div className="q-menu" role="menu" style={style}>
+        <p className="q-menu-head">snooze</p>
+        <button onClick={() => onMeta({ snooze: iso(1) })}>tomorrow</button>
+        <button onClick={() => onMeta({ snooze: iso(7) })}>next week</button>
+        <label className="q-menu-pick">
+          pick…
+          <input type="date" onChange={e => e.target.value
+            && onMeta({ snooze: e.target.value })} />
+        </label>
+        <p className="q-menu-head">this task</p>
+        <button onClick={() => onMeta({ pin: !t.pinned })}>
+          {t.pinned ? "unpin" : "pin — always show"}
+        </button>
+        <button onClick={() => onMeta({ archive: true })}>archive</button>
+        <p className="q-menu-head">move to</p>
+        {QUEUE_ORDER.filter(k => k !== t.section).map(k => (
+          <button key={k} onClick={() => onMove(k)}>{SECTION_LABEL[k]}</button>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function Row({ t, s, vault, rows, errs, fresh, onTick, onMeta, onMove }: {
   t: QueueTask; s: QueueSection; vault: string;
   rows: RowState; errs: Record<string, string>; fresh: Set<string>;
   onTick: (t: QueueTask) => void;
+  onMeta: (t: QueueTask, body: Record<string, unknown>) => void;
+  onMove: (t: QueueTask, section: string) => void;
 }) {
+  const [menu, setMenu] = useState<DOMRect | null>(null);
   const st = rows[t.id];
   const sub = s.kind === "chain" ? progressOf(s, t) : null;
   return (
@@ -221,6 +283,17 @@ function Row({ t, s, vault, rows, errs, fresh, onTick }: {
           <em key={c.label} className={`q-chip ${c.tone}`}>{c.label}</em>
         ))}
       </span>
+      <span className="q-menu-wrap">
+        <button className="q-dots" aria-haspopup="menu" aria-expanded={!!menu}
+                onClick={e => setMenu(m =>
+                  m ? null : (e.currentTarget as HTMLElement).getBoundingClientRect())}
+                title="snooze, pin, archive, move">⋯</button>
+        {menu && (
+          <RowMenu t={t} at={menu} onClose={() => setMenu(null)}
+                   onMeta={body => { setMenu(null); onMeta(t, body); }}
+                   onMove={sec => { setMenu(null); onMove(t, sec); }} />
+        )}
+      </span>
     </li>
   );
 }
@@ -231,8 +304,9 @@ function Row({ t, s, vault, rows, errs, fresh, onTick }: {
  *  list is the whole queue in score order, so those appear here too — leaving
  *  them indistinguishable made the top of the list read as duplication rather
  *  than as "these are the ones you can see". */
-function MoreRow({ t, n, glyph, note, shown }: {
+function MoreRow({ t, n, glyph, note, shown, action }: {
   t: QueueTask; n?: number; glyph?: string; note?: string; shown?: boolean;
+  action?: { label: string; onClick: () => void };
 }) {
   return (
     <li className={`q-more-row ${shown ? "shown" : ""}`}>
@@ -248,6 +322,9 @@ function MoreRow({ t, n, glyph, note, shown }: {
           <em key={c.label} className={`q-chip ${c.tone}`}>{c.label}</em>
         ))}
       </span>
+      {action && (
+        <button className="q-more-act" onClick={action.onClick}>{action.label}</button>
+      )}
     </li>
   );
 }
@@ -290,7 +367,9 @@ function ChainView({ chain }: { chain: QueueTask[] }) {
   );
 }
 
-function Expanded({ s }: { s: QueueSection }) {
+function Expanded({ s, onMeta }: {
+  s: QueueSection; onMeta: (t: QueueTask, body: Record<string, unknown>) => void;
+}) {
   const groups: Record<string, QueueTask[]> = {};
   for (const t of [...s.visible, ...s.queue, ...s.blocked]) {
     (groups[t.parent ?? ""] ||= []).push(t);
@@ -325,13 +404,16 @@ function Expanded({ s }: { s: QueueSection }) {
         </ul>
       )}
 
+      {/* Suppression is never a one-way door: everything held back carries the
+          control that releases it, right where you find it. */}
       {s.snoozed.length > 0 && (
         <>
           <p className="q-more-head">snoozed</p>
           <ul className="q-more-rows">
             {s.snoozed.map(t => (
               <MoreRow key={t.id} t={t} glyph="💤"
-                       note={`hidden until ${t.snoozed_until}`} />
+                       note={`hidden until ${t.snoozed_until}`}
+                       action={{ label: "wake", onClick: () => onMeta(t, { snooze: "" }) }} />
             ))}
           </ul>
         </>
@@ -341,7 +423,8 @@ function Expanded({ s }: { s: QueueSection }) {
           <p className="q-more-head">archived</p>
           <ul className="q-more-rows">
             {s.archived.map(t => (
-              <MoreRow key={t.id} t={t} glyph="··" note={t.file} />
+              <MoreRow key={t.id} t={t} glyph="··" note={t.file}
+                       action={{ label: "restore", onClick: () => onMeta(t, { archive: false }) }} />
             ))}
           </ul>
         </>
@@ -350,10 +433,12 @@ function Expanded({ s }: { s: QueueSection }) {
   );
 }
 
-function Card({ s, vault, rows, errs, fresh, onTick }: {
+function Card({ s, vault, rows, errs, fresh, onTick, onMeta, onMove }: {
   s: QueueSection; vault: string;
   rows: RowState; errs: Record<string, string>; fresh: Set<string>;
   onTick: (t: QueueTask) => void;
+  onMeta: (t: QueueTask, body: Record<string, unknown>) => void;
+  onMove: (t: QueueTask, section: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const tail: string[] = [];
@@ -392,11 +477,12 @@ function Card({ s, vault, rows, errs, fresh, onTick }: {
         <ul className="rows q-rows">
           {s.visible.map(t => (
             <Row key={t.id} t={t} s={s} vault={vault}
-                 rows={rows} errs={errs} fresh={fresh} onTick={onTick} />
+                 rows={rows} errs={errs} fresh={fresh} onTick={onTick}
+                 onMeta={onMeta} onMove={onMove} />
           ))}
         </ul>
       )}
-      {open && <Expanded s={s} />}
+      {open && <Expanded s={s} onMeta={onMeta} />}
     </section>
   );
 }
@@ -422,7 +508,27 @@ export default function WorkView({ open, vault, onClose, onMutate }: {
 
   // A completion changes both this view and the shell's digest, so the refetch
   // is both: our own payload, and the panels App owns.
+  const [oops, setOops] = useState<string | null>(null);
   const { rows, errs, tick } = useQueueTick(() => { pull(); onMutate(); });
+
+  const after = () => { pull(); onMutate(); };
+  const fail = (e: unknown) => setOops(
+    e instanceof ApiError ? (e.detail || e.code) : "backend unreachable");
+
+  /** Snooze, pin, archive — index-only, so this lands instantly. */
+  const meta = (t: QueueTask, body: Record<string, unknown>) => {
+    setOops(null);
+    post("queue/meta", { id: t.id, ...body }).then(after).catch(fail);
+  };
+
+  /** Moving queue is moving note. Same endpoint Accept uses. */
+  const move = (t: QueueTask, section: string) => {
+    setOops(null);
+    post<QueueEdit>("queue/edit", {
+      file: t.file, line: t.line, raw: t.raw, text: t.text,
+      due: t.deadline, urgency: t.urgency, section, parent: null,
+    }).then(after).catch(fail);
+  };
   const visibleIds = q
     ? QUEUE_ORDER.flatMap(k => q.sections[k].visible.map(t => t.id))
     : [];
@@ -460,11 +566,14 @@ export default function WorkView({ open, vault, onClose, onMutate }: {
           </p>
         )}
 
+        {oops && <p className="err pad">{oops}</p>}
+
         {q && (
           <div className="work-grid">
             {QUEUE_ORDER.map(k => (
               <Card key={k} s={q.sections[k]} vault={vault}
-                    rows={rows} errs={errs} fresh={fresh} onTick={tick} />
+                    rows={rows} errs={errs} fresh={fresh} onTick={tick}
+                    onMeta={meta} onMove={move} />
             ))}
           </div>
         )}

@@ -352,6 +352,59 @@ def api_queue_edit(req: EditReq):
             "raw": line, "id": new_id, "moved": moving, "sha": res["sha"]}
 
 
+class MetaReq(BaseModel):
+    id: str
+    snooze: str | None = None      # "YYYY-MM-DD" to defer, "" to wake
+    pin: bool | None = None
+    archive: bool | None = None
+    # None everywhere means "leave it alone" — a partial update must not clear
+    # the fields it did not mention.
+
+
+@router.post("/queue/meta")
+def api_queue_meta(req: MetaReq):
+    """Snooze, pin, archive. Index-only, and deliberately not a git write.
+
+    These are the three things a checkbox genuinely cannot say. Everything else
+    a task carries — its title, its deadline, its urgency, which queue it is in —
+    is expressible in the note, so changing those goes through /queue/edit and
+    lands as a commit. Writing them here instead would give the note and the
+    sidecar two different answers to the same question.
+
+    Which is also why nothing here is in the ledger: the ledger indexes commits
+    so they can be reverted, and there is no commit to revert. Undo is setting
+    it back.
+    """
+    if not req.id:
+        return _err(400, "no task")
+    if req.snooze:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", req.snooze):
+            return _err(400, "bad date", detail="expected YYYY-MM-DD")
+
+    index, readable = td.load_index()
+    if not readable:
+        return _err(409, "index", detail="the task index did not parse")
+    if req.id not in index["tasks"]:
+        # A task the scan has never seen. Seeding one would create an entry that
+        # matches no line in any note and never gets cleaned up.
+        return _err(404, "unknown task", detail="run a refresh and try again")
+
+    fields: dict = {}
+    if req.snooze is not None:
+        fields["snoozed_until"] = req.snooze or None
+    if req.pin is not None:
+        fields["pinned"] = bool(req.pin)
+    if req.archive is not None:
+        fields["status"] = "archived" if req.archive else "active"
+    if not fields:
+        return _err(400, "nothing to change")
+
+    if not td.set_meta({req.id: fields}):
+        return _err(500, "write failed", detail="the index could not be written")
+    panels._cache.pop("queue", None)
+    return {"ok": True, "id": req.id, **fields}
+
+
 @router.get("/activity")
 def api_activity(limit: int = 60):
     return {"entries": ledger.entries(limit)}

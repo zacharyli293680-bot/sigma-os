@@ -465,6 +465,90 @@ class TestRewordEndpoint(QueueApiBase):
             writes.call_model = saved
 
 
+class TestMeta(QueueApiBase):
+    """Snooze, pin, archive — the three things a checkbox cannot say.
+
+    Everything else a task carries is expressible in the note, so it goes
+    through /queue/edit and lands as a commit. Writing those here instead would
+    give the note and the sidecar two different answers to one question.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.note("02-Areas/ProCertus/Todo.md",
+                  "".join(f"- [ ] task {i}\n" for i in range(5)))
+        _git(self.vault, "add", "-A")
+        _git(self.vault, "commit", "-m", "init")
+
+    def visible(self):
+        return panels.api_queue()["sections"]["procertus"]["visible"]
+
+    def meta(self, tid, **kw):
+        r = writes.api_queue_meta(writes.MetaReq(id=tid, **kw))
+        self.assertIsInstance(r, dict, f"meta refused: {getattr(r, 'body', r)}")
+        return r
+
+    def test_snoozing_hides_it_and_waking_brings_it_back(self):
+        t = self.visible()[0]
+        self.meta(t["id"], snooze="2099-01-01")
+        s = panels.api_queue()["sections"]["procertus"]
+        self.assertNotIn(t["id"], [x["id"] for x in s["visible"]])
+        self.assertEqual([x["id"] for x in s["snoozed"]], [t["id"]])
+
+        self.meta(t["id"], snooze="")            # "" wakes; None would mean no change
+        self.assertIn(t["id"], [x["id"] for x in self.visible()])
+
+    def test_pinning_beats_the_window_and_unpinning_releases_it(self):
+        last = panels.api_queue()["sections"]["procertus"]["queue"][-1]
+        self.meta(last["id"], pin=True)
+        self.assertEqual(self.visible()[0]["id"], last["id"])
+        self.meta(last["id"], pin=False)
+        self.assertNotIn(last["id"], [x["id"] for x in self.visible()])
+
+    def test_archiving_removes_it_from_the_running_without_touching_the_note(self):
+        t = self.visible()[0]
+        before = (self.vault / t["file"]).read_text(encoding="utf-8")
+        self.meta(t["id"], archive=True)
+        s = panels.api_queue()["sections"]["procertus"]
+        self.assertEqual([x["id"] for x in s["archived"]], [t["id"]])
+        self.assertEqual((self.vault / t["file"]).read_text(encoding="utf-8"), before)
+
+    def test_it_is_not_a_git_write_and_not_a_ledger_row(self):
+        """There is no commit to revert, so there is nothing for the ledger to
+        index. Undo is setting it back."""
+        head = _git(self.vault, "rev-parse", "HEAD").stdout.strip()
+        rows = len(ledger.entries(50))
+        self.meta(self.visible()[0]["id"], pin=True)
+        self.assertEqual(_git(self.vault, "rev-parse", "HEAD").stdout.strip(), head)
+        self.assertEqual(len(ledger.entries(50)), rows)
+
+    def test_a_partial_update_leaves_the_other_fields_alone(self):
+        t = self.visible()[0]
+        self.meta(t["id"], snooze="2099-01-01")
+        self.meta(t["id"], pin=True)
+        entry = json.loads(todo.INDEX_PATH.read_text(encoding="utf-8"))["tasks"][t["id"]]
+        self.assertEqual(entry["snoozed_until"], "2099-01-01")
+        self.assertTrue(entry["pinned"])
+
+    def test_it_refuses_what_it_cannot_apply(self):
+        t = self.visible()[0]
+        self.assertEqual(writes.api_queue_meta(
+            writes.MetaReq(id=t["id"], snooze="friday")).status_code, 400)
+        self.assertEqual(writes.api_queue_meta(
+            writes.MetaReq(id=t["id"])).status_code, 400)          # nothing to change
+        # A task the scan has never seen: seeding one would create an entry that
+        # matches no line in any note and never gets cleaned up.
+        self.assertEqual(writes.api_queue_meta(
+            writes.MetaReq(id="deadbeef1234", pin=True)).status_code, 404)
+
+    def test_a_torn_index_is_refused_rather_than_written_over(self):
+        t = self.visible()[0]
+        todo.INDEX_PATH.write_text('{"tasks": {"broke', encoding="utf-8")
+        self.assertEqual(writes.api_queue_meta(
+            writes.MetaReq(id=t["id"], pin=True)).status_code, 409)
+        self.assertEqual(todo.INDEX_PATH.read_text(encoding="utf-8"), '{"tasks": {"broke')
+
+
 class TestSerialisable(QueueApiBase):
     def test_the_payload_survives_json(self):
         """FastAPI will serialise this; a stray set or Path fails at runtime in
