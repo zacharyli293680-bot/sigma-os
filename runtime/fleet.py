@@ -330,7 +330,12 @@ async def run_one(spec, timeout_s: int = 420, model_override: str | None = None,
                              orientation=f"{rules or SHARED_RULES}\n\n"
                                          f"## Your brief\n\n{spec.brief}{extra}",
                              model=model, effort=spec.effort,
-                             max_turns=spec.max_turns)
+                             max_turns=spec.max_turns,
+                             # Labels this run's audit lines. Without it every
+                             # refusal reads "interface", and the unattended
+                             # runs — the ones nobody watches — are exactly the
+                             # ones worth being able to name afterwards.
+                             actor=spec.key)
         # include_partial_messages is for the browser; a headless run does not
         # need token deltas and they are pure overhead here.
         opts.include_partial_messages = False

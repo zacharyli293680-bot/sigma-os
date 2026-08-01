@@ -370,6 +370,41 @@ def check_privacy(out):
                     "python install_hooks.py"))
 
 
+TOOLGATE_WINDOW_H = 24        # how far back an unexpected refusal is still news
+
+
+def check_toolgate(out):
+    """Did the tool gate refuse anything it should not have?
+
+    `privacy.py` fails closed on tools it was not granted. That default is
+    right, and its failure mode is the one this whole watchdog exists for: a
+    *legitimate* call refused silently, leaving a run that looks successful and
+    quietly answered worse. Nothing else in the system would ever mention it.
+
+    So the new rule is the one reported. `path` and `write-tool` refusals are
+    the guard doing its job and have been doing it for weeks; `unvetted-tool`
+    is the rule with no track record, so its hits are surfaced until it earns
+    one. A count of zero is a real result and worth printing.
+    """
+    from sigma import audit
+
+    hits = audit.recent(TOOLGATE_WINDOW_H, kind="refused", rule="unvetted-tool")
+    if not hits:
+        out.append((OK, f"tool gate quiet (no unvetted-tool refusals in "
+                        f"{TOOLGATE_WINDOW_H}h)", None))
+        return
+
+    tools = sorted({h.get("tool") or "?" for h in hits})
+    shown = ", ".join(tools[:3]) + (f" (+{len(tools) - 3} more)" if len(tools) > 3 else "")
+    # TODO rather than ALERT: refusing an un-granted tool is the *correct*
+    # behaviour, so this is "come and look", not "something is broken". Whether
+    # the tool should have been granted is Zach's judgement, not the doctor's.
+    out.append((TODO, f"tool gate refused {len(hits)} call(s) to un-granted "
+                      f"tool(s) in {TOOLGATE_WINDOW_H}h: {shown}",
+                "if one of those is legitimate, add it to the run's granted "
+                "tools in agent.build_options - see runtime/audit.jsonl"))
+
+
 def check_fleet(out):
     """Phase 4: is each specialist still running, and did any of them stall?
 
@@ -538,7 +573,7 @@ def check_backup(out):
 
 
 CHECKS = (check_capture, check_reflection, check_schedule, check_review,
-          check_auth, check_privacy, check_backup, check_fleet)
+          check_auth, check_privacy, check_toolgate, check_backup, check_fleet)
 
 
 def collect():

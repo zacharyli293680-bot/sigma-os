@@ -87,7 +87,8 @@ def build_options(allow_proposals: bool = True,
                   orientation: str = ORIENTATION,
                   model: str | None = None,
                   effort: str = "medium",
-                  max_turns: int = 30) -> ClaudeAgentOptions:
+                  max_turns: int = 30,
+                  actor: str = "interface") -> ClaudeAgentOptions:
     """Options for one agent run — a chat question, or one Phase 4 specialist.
 
     Parameterised rather than copied because the *guarantees* below must not be
@@ -101,8 +102,17 @@ def build_options(allow_proposals: bool = True,
     boundary no matter how this is called. Wiring one flag to both would mean
     "let the agent propose" and "let the agent edit notes" were the same switch,
     and the second is a thing nothing here may do.
+
+    `actor` only labels audit lines, so a refusal can be traced to the run that
+    caused it: "interface" for a chat question, the specialist's key otherwise.
     """
-    privacy = VaultPrivacy(VAULT, allow_writes=False)
+    # ONE list, used twice — as the grant and as the gate. The guard refuses any
+    # tool outside it (privacy.VETTED_TOOLS), and building it here means the two
+    # cannot drift: adding a tool to the run necessarily adds it to what the
+    # guard will vet, and forgetting to do so fails closed rather than open.
+    granted = READ_ONLY_TOOLS + (WRITE_TOOLS if allow_proposals else [])
+    privacy = VaultPrivacy(VAULT, allow_writes=False,
+                           granted_tools=granted, actor=actor)
     return ClaudeAgentOptions(
         cwd=str(VAULT),
         # `tools` limits which tools EXIST. `allowed_tools` would be a different
@@ -113,7 +123,7 @@ def build_options(allow_proposals: bool = True,
         # denials. The SDK warns about this (CanUseToolShadowedWarning); the
         # warning is easy to miss, the silence is not obvious, and the failure
         # looks exactly like success. Leave allowed_tools empty.
-        tools=READ_ONLY_TOOLS + (WRITE_TOOLS if allow_proposals else []),
+        tools=granted,
         allowed_tools=[],
         # In-process MCP server: no subprocess, no port, and it inherits this
         # process's vault paths. Registered even when proposals are off so the

@@ -128,13 +128,65 @@ PATH_ARGS = {
 # it exists for a future caller that has earned it, not for the interface.
 WRITE_TOOLS = {"Write", "Edit", "NotebookEdit", "Bash", "KillShell", "BashOutput"}
 
+# The proposal tool's canonical name lives in propose.py. This is a deliberate
+# literal copy: privacy.py imports nothing from the backend it guards, so that
+# the guard cannot be broken by a change to the thing being guarded.
+# `test_tool_gate` asserts the two agree — a second declaration is surfaced,
+# never trusted, exactly as `model_allow` is.
+PROPOSE_TOOL_NAME = "mcp__sigma__propose_change"
+
+# Every tool this module knows how to reason about. Anything else is REFUSED.
+#
+# **Inverted 2026-08-01, and this is the load-bearing line in the file.** Until
+# then `refusal()` returned None — allowed — for any tool that was neither a
+# write tool nor a key in PATH_ARGS. That made the guard an allowlist of things
+# to *check* rather than a denylist of things to *permit*, and it was survivable
+# only because `tools=` limited what existed at all.
+#
+# It stops being survivable the moment a tool arrives whose argument is a URL
+# rather than a path: `browser_navigate` has no `file_path`, so every loop in
+# `_classify` would skip it and the call would sail through unvetted, with the
+# run reporting zero denials. "Zero denials" is exactly what this guard reported
+# the two times it was already found not to be running (SYSTEM.md §12, #3). The
+# lesson was that a guard which cannot see a tool must not wave it through.
+#
+# `granted_tools` narrows this further per caller; this set is the floor for a
+# VaultPrivacy built without one, so the fail-closed property never depends on
+# a caller having remembered.
+VETTED_TOOLS = frozenset(PATH_ARGS) | WRITE_TOOLS | {PROPOSE_TOOL_NAME}
+
+# Best-effort: refusals are recorded so a *false* refusal is visible rather than
+# silent (see sigma/audit.py). Guarded because privacy.py is imported by
+# runtime scripts, by the backend, and by tests, and a missing audit log must
+# cost a log line rather than the guard itself.
+try:                                                # pragma: no cover - wiring
+    import sys as _sys
+    if str(_RUNTIME) not in _sys.path:
+        # The same insert app.py and panels.py already do. Module names under
+        # runtime/ are chosen not to shadow the stdlib (todo.py, not queue.py),
+        # so this adds no new hazard.
+        _sys.path.insert(0, str(_RUNTIME))
+    from sigma import audit as _audit
+except Exception:
+    _audit = None
+
 
 class VaultPrivacy:
-    """Decides whether the agent may touch a given path."""
+    """Decides whether the agent may use a given tool, on a given path."""
 
-    def __init__(self, vault: Path, allow_writes: bool = False):
+    def __init__(self, vault: Path, allow_writes: bool = False,
+                 granted_tools=None, actor: str = "interface"):
+        """`granted_tools` should be the exact list handed to
+        `ClaudeAgentOptions(tools=...)`. Passing it makes the gate and the grant
+        the same statement rather than two that can drift — build_options builds
+        one list and uses it twice. None falls back to VETTED_TOOLS.
+
+        `actor` only labels audit lines: which run refused what.
+        """
         self.vault = Path(vault).resolve()
         self.allow_writes = allow_writes
+        self.granted = frozenset(granted_tools) if granted_tools is not None else None
+        self.actor = actor
 
     # -- the underlying question, cached because git check-ignore is a subprocess
     @staticmethod
@@ -190,19 +242,60 @@ class VaultPrivacy:
                     "it as local-only material that must not be sent to a model")
         return None
 
-    def refusal(self, tool: str, args: dict) -> str | None:
-        """The single decision both enforcement paths share. None = allowed."""
+    def _is_vetted(self, tool: str) -> bool:
+        """Was this tool actually granted to this run? See VETTED_TOOLS."""
+        return tool in (self.granted if self.granted is not None else VETTED_TOOLS)
+
+    def _classify(self, tool: str, args: dict) -> tuple:
+        """(rule, message) for a refusal, or (None, None) to allow.
+
+        **Pure**, deliberately: the enforcement paths below record to the audit
+        log, this only decides. A decision function with a side effect is one
+        tests cannot call freely, and this is the function that most needs
+        calling freely.
+        """
         if tool in WRITE_TOOLS and not self.allow_writes:
-            return (f"{tool} is disabled. This interface is read-only: it answers "
-                    f"questions about the vault and never edits it.")
+            return "write-tool", (
+                f"{tool} is disabled. This interface is read-only: it answers "
+                f"questions about the vault and never edits it.")
+
+        if not self._is_vetted(tool):
+            # Fail closed on the unknown. The message tells the model the truth
+            # — this is a configuration boundary, not a judgement about the
+            # request — so it reports the wall instead of trying to climb it.
+            return "unvetted-tool", (
+                f"{tool} is not available in this run. It is not one of the "
+                f"tools this agent was granted, so it is refused before it "
+                f"runs. Say plainly that you cannot do that here and answer "
+                f"with the tools you do have.")
+
         for key in PATH_ARGS.get(tool, ()):
             why = self.verdict(str(args.get(key) or ""))
             if why:
-                return (f"Refused {tool} on {args.get(key)!r}: {why}. Tell the user "
-                        f"this material is deliberately private, and answer from "
-                        f"what you can legitimately see. Do not try to reach the "
-                        f"same content another way.")
-        return None
+                return "path", (
+                    f"Refused {tool} on {args.get(key)!r}: {why}. Tell the user "
+                    f"this material is deliberately private, and answer from "
+                    f"what you can legitimately see. Do not try to reach the "
+                    f"same content another way.")
+        return None, None
+
+    def refusal(self, tool: str, args: dict) -> str | None:
+        """The single decision both enforcement paths share. None = allowed."""
+        return self._classify(tool, args)[1]
+
+    def _record(self, rule: str, tool: str, args: dict) -> None:
+        """Write one refusal to the audit log. Never raises."""
+        if _audit is None:
+            return
+        detail = ""
+        for key in PATH_ARGS.get(tool, ()):
+            if args.get(key):
+                detail = str(args.get(key))
+                break
+        try:
+            _audit.record("refused", self.actor, tool, detail, rule=rule)
+        except Exception:
+            pass
 
     async def pre_tool_hook(self, input_data: dict, tool_use_id, context) -> dict:
         """PreToolUse hook — the enforcement that actually holds.
@@ -218,32 +311,33 @@ class VaultPrivacy:
         every time, whatever the permission mode. That is why the guarantee lives
         here and `can_use_tool` is kept only as a second layer.
         """
-        why = self.refusal(str(input_data.get("tool_name") or ""),
-                           input_data.get("tool_input") or {})
+        tool = str(input_data.get("tool_name") or "")
+        args = input_data.get("tool_input") or {}
+        rule, why = self._classify(tool, args)
         if why is None:
             return {}
+        self._record(rule, tool, args)
         return {"hookSpecificOutput": {"hookEventName": "PreToolUse",
                                        "permissionDecision": "deny",
                                        "permissionDecisionReason": why}}
 
     async def can_use_tool(self, tool: str, args: dict, ctx) -> object:
-        """Second layer, for tools that do route through the permission prompt."""
+        """Second layer, for tools that do route through the permission prompt.
+
+        Calls `_classify` rather than re-deriving the decision. It used to
+        carry its own copy of the write-tool and path checks, which meant two
+        implementations of one boundary that could disagree — and the docstring
+        on `refusal` already claimed they were one. They are now.
+
+        This layer is only reached when PreToolUse allowed the call, so a
+        refusal here is recorded exactly once, not twice.
+        """
         from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
 
-        if tool in WRITE_TOOLS and not self.allow_writes:
-            return PermissionResultDeny(
-                behavior="deny", interrupt=False,
-                message=(f"{tool} is disabled. This interface is read-only: it answers "
-                         f"questions about the vault and never edits it."))
-
-        for key in PATH_ARGS.get(tool, ()):
-            why = self.verdict(str(args.get(key) or ""))
-            if why:
-                return PermissionResultDeny(
-                    behavior="deny", interrupt=False,
-                    message=(f"Refused {tool} on {args.get(key)!r}: {why}. "
-                             f"Tell the user this material is deliberately private "
-                             f"and answer from what you can legitimately see."))
+        rule, why = self._classify(tool, args)
+        if why is not None:
+            self._record(rule, tool, args)
+            return PermissionResultDeny(behavior="deny", interrupt=False, message=why)
 
         return PermissionResultAllow(behavior="allow", updated_input=None,
                                      updated_permissions=None)
