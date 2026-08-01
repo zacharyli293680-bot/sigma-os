@@ -43,6 +43,9 @@ export type QueueTask = {
   raw_input: string | null;
   /** Set when this task sits behind an unfinished one in the same chain file. */
   blocked_by: string | null;
+  /** True when it lives in a sequence document (a course timeline), where rank
+   *  is meaningless and the expanded view must render order instead. */
+  chain: boolean;
   parts: ScoreParts; score: number;
   overdue: boolean; archived: boolean; snoozed: boolean;
 };

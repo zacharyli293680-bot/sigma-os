@@ -225,11 +225,137 @@ function Row({ t, s, vault, rows, errs, fresh, onTick }: {
   );
 }
 
+/** One line in an expanded list: what it is, and the arithmetic that ranked it.
+ *
+ *  `shown` marks the rows that are already in the window above. The expanded
+ *  list is the whole queue in score order, so those appear here too — leaving
+ *  them indistinguishable made the top of the list read as duplication rather
+ *  than as "these are the ones you can see". */
+function MoreRow({ t, n, glyph, note, shown }: {
+  t: QueueTask; n?: number; glyph?: string; note?: string; shown?: boolean;
+}) {
+  return (
+    <li className={`q-more-row ${shown ? "shown" : ""}`}>
+      <span className="q-more-mark">{glyph ?? (n !== undefined ? `${n}.` : "·")}</span>
+      <span className="q-more-body">
+        <span className="q-more-text">
+          {t.no_sync && <NoSyncMark />}{t.text}
+        </span>
+        <span className="q-more-why">{note ?? breakdown(t)}</span>
+      </span>
+      <span className="q-chips">
+        {chipsFor(t).slice(0, 2).map(c => (
+          <em key={c.label} className={`q-chip ${c.tone}`}>{c.label}</em>
+        ))}
+      </span>
+    </li>
+  );
+}
+
+/**
+ * A course timeline, rendered as the sequence it is.
+ *
+ * Ranking a fixed order would be meaningless — you cannot do Day 5 before Day 4
+ * whatever it scores — so this shows the frontier, the rest of the block it sits
+ * in, and then the blocks still ahead as a trail. That answers "where am I and
+ * what is left", which is the question a timeline is for.
+ */
+function ChainView({ chain }: { chain: QueueTask[] }) {
+  const blocks: { heading: string; items: QueueTask[] }[] = [];
+  for (const t of chain) {
+    const h = t.heading ?? "—";
+    if (!blocks.length || blocks[blocks.length - 1].heading !== h) {
+      blocks.push({ heading: h, items: [] });
+    }
+    blocks[blocks.length - 1].items.push(t);
+  }
+  if (!blocks.length) return null;
+  const [here, ...ahead] = blocks;
+  return (
+    <>
+      <p className="q-more-head">{here.heading}</p>
+      <ul className="q-more-rows">
+        {here.items.map((t, i) => (
+          <MoreRow key={t.id} t={t} glyph={i === 0 ? "▸" : "·"} shown={i === 0}
+                   note={i === 0 ? breakdown(t) : "waiting on the one above"} />
+        ))}
+      </ul>
+      {ahead.length > 0 && (
+        <p className="q-more-ahead">
+          then {ahead.slice(0, 3).map(b => `${b.heading.split("—")[0].trim()} (${b.items.length})`).join(" · ")}
+          {ahead.length > 3 && ` · +${ahead.length - 3} more blocks`}
+        </p>
+      )}
+    </>
+  );
+}
+
+function Expanded({ s }: { s: QueueSection }) {
+  const groups: Record<string, QueueTask[]> = {};
+  for (const t of [...s.visible, ...s.queue, ...s.blocked]) {
+    (groups[t.parent ?? ""] ||= []).push(t);
+  }
+
+  return (
+    <div className="q-more">
+      {s.kind === "chain" ? (
+        Object.entries(groups).map(([parent, items]) => {
+          const seq = items.filter(t => t.chain).sort((a, b) => a.order - b.order);
+          const flat = items.filter(t => !t.chain).sort((a, b) => b.score - a.score);
+          return (
+            <div key={parent} className="q-more-group">
+              <p className="q-more-parent">{parent || "unfiled"}</p>
+              {seq.length > 0 && <ChainView chain={seq} />}
+              {flat.length > 0 && (
+                <ul className="q-more-rows">
+                  {flat.map((t, i) => (
+                    <MoreRow key={t.id} t={t} n={i + 1}
+                             shown={s.visible.some(v => v.id === t.id)} />
+                  ))}
+                </ul>
+              )}
+            </div>
+          );
+        })
+      ) : (
+        <ul className="q-more-rows">
+          {[...s.visible, ...s.queue].map((t, i) => (
+            <MoreRow key={t.id} t={t} n={i + 1} shown={i < s.visible.length} />
+          ))}
+        </ul>
+      )}
+
+      {s.snoozed.length > 0 && (
+        <>
+          <p className="q-more-head">snoozed</p>
+          <ul className="q-more-rows">
+            {s.snoozed.map(t => (
+              <MoreRow key={t.id} t={t} glyph="💤"
+                       note={`hidden until ${t.snoozed_until}`} />
+            ))}
+          </ul>
+        </>
+      )}
+      {s.archived.length > 0 && (
+        <>
+          <p className="q-more-head">archived</p>
+          <ul className="q-more-rows">
+            {s.archived.map(t => (
+              <MoreRow key={t.id} t={t} glyph="··" note={t.file} />
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  );
+}
+
 function Card({ s, vault, rows, errs, fresh, onTick }: {
   s: QueueSection; vault: string;
   rows: RowState; errs: Record<string, string>; fresh: Set<string>;
   onTick: (t: QueueTask) => void;
 }) {
+  const [open, setOpen] = useState(false);
   const tail: string[] = [];
   if (s.queue.length) tail.push(`${s.queue.length} queued`);
   if (s.blocked.length) tail.push(`${s.blocked.length} blocked`);
@@ -242,17 +368,25 @@ function Card({ s, vault, rows, errs, fresh, onTick }: {
     ? `${s.visible.length} of ${s.window} ${s.parent_noun}s`
     : `top ${s.window}`;
 
+  const depth = s.queue.length + s.blocked.length + s.snoozed.length
+    + s.archived.length;
+
   return (
     <section className="panel q-card">
       <h2>
         ◇ {s.title.toUpperCase()}
         <span className="q-head">{[head, ...tail].join(" · ")}</span>
+        <button className="q-chev" onClick={() => setOpen(o => !o)} disabled={!depth}
+                aria-expanded={open}
+                title={depth ? "the whole queue, and why it is in this order"
+                             : "nothing behind the window"}>
+          {open ? "▾" : "▸"}
+        </button>
       </h2>
       {s.visible.length === 0 ? (
         <p className="dim q-empty">
-          {s.blocked.length || s.queue.length
-            ? "nothing eligible — everything here is blocked or suppressed"
-            : "nothing queued"}
+          {depth ? "nothing eligible — everything here is blocked or suppressed"
+                 : "nothing queued"}
         </p>
       ) : (
         <ul className="rows q-rows">
@@ -262,6 +396,7 @@ function Card({ s, vault, rows, errs, fresh, onTick }: {
           ))}
         </ul>
       )}
+      {open && <Expanded s={s} />}
     </section>
   );
 }

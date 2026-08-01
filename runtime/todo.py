@@ -773,6 +773,10 @@ def _merge(f: dict, e: dict, today: str) -> dict:
     }
     t["parts"] = parts_of(t, today)
     t["score"] = t["parts"]["total"]
+    # Whether this task lives in a sequence document. The expanded view renders
+    # a sequence as a sequence — rank is meaningless inside a fixed order — and
+    # a todo list as a ranked list, so it has to be able to tell them apart.
+    t["chain"] = is_chain_file(f["file"])
     t["overdue"] = bool(f["deadline"] and f["deadline"] < today)
     t["archived"] = e.get("status") == "archived"
     t["snoozed"] = bool(t["snoozed_until"] and t["snoozed_until"] > today)

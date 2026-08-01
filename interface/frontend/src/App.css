@@ -1456,3 +1456,65 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--cyan); }
 @media (prefers-reduced-motion: reduce) {
   .q-sugg { animation: none; }
 }
+
+/* --- the expanded queue -------------------------------------------------- */
+
+/* Opens inside the card rather than in a drawer: what is behind the window is
+   the same queue, and moving it somewhere else would make it a different list. */
+.q-chev {
+  order: 4; flex: none;
+  background: none; border: 1px solid transparent;
+  color: var(--ink-2); font: inherit; cursor: pointer; padding: 0 5px;
+}
+.q-chev:hover:not(:disabled) { color: var(--cyan); border-color: var(--panel-line-dim); }
+.q-chev:disabled { color: var(--muted); opacity: 0.45; cursor: default; }
+
+.q-more {
+  margin: 6px 0 2px; padding: 8px 0 2px;
+  border-top: 1px solid var(--panel-line-dim);
+  animation: q-promote 200ms var(--dive-ease) both;
+}
+.q-more-group + .q-more-group { margin-top: 10px; }
+.q-more-parent {
+  margin: 0 0 3px;
+  font: 500 10.5px/1.6 var(--mono); letter-spacing: 0.06em; color: var(--ink-2);
+}
+.q-more-head {
+  margin: 8px 0 2px;
+  font: 400 10px/1.6 var(--sans); letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--muted);
+}
+.q-more-rows { list-style: none; margin: 0; padding: 0; }
+.q-more-row {
+  display: flex; align-items: baseline; gap: 7px;
+  padding: 2px 0 2px 4px;
+}
+.q-more-mark {
+  flex: none; min-width: 17px;
+  font: 400 11px/1.5 var(--mono); color: var(--muted); text-align: right;
+}
+.q-more-body { flex: 1 1 auto; min-width: 0; }
+/* Queued work is muted, not hidden: it is real, it is just not now. */
+.q-more-text {
+  display: block; color: var(--ink-2); font-size: 12.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* The arithmetic, permanently visible here. This is the view you open when you
+   are arguing with the order, so the answer should not need a hover. */
+.q-more-why {
+  display: block;
+  font: 400 10px/1.5 var(--mono); color: var(--muted);
+}
+.q-more-ahead {
+  margin: 3px 0 0 21px;
+  font: 400 10.5px/1.5 var(--mono); color: var(--muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .q-more { animation: none; }
+}
+/* Already in the window above. Ink rather than ink-2, so the top of the
+   expanded list reads as "these are the ones you can see" rather than as the
+   same rows printed twice. */
+.q-more-row.shown .q-more-text { color: var(--ink); }
+.q-more-row.shown .q-more-mark { color: var(--ink-2); }
