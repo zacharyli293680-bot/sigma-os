@@ -83,7 +83,8 @@ runtime/
   cli.py                the `sigma` command — dispatcher, picks the interpreter
   session_logger.py     Phase 1 — transcript → session log
   reflect.py            Phase 2 — logs → insights + proposals; --apply / --diff / --merge
-  doctor.py             Phase 2.5 — six health checks, exit code always 0
+  doctor.py             Phase 2.5 — seven health checks, exit code always 0
+  inventory.py          the vault's frontmatter, precomputed for the auditor
   fleet.py              Phase 4 — runs specialists one at a time under a lock
   specialists.py        who the four specialists are and what each is briefed to do
   install_hooks.py      copies the pre-push guard into each repo
@@ -298,8 +299,8 @@ guessing at intent: `sigma fleet` shows status, it does not run anything.
 | Insights | 8 |
 | Proposals | 13 — 11 applied, 2 rejected, 0 pending, 0 staged |
 | Skills | 3 user-scoped, 1 vault-scoped (`reflect`) |
-| Doctor | `all clear` on all **seven** checks (backup added 2026-07-31) |
-| Tests | **84 across nine committed suites in `tests/`, green 2026-07-31** (41 + 11 Phase 5 boundary + 20 study intake incl. slides + 6 backup check + 6 fleet cadence). Stdlib `unittest`, no pytest: `interface\backend\.venv\Scripts\python -m unittest discover -s tests -t tests`. Both halves matter — the backend venv supplies `fastapi`/`httpx`, and `-t tests` is required because `tests/` is not a package (a bare `discover` dies on *"Start directory is not importable"*). |
+| Doctor | `all clear` on all **seven** checks (backup added 2026-07-31); fleet 4/4 |
+| Tests | **98 across eleven committed suites in `tests/`, green 2026-07-31** (41 + 11 Phase 5 boundary + 20 study intake incl. slides + 6 backup check + 6 fleet cadence + 12 inventory). Stdlib `unittest`, no pytest: `interface\backend\.venv\Scripts\python -m unittest discover -s tests -t tests`. Both halves matter — the backend venv supplies `fastapi`/`httpx`, and `-t tests` is required because `tests/` is not a package (a bare `discover` dies on *"Start directory is not importable"*). |
 
 **Both scheduled tasks are installed and `Ready`.** The weekly reflection's 2026-07-26 run failed on
 `ENOTFOUND` and was re-run by hand; it has not been due since, and `LastTaskResult` is still `1` from
@@ -337,7 +338,13 @@ invoked by hand. See gap 1 for why, which is a live design question rather than 
    41 tests, green on 2026-07-31 (see §10 for the exact command, which is the part that was
    genuinely missing: the suite was runnable all along and nothing recorded how).
 
-8. **The auditor cannot finish a run, and raising its turn budget does not fix it.**
+8. ~~**The auditor cannot finish a run.**~~ **Fixed 2026-07-31** — `runtime/inventory.py`
+   precomputes the scan and hands it over in the brief. Measured against the three failures below:
+   **`ok in 123.3s`**, first clean completion. `Specialist.context` is the general hook (any
+   specialist whose expensive part is gathering rather than judging can use it); the inventory
+   reports facts only and never judges them, because which `type` is legal lives in `CLAUDE.md` and
+   a second copy in Python is the drift this vault has already paid for once. The diagnosis, kept
+   because two earlier fixes were wrong:
    Three runs on 2026-07-31, all `error_max_turns`: 24 turns/1 proposal/138.7s, then 40 turns/3
    proposals/139.6s, then 40 turns/**0 proposals**/129.2s. The third is the diagnostic one — with no
    drift left to find it still exhausted 40 turns, so the *search* alone does not fit. That also

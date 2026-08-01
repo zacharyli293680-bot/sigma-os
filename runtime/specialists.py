@@ -33,6 +33,13 @@ class Specialist:
     # agents went first is a plan for a morning that already started.
     order: int = 50
     tags: tuple = field(default_factory=tuple)
+    # Optional zero-argument callable returning extra brief text, computed at
+    # run time and appended to `brief`. For work whose expensive part is
+    # *gathering* rather than *judging*: a deterministic scan costs one function
+    # call, where making the model rebuild the same picture by Grep cost the
+    # auditor its entire turn budget three runs running. Must never raise — the
+    # caller degrades to the plain brief.
+    context: object = None
 
 
 PLANNER = Specialist(
@@ -93,10 +100,22 @@ AUDITOR = Specialist(
     # out of room to finish saying so. This budget has to scale with the vault,
     # which grows, not with the number of checks, which does not.
     max_turns=40,
+    context=lambda: __import__("inventory").for_auditor(),
     brief="""
 Police drift from the vault contract. `CLAUDE.md` is the contract; you enforce it.
 
-Check, by Grep over frontmatter rather than by reading every note:
+**Read `CLAUDE.md`, then work from the inventory printed below it.** The
+inventory is a complete, current, deterministic scan of every note's
+frontmatter, plus which notes each course index does and does not link. You do
+not need to find any of that — it is already found. Reading the contract and
+then reasoning over the inventory should take a handful of turns, and going
+looking for what you have already been given is what made three earlier runs of
+this brief die before they could report anything.
+
+Read individual notes only to confirm a specific suspicion the inventory raises,
+never to survey.
+
+What counts as drift:
 - notes whose `type` does not match the schema for their folder, or that are
   missing required fields for their type
 - a `type` value that is not in the contract at all

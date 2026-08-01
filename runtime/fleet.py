@@ -302,9 +302,23 @@ async def run_one(spec, timeout_s: int = 420, model_override: str | None = None,
     said = []
 
     async def _converse():
+        # Precomputed context, if this specialist has any. Deliberately built
+        # here rather than inside the conversation: the point is that the model
+        # never spends turns gathering what a function call can hand it.
+        extra = ""
+        if callable(getattr(spec, "context", None)):
+            try:
+                extra = (spec.context() or "").strip()
+            except Exception as e:
+                # A broken gatherer must cost the run its shortcut, not its life.
+                extra = (f"_(context could not be precomputed: "
+                         f"{type(e).__name__}: {e} — gather it yourself, and say so.)_")
+            if extra:
+                extra = "\n\n" + extra
+
         opts = build_options(allow_proposals=True,
                              orientation=f"{rules or SHARED_RULES}\n\n"
-                                         f"## Your brief\n\n{spec.brief}",
+                                         f"## Your brief\n\n{spec.brief}{extra}",
                              model=model, effort=spec.effort,
                              max_turns=spec.max_turns)
         # include_partial_messages is for the browser; a headless run does not
