@@ -108,6 +108,16 @@ PER_PARENT = ("courses", "projects")
 # grow forever.
 PRUNE_DAYS = 30
 
+# A chain is a *document that is a sequence*, not a section.
+#
+# `timeline.md` says so in its own title ("AA 210 — 60-Day Timeline"), its blocks
+# are dated in order, and you genuinely cannot do Day 5 before Day 4. A project
+# hub's task list and a course's ad-hoc list are todo lists: marking their second
+# entry "blocked by" the first would be a claim about dependency that nothing in
+# the note supports. This started as a per-section rule and quick-add exposed it —
+# every task added to a course would have been buried behind a 51-item timeline.
+CHAIN_FILES = ("timeline.md",)
+
 SECTIONS = ("courses", "procertus", "projects", "misc")
 SECTION_TITLE = {"courses": "Courses", "procertus": "ProCertus",
                  "projects": "Projects", "misc": "Misc"}
@@ -273,6 +283,122 @@ def active_projects(vault: Path) -> dict:
         if fm.get("type") == "project" and fm.get("status") == "active":
             out[p.stem] = p.stem
     return out
+
+
+# --------------------------------------------------------------------------
+# quick-add: guessing where a typed line belongs, and where to write it
+# --------------------------------------------------------------------------
+
+_WORD_RE = re.compile(r"[^a-z0-9]+")
+_NUM_RE = re.compile(r"\b(\d{3})\b")
+
+# Where a quick-added task lands, per section. Appended under the named heading
+# if it exists, otherwise the heading is created at the end of the file — which
+# is self-correcting: move the heading once and every later add follows it.
+#
+# Course tasks go to `tasks.md` rather than into `timeline.md`, because the
+# timeline is a sequence and an ad-hoc task appended to it would be blocked
+# behind every remaining day of the term.
+DESTINATIONS = {
+    "procertus": ("02-Areas/ProCertus/Todo.md", "## General"),
+    "misc": ("02-Areas/Personal/misc.md", "## Tasks"),
+}
+# `resource` is the contract's catch-all and what 02-Areas/ProCertus/Todo.md
+# already uses; there is no task-list type and inventing one would put the
+# auditor and this file in disagreement about the schema.
+NEW_NOTE = ("---\ntype: resource\ncourse: {course}\nsource: \ntags: [resource]\n"
+            "---\n\n# {title}\n\n{heading}\n")
+
+
+def destination(section: str, parent: str | None) -> tuple:
+    """(vault-relative path, heading) for a new task in this section."""
+    if section == "courses" and parent:
+        return f"02-Areas/Academics/{parent}/tasks.md", "## Tasks"
+    if section == "projects" and parent:
+        return f"03-Projects/{parent}.md", "## Tasks"
+    return DESTINATIONS.get(section) or DESTINATIONS["misc"]
+
+
+def infer_section(text: str, vault) -> tuple:
+    """(section, parent) from the words alone — deterministic, no model.
+
+    Matched against what the vault actually contains rather than a keyword list,
+    so "finish 311 lab" resolves to CSE-311 only because that course exists. A
+    bare three-digit number counts only when exactly one active course carries
+    it; two courses numbered 311 make the guess a coin flip, and misc with a
+    visible section selector beats a confident wrong answer.
+
+    The AI reword refines this. It is not a replacement for it: the reword is a
+    suggestion the user accepts, and a task must be filed the instant it is
+    typed whether or not a model ever answers.
+    """
+    low = f" {_WORD_RE.sub(' ', text.lower()).strip()} "
+    if " procertus " in low:
+        return "procertus", None
+
+    courses = list(active_courses(vault))
+    for code in courses:
+        dept, _, num = code.lower().partition("-")
+        if f" {dept} {num} " in low or f" {dept}{num} " in low:
+            return "courses", code
+    by_num: dict = {}
+    for code in courses:
+        by_num.setdefault(code.partition("-")[2], []).append(code)
+    for n in _NUM_RE.findall(low):
+        if len(by_num.get(n, ())) == 1:
+            return "courses", by_num[n][0]
+
+    for name in active_projects(vault):
+        if f" {name.replace('-', ' ').lower()} " in low:
+            return "projects", name
+    return "misc", None
+
+
+def compose(text: str, due: str | None = None, urgency: str | None = None) -> str:
+    """A task line in the grammar CLAUDE.md documents.
+
+    Urgency is written as the priority emoji rather than kept in the sidecar,
+    because Obsidian can express it — so it survives being edited in Obsidian,
+    and the Tasks plugin sorts by it. Medium writes nothing: it is already the
+    default for an unmarked task, and a 🔼 on everything is noise.
+    """
+    line = f"- [ ] {' '.join(text.split())}"
+    if due:
+        line += f" 📅 {due}"
+    if urgency == "high":
+        line += " 🔺"
+    elif urgency == "low":
+        line += " 🔽"
+    return line
+
+
+def splice(body: str, heading: str, line: str) -> str:
+    """Insert `line` at the end of `heading`'s section, creating it if absent.
+
+    Appends after the section's last non-blank line rather than immediately
+    under the heading, so a new task joins the bottom of the list the way it
+    would if it had been typed there.
+    """
+    lines = body.split("\n")
+    want = heading.strip().lower()
+    start = next((i for i, ln in enumerate(lines)
+                  if ln.strip().lower() == want), None)
+    if start is None:
+        out = lines[:]
+        while out and not out[-1].strip():
+            out.pop()
+        out += ["", heading, "", line, ""]
+        return "\n".join(out)
+
+    end = len(lines)
+    for i in range(start + 1, len(lines)):
+        if lines[i].startswith("## "):
+            end = i
+            break
+    at = end
+    while at > start + 1 and not lines[at - 1].strip():
+        at -= 1
+    return "\n".join(lines[:at] + [line] + lines[at:])
 
 
 # --------------------------------------------------------------------------
@@ -498,18 +624,27 @@ def _merge(f: dict, e: dict, today: str) -> dict:
     return t
 
 
-def _chain(tasks: list) -> list:
-    """Mark everything behind the head of a chain as blocked.
+def is_chain_file(rel: str) -> bool:
+    return rel.rsplit("/", 1)[-1] in CHAIN_FILES
 
-    The feature brief asks for an explicit `depends_on` DAG. For the data this
-    vault actually holds — a course timeline is one ordered document, a project
-    hub is one ordered list — "sequential within a file" is behaviourally the
-    same thing and needs no ids written into the markdown. The field is kept in
-    the index so an explicit override can be honoured later without a migration.
+
+def _chain(tasks: list) -> list:
+    """Mark everything behind the head of a *sequence document* as blocked.
+
+    The feature brief asks for an explicit `depends_on` DAG. For the documents
+    this vault actually holds a timeline is one ordered sequence, so "sequential
+    within the file" is behaviourally the same thing and needs no ids written
+    into the markdown. The field is kept in the index so an explicit override
+    can be honoured later without a migration.
+
+    Everything else in a chain *section* stays flat and fully eligible — see
+    CHAIN_FILES for why the distinction is the file rather than the section.
     """
     ordered = sorted(tasks, key=lambda t: (t["file"], t["order"]))
     head = {}
     for t in ordered:
+        if not is_chain_file(t["file"]):
+            continue
         h = head.get(t["file"])
         if h is None:
             head[t["file"]] = t

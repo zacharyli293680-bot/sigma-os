@@ -155,6 +155,13 @@ export default function App() {
       } else if (e.ctrlKey && (e.key === "n" || e.key === "N")) {
         e.preventDefault();
         setCaptureOpen(o => !o);
+      } else if (e.ctrlKey && e.key === ";") {
+        // Add a task. Ctrl+N is capture (a note, into the inbox) and Ctrl+W
+        // belongs to the browser; `;` is unclaimed and sits under the right
+        // hand. Opens rather than toggles: hitting it while the view is open
+        // means "I want to type a task", not "close this".
+        e.preventDefault();
+        setWorkOpen(true);
       } else if (e.key === "Escape") {
         // Esc peels one layer: review, palette, no-sync, ledger, drawer, then
         // the dive, then an active filter. That last rung is new — a filter had
@@ -265,7 +272,8 @@ export default function App() {
             onPalette={() => setPaletteOpen(o => !o)}
             onLedger={() => setLedgerOpen(o => !o)}
             onNoSync={() => setNoSyncOpen(o => !o)}
-            onCapture={() => setCaptureOpen(o => !o)} />
+            onCapture={() => setCaptureOpen(o => !o)}
+            onWork={() => setWorkOpen(true)} />
       <Ledger open={ledgerOpen} vault={vault} onClose={() => setLedgerOpen(false)}
               onMutate={refresh} />
       <NoSyncView open={noSyncOpen} vault={vault} onClose={() => setNoSyncOpen(false)} />

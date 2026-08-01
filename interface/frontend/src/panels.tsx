@@ -290,10 +290,11 @@ export function ProjectsPanel({ projects, vault }: { projects: Project[] | null;
 // ---------------------------------------------------------------- foot
 
 export function Foot({ activity, onChat, onBrain, onPalette, onLedger, onNoSync,
-                      onCapture }: {
+                      onCapture, onWork }: {
   activity: { text: string; live: boolean };
   onChat: () => void; onBrain: () => void; onPalette: () => void;
   onLedger: () => void; onNoSync: () => void; onCapture: () => void;
+  onWork: () => void;
 }) {
   // The hints are also the buttons — Chrome sometimes eats Ctrl+G/Ctrl+K, so
   // every keystroke has a clickable twin. The dock is a door too: clicking
@@ -307,6 +308,7 @@ export function Foot({ activity, onChat, onBrain, onPalette, onLedger, onNoSync,
         <button onClick={onLedger}><kbd>Ctrl</kbd>+<kbd>J</kbd> ledger</button> ·{" "}
         <button onClick={onNoSync}><kbd>Ctrl</kbd>+<kbd>.</kbd> no-sync</button> ·{" "}
         <button onClick={onCapture}><kbd>Ctrl</kbd>+<kbd>N</kbd> capture</button> ·{" "}
+        <button onClick={onWork}><kbd>Ctrl</kbd>+<kbd>;</kbd> task</button> ·{" "}
         <kbd>Esc</kbd> back
       </span>
       <button className={`dock ${activity.live ? "live" : "dim"}`} onClick={onLedger}

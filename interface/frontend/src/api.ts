@@ -73,6 +73,11 @@ export type Queue = {
   };
 };
 export const QUEUE_ORDER = ["courses", "procertus", "projects", "misc"] as const;
+/** What POST /api/queue/add answers with — where the line actually landed. */
+export type QueueAdd = {
+  ok: true; file: string; section: string; parent: string | null;
+  raw: string; sha: string | null; created_note: boolean;
+};
 
 export type ProposalRow = {
   file: string; title: string; kind: string | null; target: string | null;

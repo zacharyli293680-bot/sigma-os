@@ -19,6 +19,7 @@ path-scoped commit whose SHA lands in the ledger. The toggle is line-verified
 (obsidian-git pulls every 15 minutes) the answer is 409 stale, never a write
 to the wrong line.
 """
+import re
 import sys
 from pathlib import Path
 
@@ -33,6 +34,7 @@ _RUNTIME = str(Path(__file__).resolve().parents[2] / "runtime")
 if _RUNTIME not in sys.path:
     sys.path.insert(0, _RUNTIME)
 from sigma import gitops, ledger, write_note  # noqa: E402
+import todo as td  # noqa: E402  — section inference, destinations, line grammar
 
 import panels  # noqa: E402  — to drop its caches after a write
 
@@ -69,7 +71,6 @@ def _vault_rel(file: str) -> str | None:
 
 def _flip(line: str, done: bool) -> str | None:
     """Flip exactly the checkbox in a task line, or None if there isn't one."""
-    import re
     m = re.match(r"^(\s*[-*]\s+)\[( |x|X)\](.*)$", line)
     if not m:
         return None
@@ -125,6 +126,81 @@ def api_toggle(req: ToggleReq):
         panels._cache.pop(key, None)
     return {"ok": True, "sha": res["sha"], "absorbed": res["absorbed"],
             "note": res["note"], "raw": flipped}
+
+
+class AddReq(BaseModel):
+    text: str
+    section: str | None = None     # explicit override; inferred when absent
+    parent: str | None = None
+    due: str | None = None         # YYYY-MM-DD
+    urgency: str | None = None     # high | medium | low
+
+
+@router.post("/queue/add")
+def api_queue_add(req: AddReq):
+    """Quick-add: one typed line becomes a real checkbox in a real note.
+
+    It has to be a note rather than an index row, because that is what makes it
+    toggleable, greppable, visible in Obsidian, committed, and undoable from the
+    ledger — the sidecar deliberately holds nothing a checkbox can express.
+
+    The destination is decided from the section, and the section is inferred
+    from the words unless the client names one. Nothing here calls a model: a
+    task must land the instant it is typed, whatever the window is doing.
+    """
+    text = " ".join((req.text or "").split())
+    if not text:
+        return _err(400, "empty")
+    if len(text) > 500:
+        return _err(400, "too long", detail="a task line is not a note")
+    if req.due and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", req.due):
+        return _err(400, "bad date", detail="expected YYYY-MM-DD")
+    if req.urgency not in (None, "high", "medium", "low"):
+        return _err(400, "bad urgency")
+
+    section, parent = (req.section, req.parent)
+    if section not in td.SECTIONS:
+        section, parent = td.infer_section(text, VAULT)
+    rel, heading = td.destination(section, parent)
+
+    if _vault_rel(rel) != rel:
+        return _err(400, "bad path")
+    if rel in sealed_paths(VAULT, [rel]):
+        return _err(403, "sealed path")
+
+    dest = VAULT / rel
+    line = td.compose(text, req.due, req.urgency)
+
+    try:
+        with gitops.vault_write(VAULT) as w:
+            # Read after the pull, like the toggle: appending to the file as it
+            # was when the page rendered would drop whatever arrived since.
+            existed = dest.exists()
+            if existed:
+                body = dest.read_text(encoding="utf-8", errors="replace")
+            else:
+                title = {"procertus": "ProCertus — Todo",
+                         "misc": "Misc"}.get(section) or f"{parent} — Tasks"
+                body = td.NEW_NOTE.format(
+                    course=parent if section == "courses" else "",
+                    title=title, heading=heading)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            write_note(dest, td.splice(body, heading, line))
+            res = w.commit(rel, f"zach (dashboard): add task to {rel}")
+    except gitops.GitBusy as e:
+        return _err(409, "busy", detail=f"another Sigma write is in progress ({e})")
+    except OSError as e:
+        return _err(500, "write failed", detail=str(e))
+
+    ledger.record("zach", "append" if existed else "create", rel, res["sha"],
+                  f"added a task: {text[:60]}")
+    # A new note is a new node, so the graph is genuinely stale; appending to an
+    # existing one is not, and relaying the sky over a one-line append would be
+    # a visible jolt for nothing.
+    for key in (*panels.TASK_PANELS, *(("graph",) if not existed else ())):
+        panels._cache.pop(key, None)
+    return {"ok": True, "file": rel, "section": section, "parent": parent,
+            "raw": line, "sha": res["sha"], "created_note": not existed}
 
 
 @router.get("/activity")

@@ -276,17 +276,112 @@ class TestChains(QueueBase):
         self.assertEqual([t["text"] for t in self.build()["sections"]["courses"]["visible"]],
                          ["mechanics"])
 
-    def test_projects_chain_the_same_way(self):
-        self.project("sigma-os", "- [ ] first\n- [ ] second\n")
-        s = self.build()["sections"]["projects"]
-        self.assertEqual([t["text"] for t in s["visible"]], ["first"])
-        self.assertEqual([t["blocked_by"] for t in s["blocked"]], ["first"])
-
     def test_the_projects_moc_is_not_a_project(self):
         self.note("03-Projects/projects.md", "---\ntype: moc\n---\n\n- [ ] tidy the MOC\n")
         s = self.build()["sections"]["projects"]
         self.assertEqual(s["window"], 0)
         self.assertEqual(s["visible"], [])            # no active parent to belong to
+
+
+class TestChainFiles(QueueBase):
+    """Only a sequence document chains. A todo list is not a dependency graph."""
+
+    def test_a_project_hubs_tasks_are_a_list_not_a_chain(self):
+        self.project("sigma-os", "- [ ] first\n- [ ] second\n- [ ] third\n")
+        s = self.build()["sections"]["projects"]
+        self.assertEqual(s["blocked"], [])
+        self.assertEqual(len(s["visible"]), 1)          # still one per project
+        self.assertEqual(len(s["queue"]), 2)            # queued, not blocked
+
+    def test_an_ad_hoc_course_list_is_not_buried_behind_the_timeline(self):
+        """The case quick-add exposed: appended to timeline.md this task would
+        have sat behind 51 remaining days of term."""
+        self.course("AA-210", "- [ ] day 2\n- [ ] day 3\n- [ ] day 4\n")
+        self.note("02-Areas/Academics/AA-210/tasks.md",
+                  "- [ ] email the TA 📅 2026-08-01\n")
+        s = self.build()["sections"]["courses"]
+        self.assertEqual([t["text"] for t in s["visible"]], ["email the TA"])
+        # the timeline still chains; only its own tail is blocked
+        self.assertEqual([t["text"] for t in s["blocked"]], ["day 3", "day 4"])
+        self.assertEqual([t["text"] for t in s["queue"]], ["day 2"])
+
+
+class TestInference(QueueBase):
+    def setUp(self):
+        super().setUp()
+        self.course("CSE-311", "- [ ] x\n")
+        self.course("MATH-208", "- [ ] y\n")
+        self.project("sigma-os", "- [ ] z\n")
+
+    def infer(self, text):
+        return todo.infer_section(text, self.vault)
+
+    def test_a_course_is_matched_however_it_is_spelled(self):
+        for s in ("finish CSE-311 lab", "finish cse 311 lab", "cse311 homework"):
+            self.assertEqual(self.infer(s), ("courses", "CSE-311"), s)
+
+    def test_a_bare_number_resolves_when_it_names_one_course(self):
+        self.assertEqual(self.infer("finish 311 lab"), ("courses", "CSE-311"))
+
+    def test_an_ambiguous_number_falls_to_misc(self):
+        """Two courses numbered 311 make the guess a coin flip, and misc with a
+        visible selector beats a confident wrong answer."""
+        self.course("PHYS-311", "- [ ] p\n")
+        self.assertEqual(self.infer("finish 311 lab"), ("misc", None))
+
+    def test_procertus_and_projects(self):
+        self.assertEqual(self.infer("push the ProCertus repo"), ("procertus", None))
+        self.assertEqual(self.infer("ship sigma os slice 4"), ("projects", "sigma-os"))
+
+    def test_anything_unrecognised_is_misc(self):
+        self.assertEqual(self.infer("book a dentist appointment"), ("misc", None))
+
+    def test_an_inactive_course_is_not_matched(self):
+        self.course("CSE-344", "- [ ] q\n", status="planned")
+        self.assertEqual(self.infer("cse 344 reading"), ("misc", None))
+
+
+class TestCompose(unittest.TestCase):
+    def test_the_line_is_the_documented_grammar(self):
+        self.assertEqual(todo.compose("Finish PSet 3", "2026-01-20", "high"),
+                         "- [ ] Finish PSet 3 📅 2026-01-20 🔺")
+        self.assertEqual(todo.compose("tidy up"), "- [ ] tidy up")
+
+    def test_medium_writes_no_emoji(self):
+        """It is already the default for an unmarked task; a 🔼 on everything is
+        noise, and the scanner reads them back the same way."""
+        self.assertEqual(todo.compose("a", None, "medium"), "- [ ] a")
+        self.assertEqual(todo.urgency_of(None), "medium")
+
+    def test_a_composed_line_scans_back_to_what_was_composed(self):
+        line = todo.compose("Finish PSet 3", "2026-01-20", "low")
+        m = todo.TASK_RE.match(line)
+        self.assertEqual(todo.display_text(m.group(2)), "Finish PSet 3")
+        self.assertEqual(todo.DUE_RE.search(m.group(2)).group(1), "2026-01-20")
+        self.assertEqual(todo.urgency_of(todo.PRIORITY["🔽"]), "low")
+
+
+class TestSplice(unittest.TestCase):
+    def test_it_appends_to_the_end_of_the_named_section(self):
+        body = "# T\n\n## General\n- [ ] one\n- [ ] two\n\n## Other\n- [ ] keep\n"
+        out = todo.splice(body, "## General", "- [ ] three")
+        self.assertEqual(out.split("\n").index("- [ ] three"), 5)
+        self.assertIn("## Other\n- [ ] keep", out)
+
+    def test_a_missing_heading_is_created_at_the_end(self):
+        out = todo.splice("---\ntype: resource\n---\n\n# T\n", "## Tasks", "- [ ] a")
+        self.assertTrue(out.endswith("## Tasks\n\n- [ ] a\n"))
+
+    def test_it_does_not_land_in_the_blank_line_before_the_next_heading(self):
+        body = "## General\n- [ ] one\n\n\n## Next\n"
+        out = todo.splice(body, "## General", "- [ ] two")
+        self.assertEqual(out.split("\n")[:3], ["## General", "- [ ] one", "- [ ] two"])
+
+    def test_nothing_existing_is_lost(self):
+        body = "# T\n\n## General\n- [x] done\n- [ ] one\n"
+        out = todo.splice(body, "## General", "- [ ] two")
+        for line in body.split("\n"):
+            self.assertIn(line, out.split("\n"))
 
 
 class TestWindows(QueueBase):

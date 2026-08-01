@@ -23,6 +23,7 @@ import panels                                      # noqa: E402
 import privacy                                     # noqa: E402
 import todo                                        # noqa: E402
 import writes                                      # noqa: E402
+from sigma import ledger                           # noqa: E402
 
 
 def _git(repo, *a):
@@ -45,9 +46,13 @@ class QueueApiBase(unittest.TestCase):
         # rather than writing to a line it had not been shown — but a test that
         # depends on a safety net catching it is not a hermetic test.
         self._saved = {"panels": panels.VAULT, "writes": writes.VAULT,
-                       "index": todo.INDEX_PATH}
+                       "index": todo.INDEX_PATH, "ledger": ledger.LEDGER_PATH}
         panels.VAULT = writes.VAULT = self.vault
         todo.INDEX_PATH = Path(self.tmp.name) / "todo.state.json"
+        # The ledger is append-only with no truncate path by construction, so a
+        # test that does not redirect it permanently pollutes the real record of
+        # which commits were Sigma's.
+        ledger.LEDGER_PATH = Path(self.tmp.name) / "ledger.jsonl"
         panels._cache.clear()
         privacy.VaultPrivacy._git_ignored.cache_clear()
 
@@ -55,6 +60,7 @@ class QueueApiBase(unittest.TestCase):
         panels.VAULT = self._saved["panels"]
         writes.VAULT = self._saved["writes"]
         todo.INDEX_PATH = self._saved["index"]
+        ledger.LEDGER_PATH = self._saved["ledger"]
         panels._cache.clear()
         privacy.VaultPrivacy._git_ignored.cache_clear()
         self.tmp.cleanup()
@@ -225,6 +231,97 @@ class TestCompletionPromotes(QueueApiBase):
         s = panels.api_queue()["sections"]["courses"]
         self.assertEqual([t["text"] for t in s["visible"]], ["day 2"])
         self.assertEqual([t["text"] for t in s["blocked"]], ["day 3"])
+
+
+class TestQuickAdd(QueueApiBase):
+    """A typed line becomes a real checkbox in a real note — that is what makes
+    it toggleable, greppable, visible in Obsidian, committed and undoable."""
+
+    def setUp(self):
+        super().setUp()
+        _git(self.vault, "add", "-A")
+        _git(self.vault, "commit", "-m", "init")
+
+    def add(self, **kw):
+        r = writes.api_queue_add(writes.AddReq(**kw))
+        self.assertIsInstance(r, dict, f"add refused: {getattr(r, 'body', r)}")
+        return r
+
+    def refused(self, **kw):
+        r = writes.api_queue_add(writes.AddReq(**kw))
+        self.assertNotIsInstance(r, dict)
+        return r.status_code
+
+    def test_it_lands_in_the_note_and_the_queue(self):
+        r = self.add(text="push the ProCertus repo", due="2026-08-07", urgency="high")
+        self.assertEqual((r["section"], r["file"]),
+                         ("procertus", "02-Areas/ProCertus/Todo.md"))
+        body = (self.vault / r["file"]).read_text(encoding="utf-8")
+        self.assertIn("- [ ] push the ProCertus repo 📅 2026-08-07 🔺", body)
+
+        t = panels.api_queue()["sections"]["procertus"]["visible"][0]
+        self.assertEqual(t["text"], "push the ProCertus repo")
+        self.assertEqual((t["deadline"], t["urgency"]), ("2026-08-07", "high"))
+
+    def test_misc_creates_its_note_with_contract_frontmatter(self):
+        r = self.add(text="book a dentist appointment")
+        self.assertEqual(r["file"], "02-Areas/Personal/misc.md")
+        self.assertTrue(r["created_note"])
+        body = (self.vault / r["file"]).read_text(encoding="utf-8")
+        self.assertTrue(body.startswith("---\ntype: resource\n"))
+        self.assertIn("tags: [resource]", body)
+        self.assertEqual(panels.api_queue()["sections"]["misc"]["visible"][0]["text"],
+                         "book a dentist appointment")
+
+    def test_a_course_task_goes_beside_the_timeline_not_into_it(self):
+        self.note("02-Areas/Academics/CSE-311/cse-311.md",
+                  "---\ntype: course-index\nstatus: active\n---\n")
+        self.note("02-Areas/Academics/CSE-311/timeline.md", "- [ ] week 1\n- [ ] week 2\n")
+        _git(self.vault, "add", "-A")
+        _git(self.vault, "commit", "-m", "course")
+
+        r = self.add(text="email the 311 TA")
+        self.assertEqual(r["file"], "02-Areas/Academics/CSE-311/tasks.md")
+        # eligible immediately, rather than behind the rest of the term
+        s = panels.api_queue()["sections"]["courses"]
+        self.assertIn("email the 311 TA", [t["text"] for t in s["visible"]])
+
+    def test_an_explicit_section_overrides_the_guess(self):
+        r = self.add(text="push the ProCertus repo", section="misc")
+        self.assertEqual(r["section"], "misc")
+        self.assertEqual(r["file"], "02-Areas/Personal/misc.md")
+
+    def test_appending_twice_keeps_both_and_the_note_around_them(self):
+        self.add(text="first thing")
+        self.add(text="second thing")
+        body = (self.vault / "02-Areas/Personal/misc.md").read_text(encoding="utf-8")
+        self.assertTrue(body.startswith("---\n"))
+        self.assertLess(body.index("first thing"), body.index("second thing"))
+        self.assertEqual(len(panels.api_queue()["sections"]["misc"]["visible"]), 2)
+
+    def test_every_add_is_one_commit_and_one_ledger_row(self):
+        before = len(ledger.entries(50))
+        r = self.add(text="a thing")
+        self.assertTrue(r["sha"])
+        entries = ledger.entries(50)
+        self.assertEqual(len(entries) - before, 1)
+        self.assertEqual(entries[0]["action"], "create")     # the note was new
+        self.assertIn("a thing", entries[0]["summary"])
+
+    def test_it_refuses_what_it_cannot_write_honestly(self):
+        self.assertEqual(self.refused(text="   "), 400)
+        self.assertEqual(self.refused(text="x" * 501), 400)
+        self.assertEqual(self.refused(text="ok", due="friday"), 400)
+        self.assertEqual(self.refused(text="ok", urgency="urgent"), 400)
+
+    def test_a_sealed_destination_is_refused_not_written(self):
+        (self.vault / ".gitignore").write_text("02-Areas/ProCertus/\n", encoding="utf-8")
+        privacy.VaultPrivacy._git_ignored.cache_clear()
+        saved, privacy.model_allow_prefixes = privacy.model_allow_prefixes, lambda: ()
+        try:
+            self.assertEqual(self.refused(text="push the ProCertus repo"), 403)
+        finally:
+            privacy.model_allow_prefixes = saved
 
 
 class TestSerialisable(QueueApiBase):

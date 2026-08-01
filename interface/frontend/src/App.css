@@ -1388,3 +1388,42 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--cyan); }
    decides the row's position, so the deadline wins over aging over urgency. */
 .today .q-chips { margin-left: auto; padding-left: 8px; }
 .today .task-row { align-items: baseline; }
+
+/* --- quick-add ----------------------------------------------------------- */
+
+/* One row, under the header, above the cards — a task must be addable without
+   scrolling to find where. Inputs wear the same bordered-not-filled treatment
+   as .drawer-form so the bar reads as part of the instrument. */
+.q-add {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--panel-line-dim);
+}
+.q-add input, .q-add select {
+  background: rgba(34, 211, 238, 0.04);
+  border: 1px solid var(--panel-line-dim);
+  color: var(--ink); font: inherit; padding: 5px 8px;
+}
+.q-add input:focus, .q-add select:focus {
+  outline: none; border-color: var(--cyan);
+}
+.q-add-text { flex: 1 1 320px; min-width: 180px; }
+.q-add-text::placeholder { color: var(--muted); }
+.q-add-date { font-family: var(--mono); font-size: 12px; color-scheme: dark; }
+.q-add-sel { font-size: 12px; }
+.q-add-go {
+  background: none; border: 1px solid var(--panel-line);
+  color: var(--cyan); font: inherit; padding: 5px 16px; cursor: pointer;
+  letter-spacing: 0.06em;
+}
+.q-add-go:hover:not(:disabled) { background: rgba(34, 211, 238, 0.08); }
+.q-add-go:disabled { border-color: var(--muted); color: var(--muted); cursor: default; }
+/* The confirmation names the file, because the section guess can be wrong and
+   the fastest fix for a wrong guess is opening the note. */
+.q-add-said {
+  flex: 1 0 100%;
+  font: 400 11.5px/1.5 var(--mono); color: var(--ink-2);
+}
+.q-add-said a { color: var(--cyan); text-decoration: none; }
+.q-add-said a:hover { text-decoration: underline; }
+.q-add-said.err { color: var(--red); }
