@@ -573,6 +573,15 @@ def reconcile(index: dict, found: list, today: str) -> dict:
       open -> done   -> completed today
       done -> open   -> un-completed, original `created` preserved (free undo)
       id disappears  -> kept PRUNE_DAYS, then dropped
+
+    **A completion is a transition, not a state.** Each entry remembers whether
+    it was ticked the last time it was seen, and `completed_at` moves only when
+    that flips. Keying on "is ticked and has no completion date" instead looks
+    identical on the first scan and is catastrophically wrong on the second: a
+    box ticked months ago is adopted with no date (correctly), and then the very
+    next scan sees ticked-with-no-date and stamps it today. Every historical
+    checkbox in the vault would report as finished this morning — 24 of them did,
+    which is how this was found.
     """
     tasks = {k: dict(v) for k, v in (index.get("tasks") or {}).items()}
     adopting = index.get("adopted") is None
@@ -592,7 +601,7 @@ def reconcile(index: dict, found: list, today: str) -> dict:
                 "created": today,
                 "urgency": None, "snoozed_until": None, "pinned": False,
                 "status": "active", "completed_at": None,
-                "raw_input": None, "depends_on": [],
+                "done": f["done"], "raw_input": None, "depends_on": [],
             }
             # A box already ticked when the queue was adopted was not completed
             # today — it was completed before any of this existed, and counting
@@ -602,14 +611,20 @@ def reconcile(index: dict, found: list, today: str) -> dict:
             tasks[f["id"]] = e
         else:
             e["file"], e["text"] = f["file"], f["text"]
-            if f["done"]:
-                if not e.get("completed_at"):
-                    e["completed_at"] = today
-            elif e.get("completed_at"):
+            # `.get("done", ...)` because entries written before this field
+            # existed have no memory of their last state; falling back to
+            # "whatever it is now" makes them report no transition, which is the
+            # safe direction — a missed completion costs one row in one review,
+            # an invented one corrupts the median every review reads afterwards.
+            was = e.get("done", f["done"])
+            if f["done"] and not was:
+                e["completed_at"] = today
+            elif was and not f["done"]:
                 # Un-ticked. `created` is deliberately untouched: a task you
                 # re-open is the same task, and re-aging it from zero would
                 # punish undo.
                 e["completed_at"] = None
+            e["done"] = f["done"]
         e["last_seen"] = today
         e["gone"] = False
 

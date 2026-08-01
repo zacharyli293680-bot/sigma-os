@@ -583,6 +583,45 @@ class TestReconcile(QueueBase):
         entry = next(iter(json.loads(self.index.read_text(encoding="utf-8"))["tasks"].values()))
         self.assertIsNone(entry["completed_at"])
 
+    def test_nor_are_they_on_the_second_scan_or_the_tenth(self):
+        """A completion is a *transition*, not a state.
+
+        This is the regression that matters. Keying on "ticked and has no
+        completion date" is indistinguishable from correct on the first scan and
+        catastrophic on the second: an old box is adopted with no date, then the
+        next scan sees ticked-with-no-date and stamps it today. Against the real
+        vault that reported 24 historical checkboxes as finished this morning and
+        handed the first review a weighted score of 25.4.
+        """
+        self.note("02-Areas/Clubs/tt.md", "- [x] done long ago\n")
+        for _ in range(3):
+            self.build()
+        for day in ("2026-08-02", "2026-08-03"):
+            self.build(today=day)
+        entry = next(iter(json.loads(self.index.read_text(encoding="utf-8"))["tasks"].values()))
+        self.assertIsNone(entry["completed_at"])
+
+    def test_an_entry_predating_the_done_field_never_invents_a_completion(self):
+        """Upgrade path: no memory of the last state means no transition, which
+        is the safe direction. A missed completion costs one row in one review;
+        an invented one corrupts every median that reads it afterwards."""
+        p = self.note("02-Areas/Clubs/tt.md", "- [x] done long ago\n")
+        self.build()
+        idx = json.loads(self.index.read_text(encoding="utf-8"))
+        tid = next(iter(idx["tasks"]))
+        del idx["tasks"][tid]["done"]                 # as an older index would be
+        self.index.write_text(json.dumps(idx), encoding="utf-8")
+        self.build()
+        self.assertIsNone(json.loads(
+            self.index.read_text(encoding="utf-8"))["tasks"][tid]["completed_at"])
+        # ...and a real transition still registers afterwards
+        p.write_text("- [ ] done long ago\n", encoding="utf-8")
+        self.build()
+        p.write_text("- [x] done long ago\n", encoding="utf-8")
+        self.build()
+        self.assertEqual(json.loads(
+            self.index.read_text(encoding="utf-8"))["tasks"][tid]["completed_at"], TODAY)
+
     def test_unticking_restores_the_task_with_its_original_age(self):
         """Re-aging a task you re-opened would punish undo."""
         p = self.note("02-Areas/Clubs/tt.md", "- [ ] mistake\n")
