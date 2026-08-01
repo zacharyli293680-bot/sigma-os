@@ -42,6 +42,11 @@ import panels  # noqa: E402  — to drop its caches after a write
 
 router = APIRouter(prefix="/api")
 
+# How long the reword may take. Measured, not guessed: `claude -p --model haiku`
+# answering "reply with only the word OK" takes ~16s on this machine, because it
+# is a CLI process start rather than an API call.
+REWORD_TIMEOUT = 120
+
 
 class ToggleReq(BaseModel):
     file: str          # vault-relative posix path, as /api/tasks reported it
@@ -252,10 +257,16 @@ async def api_queue_reword(req: RewordReq):
 
     prompt = td.reword_prompt(text, VAULT)
     try:
+        # 45s was too tight and every suggestion timed out. `claude -p` is a CLI
+        # cold start, not an API call: a one-word haiku prompt measures ~16s on
+        # this machine, so a longer prompt returning JSON has no room under 45.
+        # Nothing waits on this — the task is already filed — so the only cost of
+        # a generous ceiling is a slot held open, and the only cost of a tight
+        # one is the feature never working.
         raw = await asyncio.wait_for(
-            asyncio.to_thread(call_model, prompt, "haiku", timeout=45,
+            asyncio.to_thread(call_model, prompt, "haiku", timeout=REWORD_TIMEOUT,
                               actor="reword"),
-            timeout=50)
+            timeout=REWORD_TIMEOUT + 10)
     except (asyncio.TimeoutError, Exception) as e:      # noqa: B014
         return _err(502, "model", detail=f"{type(e).__name__}")
 

@@ -260,11 +260,15 @@ export class ApiError extends Error {
 }
 
 export async function post<T>(path: string, body: unknown): Promise<T> {
+  // The reword shells out to `claude -p`, a CLI cold start rather than an API
+  // call — ~16s for a trivial prompt on this machine. Every other write is a
+  // file and a commit and has no business taking 30s.
+  const ms = path.startsWith("queue/reword") ? 140_000 : 30_000;
   const r = await fetch(`${API}/api/${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.timeout(ms),
   });
   let data: { error?: string; detail?: string } | null = null;
   try { data = await r.json(); } catch { /* empty body */ }
