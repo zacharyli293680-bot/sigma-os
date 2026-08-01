@@ -171,6 +171,15 @@ export default function Brain({ open, vault, fireRef }: {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [graph, setGraph] = useState<Graph | null>(null);
   const [staticSky, setStaticSky] = useState(false);
+  // Filters *dim*, they do not remove. The layout is computed once and cached
+  // (dashboard-plan §5), so hiding nodes would either relayout — throwing away
+  // the picture you had just learned to read — or leave holes. Dimming keeps
+  // the constellation recognisable and costs nothing.
+  // A ref, not state, inside the draw loop: filtering must not restart the
+  // animation, and the loop needs the current value each frame.
+  const [filter, setFilter] = useState<string | null>(null);
+  const filterRef = useRef<string | null>(null);
+  filterRef.current = filter;
   const world = useRef<World | null>(null);
   const mouse = useRef({ x: 0, y: 0 });
   const hover = useRef<number | null>(null);
@@ -348,8 +357,12 @@ export default function Brain({ open, vault, fireRef }: {
           ? 0.80 + 0.20 * Math.sin(t / 3400 * Math.PI * 2 + w.phase[i])
           : 0.88;
         const depth = Math.max(0, Math.min(1, (pp[i] - 0.42) / 0.9));
-        const dim = hi !== null && i !== hi && !hotEdges?.some(([a, b]) => a === i || b === i)
-          ? 0.30 : 1;
+        const f = filterRef.current;
+        const passes = !f
+          || (f === "week" ? (node.mtime ? Date.now() - new Date(node.mtime).getTime() < 7 * 864e5 : false)
+              : node.bucket === f);
+        const dim = (hi !== null && i !== hi && !hotEdges?.some(([a, b]) => a === i || b === i)
+          ? 0.30 : 1) * (passes ? 1 : 0.12);
 
         const r = (1.7 + Math.sqrt(node.inlinks) * 1.05) * pp[i] + boost * 6;
         const spr = glow(boost > 0 ? FIRE_COLOR : COLORS[node.bucket] ?? "#8299A6");
@@ -369,7 +382,15 @@ export default function Brain({ open, vault, fireRef }: {
       for (let i = 0; i < n; i++) {
         if (!w.g.nodes[i].no_sync) continue;
         const depth = Math.max(0, Math.min(1, (pp[i] - 0.42) / 0.9));
-        const dim = hi !== null && i !== hi ? 0.35 : 1;
+        // The ring has to obey the filter too. It did not at first, so a
+        // filtered-out ProCertus node vanished while its bronze ring stayed at
+        // full brightness — a marker floating with nothing under it.
+        const fr = filterRef.current;
+        const rp = !fr
+          || (fr === "week"
+              ? (w.g.nodes[i].mtime ? Date.now() - new Date(w.g.nodes[i].mtime!).getTime() < 7 * 864e5 : false)
+              : w.g.nodes[i].bucket === fr);
+        const dim = (hi !== null && i !== hi ? 0.35 : 1) * (rp ? 1 : 0.12);
         const r = (1.7 + Math.sqrt(w.g.nodes[i].inlinks) * 1.05) * pp[i];
         ctx.globalAlpha = Math.min(0.85, (0.30 + 0.55 * depth) * dim);
         ctx.beginPath();
@@ -450,6 +471,8 @@ export default function Brain({ open, vault, fireRef }: {
   const counts: Record<string, number> = {};
   graph?.nodes.forEach(n => { counts[n.bucket] = (counts[n.bucket] ?? 0) + 1; });
   const noSyncCount = graph?.nodes.filter(n => n.no_sync).length ?? 0;
+  const weekCount = graph?.nodes.filter(n =>
+    n.mtime ? Date.now() - new Date(n.mtime).getTime() < 7 * 864e5 : false).length ?? 0;
 
   return (
     <div className="brain-overlay">
@@ -463,10 +486,13 @@ export default function Brain({ open, vault, fireRef }: {
         <div className="stat-row"><span>last touched</span><b>{world.current?.lastTouched ?? "…"}</b></div>
         <div className="legend">
           {BUCKETS.map(([k, label]) => (
-            <div key={k} className="legend-row">
+            <button key={k}
+                    className={`legend-row ${filter === k ? "on" : ""}`}
+                    onClick={() => setFilter(filter === k ? null : k)}
+                    title={`show only ${label}`}>
               <i style={{ background: COLORS[k] }} />
               <span>{label}</span><b>{counts[k] ?? 0}</b>
-            </div>
+            </button>
           ))}
           {noSyncCount > 0 && (
             // Listed apart from the buckets because it is not one: a node has
@@ -479,6 +505,18 @@ export default function Brain({ open, vault, fireRef }: {
             </div>
           )}
         </div>
+        <div className="brain-filters">
+          <button className={filter === "week" ? "on" : ""}
+                  onClick={() => setFilter(filter === "week" ? null : "week")}
+                  title="notes touched in the last 7 days">changed this week</button>
+          <button onClick={() => setFilter(null)} disabled={!filter}>all</button>
+        </div>
+        {filter && (
+          <p className="dim brain-filter-note">
+            showing {filter === "week" ? weekCount : (counts[filter] ?? 0)} of {graph?.notes ?? 0}
+            {" "}· the rest are dimmed, not hidden
+          </p>
+        )}
         <p className="dim brain-hint">
           click a star to open the note · <kbd>Esc</kbd> back
           {staticSky && <><br />static sky — frame budget</>}

@@ -151,3 +151,72 @@ def api_revert(req: RevertReq):
     for key in ("tasks", "proposals", "projects"):
         panels._cache.pop(key, None)
     return {"ok": True, "sha": r["sha"]}
+
+
+# --------------------------------------------------------------------------
+# POST /api/capture — quick capture (Phase 6)
+# --------------------------------------------------------------------------
+# [[dashboard-vision]]: "an idea, a task, a link, a screenshot → the inbox,
+# without leaving what you were doing."
+#
+# **Type choice, stated because it is a judgement call.** The contract has no
+# schema for a captured fragment, and 00-Inbox is defined as "fast capture,
+# unsorted — triage into the right place later". `resource` is the closest
+# existing type and the one whose required fields a fragment can honestly fill
+# (`source` blank, `course` blank). Inventing a ninth type for something whose
+# whole purpose is to stop existing after triage would be the wrong trade — the
+# note is meant to be re-typed when it is filed.
+#
+# Like every other write here it goes through gitops: one path-scoped commit,
+# recorded in the ledger, revertible from Ctrl+J. A capture you did not mean is
+# one click from gone.
+
+_SLUG_MAX = 48
+
+
+class Capture(BaseModel):
+    text: str
+
+
+@router.post("/capture")
+def api_capture(body: Capture):
+    text = (body.text or "").strip()
+    if not text:
+        return _err(400, "empty", detail="nothing to capture")
+    if len(text) > 20_000:
+        return _err(413, "too long", detail="capture is for a fragment, not a document")
+
+    import datetime
+    import re as _re
+
+    now = datetime.datetime.now()
+    first = next((ln.strip() for ln in text.splitlines() if ln.strip()), "capture")
+    # Strip a leading checkbox or bullet so the filename is about the idea.
+    first = _re.sub(r"^\s*[-*]\s*(\[[ xX]\]\s*)?", "", first)
+    slug = _re.sub(r"[^A-Za-z0-9]+", "-", first).strip("-").lower()[:_SLUG_MAX] or "capture"
+    rel = f"00-Inbox/{now:%Y-%m-%d-%H%M}-{slug}.md"
+
+    dest = VAULT / rel
+    if dest.exists():
+        return _err(409, "exists", detail=f"{rel} already exists")
+
+    note = (f"---\ntype: resource\ncourse: \nsource: \ntags: [resource]\n---\n\n"
+            f"# {first[:120]}\n\n"
+            f"> Captured {now:%Y-%m-%d %H:%M} from the dashboard. "
+            f"Triage into the right folder and re-type it.\n\n"
+            f"{text}\n")
+
+    try:
+        with gitops.vault_write(VAULT) as w:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(note, encoding="utf-8")
+            res = w.commit(rel, f"zach (dashboard): capture {rel}")
+    except gitops.GitBusy as e:
+        return _err(409, "busy", detail=f"another Sigma write is in progress ({e})")
+    except OSError as e:
+        return _err(500, "write failed", detail=str(e))
+
+    ledger.record("zach", "create", rel, res["sha"], f"captured: {first[:60]}")
+    for key in ("tasks", "graph", "study"):
+        panels._cache.pop(key, None)
+    return {"ok": True, "file": rel, "sha": res["sha"], "note": res["note"]}

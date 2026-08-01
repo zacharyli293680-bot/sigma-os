@@ -19,6 +19,8 @@ import Palette from "./palette";
 import Review from "./review";
 import StudyView from "./study";
 import BuildView from "./build";
+import CalendarStrip from "./calendar";
+import Capture from "./capture";
 import { Foot, Panel, ProjectsPanel, Rail, TodayPanel, TopStrip, WaitingPanel } from "./panels";
 import Reactor, { activityLine, useElapsed } from "./reactor";
 
@@ -52,6 +54,7 @@ export default function App() {
   const [reviewing, setReviewing] = useState<string | null>(null);
   const [studyOpen, setStudyOpen] = useState(false);
   const [buildOpen, setBuildOpen] = useState(false);
+  const [captureOpen, setCaptureOpen] = useState(false);
   // Fetched once for the rail's count badge; the view refetches on open.
   const [noSync, setNoSync] = useState<NoSync | null>(null);
   const [job, setJob] = useState<Job | null>(null);
@@ -121,9 +124,13 @@ export default function App() {
       } else if (e.ctrlKey && e.key === ".") {
         e.preventDefault();
         setNoSyncOpen(o => !o);
+      } else if (e.ctrlKey && (e.key === "n" || e.key === "N")) {
+        e.preventDefault();
+        setCaptureOpen(o => !o);
       } else if (e.key === "Escape") {
         // Esc peels one layer: review, palette, no-sync, ledger, drawer, brain.
-        if (reviewing) setReviewing(null);
+        if (captureOpen) setCaptureOpen(false);
+        else if (reviewing) setReviewing(null);
         else if (studyOpen) setStudyOpen(false);
         else if (buildOpen) setBuildOpen(false);
         else if (paletteOpen) setPaletteOpen(false);
@@ -135,7 +142,7 @@ export default function App() {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [paletteOpen, ledgerOpen, chatOpen, noSyncOpen, reviewing, studyOpen, buildOpen]);
+  }, [paletteOpen, ledgerOpen, chatOpen, noSyncOpen, reviewing, studyOpen, buildOpen, captureOpen]);
 
   // Palette jobs stream here and take over the dock while they run; when one
   // finishes, the panels it may have changed refetch immediately.
@@ -197,6 +204,7 @@ export default function App() {
         <TodayPanel tasks={tasks ?? null} vault={vault} onMutate={refresh} />
       </div>
       <div className="lower">
+        <CalendarStrip tasks={tasks ?? null} onOpen={() => setStudyOpen(true)} />
         <ProjectsPanel projects={projects?.projects ?? null} vault={vault} />
       </div>
       <Foot activity={dock}
@@ -204,7 +212,8 @@ export default function App() {
             onBrain={() => setBrainOpen(o => !o)}
             onPalette={() => setPaletteOpen(o => !o)}
             onLedger={() => setLedgerOpen(o => !o)}
-            onNoSync={() => setNoSyncOpen(o => !o)} />
+            onNoSync={() => setNoSyncOpen(o => !o)}
+            onCapture={() => setCaptureOpen(o => !o)} />
       <Brain open={brainOpen} vault={vault} fireRef={fireRef} />
       <Ledger open={ledgerOpen} vault={vault} onClose={() => setLedgerOpen(false)}
               onMutate={refresh} />
@@ -213,6 +222,7 @@ export default function App() {
               onMutate={refresh} />
       <StudyView open={studyOpen} vault={vault} onClose={() => setStudyOpen(false)} />
       <BuildView open={buildOpen} vault={vault} onClose={() => setBuildOpen(false)} />
+      <Capture open={captureOpen} onClose={() => setCaptureOpen(false)} onDone={refresh} />
       <Palette open={paletteOpen} onClose={() => setPaletteOpen(false)}
                onLaunched={() => {}} />
       <ChatDrawer open={chatOpen} vault={vault} onClose={() => setChatOpen(false)}
