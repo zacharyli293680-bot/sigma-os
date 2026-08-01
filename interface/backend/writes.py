@@ -168,6 +168,23 @@ def api_queue_add(req: AddReq):
     section, parent = (req.section, req.parent)
     if section not in td.SECTIONS:
         section, parent = td.infer_section(text, VAULT)
+    # Same rule as the edit path: a per-parent section names a queue, not a
+    # file. Naming one without a parent used to land the task in Misc and title
+    # a freshly created note "None — Tasks", because the fallback that is right
+    # for an unclassified task is wrong for an explicit choice. `infer_section`
+    # always pairs these sections with a parent, so this only ever catches a
+    # client that named the section itself.
+    elif section in td.PER_PARENT:
+        known = (td.active_courses(VAULT) if section == "courses"
+                 else td.active_projects(VAULT))
+        if not parent:
+            return _err(400, "pick a parent",
+                        detail=f"adding to {td.SECTION_TITLE[section]} needs a "
+                               f"{td.PARENT_NOUN[section]}")
+        if parent not in known:
+            return _err(400, "unknown parent",
+                        detail=f"no active {td.PARENT_NOUN[section]} named "
+                               f"{parent!r}")
     rel, heading = td.destination(section, parent)
 
     if _vault_rel(rel) != rel:
@@ -303,6 +320,24 @@ def api_queue_edit(req: EditReq):
     section, parent = req.section, req.parent
     if section not in td.SECTIONS:
         section, parent = td.section_of(src)
+    # A per-parent section without a parent has no destination of its own, and
+    # td.destination falls through to misc when asked for one. That fallback is
+    # right for an *unclassified* task and wrong for an explicit move: asking to
+    # move something to Courses and silently landing it in Misc is worse than a
+    # refusal, and when the task was already in Misc the computed destination
+    # equalled the source, so the move became a no-op edit that reported success
+    # and changed nothing. Refuse instead, and name the missing choice.
+    if section in td.PER_PARENT:
+        known = (td.active_courses(VAULT) if section == "courses"
+                 else td.active_projects(VAULT))
+        if not parent:
+            return _err(400, "pick a parent",
+                        detail=f"moving to {td.SECTION_TITLE[section]} needs a "
+                               f"{td.PARENT_NOUN[section]}")
+        if parent not in known:
+            return _err(400, "unknown parent",
+                        detail=f"no active {td.PARENT_NOUN[section]} named "
+                               f"{parent!r}")
     dst, heading = td.destination(section, parent)
     if _vault_rel(dst) != dst:
         return _err(400, "bad path")

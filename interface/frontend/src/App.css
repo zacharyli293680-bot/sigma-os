@@ -1555,6 +1555,13 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--cyan); }
   font: inherit; font-size: 12.5px; padding: 4px 10px; cursor: pointer;
 }
 .q-menu button:hover, .q-menu-pick:hover { background: rgba(34, 211, 238, 0.09); }
+/* Which queue a move target belongs to. The target names a course or project,
+   because that is what names a file; the section rides along as a quiet second
+   column so the list still reads as grouped without a heading per section. */
+.q-menu-sub {
+  float: right; margin-left: 12px;
+  font-size: 10.5px; color: var(--muted); letter-spacing: 0.04em;
+}
 .q-menu-pick { display: flex; align-items: center; gap: 8px; }
 .q-menu-pick input {
   flex: 1 1 auto; min-width: 0;

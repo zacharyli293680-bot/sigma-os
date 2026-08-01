@@ -40,8 +40,8 @@ const SECTION_LABEL: Record<string, string> = {
  * *after* the task is already saved; a task that cannot be filed while the
  * window is rate-limited is not a capture tool.
  */
-function QuickAdd({ vault, onAdded, inputRef }: {
-  vault: string; onAdded: () => void;
+function QuickAdd({ vault, sections, onAdded, inputRef }: {
+  vault: string; sections: Record<string, QueueSection>; onAdded: () => void;
   inputRef: React.RefObject<HTMLInputElement | null>;
 }) {
   const [text, setText] = useState("");
@@ -63,11 +63,17 @@ function QuickAdd({ vault, onAdded, inputRef }: {
     if (!t || busy) return;
     setBusy(true); setErr(null); setSaid(null); setSugg(null); setSubject(null);
     try {
+      // "courses:CSE-311" — the picker names a destination, not just a queue.
+      // A bare section here was the same defect the move menu had: Courses with
+      // no course has no file of its own, so the backend fell through to Misc
+      // and titled the note it created "None — Tasks".
+      const [sec, par] = section === "auto" ? [null, null] : section.split(":");
       const r = await post<QueueAdd>("queue/add", {
         text: t,
         due: due || null,
         urgency,
-        section: section === "auto" ? null : section,
+        section: sec,
+        parent: par ?? null,
       });
       setSaid(r);
       setText(""); setDue("");     // section and urgency persist: adding three
@@ -153,7 +159,16 @@ function QuickAdd({ vault, onAdded, inputRef }: {
       <select className="q-add-sel" value={section} title="section"
               onChange={e => setSection(e.target.value)}>
         <option value="auto">auto</option>
-        {QUEUE_ORDER.map(k => <option key={k} value={k}>{SECTION_LABEL[k]}</option>)}
+        {QUEUE_ORDER.flatMap(k => {
+          const s = sections[k];
+          return s?.kind === "chain"
+            ? (s.parents ?? []).map(p => (
+                <option key={`${k}:${p.key}`} value={`${k}:${p.key}`}>
+                  {SECTION_LABEL[k]} — {p.label}
+                </option>
+              ))
+            : [<option key={k} value={k}>{SECTION_LABEL[k]}</option>];
+        })}
       </select>
       <button className="q-add-go" disabled={busy || !text.trim()}>
         {busy ? "…" : "Add"}
@@ -207,10 +222,11 @@ function iso(days: number): string {
  * the task in the wrong file would give the note and the sidecar two different
  * answers to one question.
  */
-function RowMenu({ t, at, onMeta, onMove, onClose }: {
+function RowMenu({ t, at, sections, onMeta, onMove, onClose }: {
   t: QueueTask; at: DOMRect;
+  sections: Record<string, QueueSection>;
   onMeta: (body: Record<string, unknown>) => void;
-  onMove: (section: string) => void;
+  onMove: (section: string, parent: string | null) => void;
   onClose: () => void;
 }) {
   // Positioned against the viewport rather than the row. The cards live in a
@@ -241,20 +257,40 @@ function RowMenu({ t, at, onMeta, onMove, onClose }: {
         </button>
         <button onClick={() => onMeta({ archive: true })}>archive</button>
         <p className="q-menu-head">move to</p>
-        {QUEUE_ORDER.filter(k => k !== t.section).map(k => (
-          <button key={k} onClick={() => onMove(k)}>{SECTION_LABEL[k]}</button>
-        ))}
+        {/* A per-parent section is not a destination by itself — "Courses" does
+            not name a file, CSE-311 does. Offering the section alone is what
+            made this silently misfile: the request carried no parent, the
+            backend fell through to Misc, and a task already in Misc did not
+            move at all. So chain sections expand to their actual parents, and
+            the current parent is filtered out rather than the whole section. */}
+        {QUEUE_ORDER.flatMap(k => {
+          const s = sections[k];
+          if (s?.kind === "chain") {
+            return (s.parents ?? [])
+              .filter(p => !(k === t.section && p.key === t.parent))
+              .map(p => (
+                <button key={`${k}:${p.key}`} onClick={() => onMove(k, p.key)}>
+                  {p.label}
+                  <span className="q-menu-sub">{SECTION_LABEL[k]}</span>
+                </button>
+              ));
+          }
+          return k === t.section ? [] : [
+            <button key={k} onClick={() => onMove(k, null)}>{SECTION_LABEL[k]}</button>,
+          ];
+        })}
       </div>
     </>
   );
 }
 
-function Row({ t, s, vault, rows, errs, fresh, onTick, onMeta, onMove }: {
-  t: QueueTask; s: QueueSection; vault: string;
+function Row({ t, s, sections, vault, rows, errs, fresh, onTick, onMeta, onMove }: {
+  t: QueueTask; s: QueueSection; sections: Record<string, QueueSection>;
+  vault: string;
   rows: RowState; errs: Record<string, string>; fresh: Set<string>;
   onTick: (t: QueueTask) => void;
   onMeta: (t: QueueTask, body: Record<string, unknown>) => void;
-  onMove: (t: QueueTask, section: string) => void;
+  onMove: (t: QueueTask, section: string, parent: string | null) => void;
 }) {
   const [menu, setMenu] = useState<DOMRect | null>(null);
   const st = rows[t.id];
@@ -290,9 +326,9 @@ function Row({ t, s, vault, rows, errs, fresh, onTick, onMeta, onMove }: {
                   m ? null : (e.currentTarget as HTMLElement).getBoundingClientRect())}
                 title="snooze, pin, archive, move">⋯</button>
         {menu && (
-          <RowMenu t={t} at={menu} onClose={() => setMenu(null)}
+          <RowMenu t={t} at={menu} sections={sections} onClose={() => setMenu(null)}
                    onMeta={body => { setMenu(null); onMeta(t, body); }}
-                   onMove={sec => { setMenu(null); onMove(t, sec); }} />
+                   onMove={(sec, par) => { setMenu(null); onMove(t, sec, par); }} />
         )}
       </span>
     </li>
@@ -434,12 +470,12 @@ function Expanded({ s, onMeta }: {
   );
 }
 
-function Card({ s, vault, rows, errs, fresh, onTick, onMeta, onMove }: {
-  s: QueueSection; vault: string;
+function Card({ s, sections, vault, rows, errs, fresh, onTick, onMeta, onMove }: {
+  s: QueueSection; sections: Record<string, QueueSection>; vault: string;
   rows: RowState; errs: Record<string, string>; fresh: Set<string>;
   onTick: (t: QueueTask) => void;
   onMeta: (t: QueueTask, body: Record<string, unknown>) => void;
-  onMove: (t: QueueTask, section: string) => void;
+  onMove: (t: QueueTask, section: string, parent: string | null) => void;
 }) {
   const [open, setOpen] = useState(false);
   const tail: string[] = [];
@@ -477,7 +513,7 @@ function Card({ s, vault, rows, errs, fresh, onTick, onMeta, onMove }: {
       ) : (
         <ul className="rows q-rows">
           {s.visible.map(t => (
-            <Row key={t.id} t={t} s={s} vault={vault}
+            <Row key={t.id} t={t} s={s} sections={sections} vault={vault}
                  rows={rows} errs={errs} fresh={fresh} onTick={onTick}
                  onMeta={onMeta} onMove={onMove} />
           ))}
@@ -566,11 +602,11 @@ export default function WorkView({ open, vault, onClose, onMutate }: {
   };
 
   /** Moving queue is moving note. Same endpoint Accept uses. */
-  const move = (t: QueueTask, section: string) => {
+  const move = (t: QueueTask, section: string, parent: string | null) => {
     setOops(null);
     post<QueueEdit>("queue/edit", {
       file: t.file, line: t.line, raw: t.raw, text: t.text,
-      due: t.deadline, urgency: t.urgency, section, parent: null,
+      due: t.deadline, urgency: t.urgency, section, parent,
     }).then(after).catch(fail);
   };
   const visibleIds = q
@@ -595,7 +631,7 @@ export default function WorkView({ open, vault, onClose, onMutate }: {
           <button className="ghost" onClick={onClose} title="Close (Esc)">✕</button>
         </header>
 
-        <QuickAdd vault={vault} inputRef={inputRef}
+        <QuickAdd vault={vault} sections={q?.sections ?? {}} inputRef={inputRef}
                   onAdded={() => { pull(); onMutate(); }} />
 
         {q === undefined && <p className="dim pad">reading…</p>}
@@ -615,7 +651,7 @@ export default function WorkView({ open, vault, onClose, onMutate }: {
         {q && (
           <div className="work-grid">
             {QUEUE_ORDER.map(k => (
-              <Card key={k} s={q.sections[k]} vault={vault}
+              <Card key={k} s={q.sections[k]} sections={q.sections} vault={vault}
                     rows={rows} errs={errs} fresh={fresh} onTick={tick}
                     onMeta={meta} onMove={move} />
             ))}

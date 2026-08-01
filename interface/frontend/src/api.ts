@@ -63,6 +63,10 @@ export type QueueSection = {
   visible: QueueTask[]; queue: QueueTask[]; blocked: QueueTask[];
   archived: QueueTask[]; snoozed: QueueTask[];
   groups: QueueGroup[];
+  /** Every parent this section can take — empty for a flat section. Distinct
+   *  from `groups`, which lists only parents that already have a chain: a move
+   *  target has to include the course you have not filed anything against yet. */
+  parents: { key: string; label: string }[];
 };
 export type Queue = {
   today: string; adopted: string | null;

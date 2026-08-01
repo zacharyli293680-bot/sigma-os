@@ -907,6 +907,14 @@ def build(vault=None, index_path=None, today=None, split=None,
             "window": window, "visible": visible, "queue": rest,
             "blocked": blocked, "archived": archived, "snoozed": snoozed,
             "groups": groups,
+            # Every parent this section *could* take, not just the ones that
+            # already have a chain. `groups` is deliberately the latter — it
+            # describes work in progress — so a move menu built from it could
+            # never file a task into a course that has no tasks yet, which is
+            # exactly the case you reach for when a course is new.
+            "parents": ([{"key": name, "label": label}
+                         for name, label in parents[key].items()]
+                        if key in PER_PARENT else []),
         }
 
     counts = {
