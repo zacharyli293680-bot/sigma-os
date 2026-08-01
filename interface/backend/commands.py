@@ -115,6 +115,14 @@ VERBS: dict = {
                         "hint": "commits + session logs → the project hub's dev log",
                         "argv": _script("devlog.py"),
                         "timeout": 1800, "model": True, "writes": True},
+    "map-status":      {"title": "Map — what has no architecture notes",
+                        "hint": "active projects with a repo and no notes folder",
+                        "argv": _script("mapper.py", "--status"), "timeout": 120},
+    "map":             {"title": "Map — a codebase into architecture notes",
+                        "hint": "surveys the repo; 4–9 linked notes per project",
+                        # Several notes per project, and the survey is large.
+                        "argv": _script("mapper.py"),
+                        "timeout": 2400, "model": True, "writes": True},
 }
 
 DISABLED = [

@@ -256,7 +256,7 @@ logged.
 
 
 async def run_one(spec, timeout_s: int = 420, model_override: str | None = None,
-                  rules: str | None = None) -> dict:
+                  rules: str | None = None, material: str | None = None) -> dict:
     """Run a single specialist to completion. Never raises.
 
     model_override is the degrade path: after a rate limit the sequencer re-runs
@@ -269,6 +269,16 @@ async def run_one(spec, timeout_s: int = 420, model_override: str | None = None,
     applied timeout, proposal counting by directory diff, rate-limit detection,
     the Windows pipe-teardown sleep) is worth reusing exactly rather than
     growing a second copy of.
+
+    `material` is source text the run works *on*, as opposed to instructions
+    about how to work — and the distinction is load-bearing, not stylistic. The
+    SDK passes the system prompt (where `brief` goes) as `--append-system-prompt`
+    on the command line, and Windows caps a command line at 32,767 characters;
+    overshooting surfaces as `CLINotFoundError: Claude Code not found`, naming a
+    binary that is sitting right there. The conversation goes over the CLI's
+    stdin instead and has no such ceiling. So a brief stays small and anything
+    bulk — a commit range, a survey of a codebase, an extracted document — rides
+    here.
     """
     from claude_agent_sdk import (AssistantMessage, ClaudeSDKClient, ResultMessage,
                                   TextBlock, ToolUseBlock)
@@ -325,9 +335,13 @@ async def run_one(spec, timeout_s: int = 420, model_override: str | None = None,
         # need token deltas and they are pure overhead here.
         opts.include_partial_messages = False
 
+        opening = (f"Run your brief now. Today is "
+                   f"{datetime.date.today().isoformat()}.")
+        if material:
+            opening += f"\n\n{material}"
+
         async with ClaudeSDKClient(options=opts) as client:
-            await client.connect(_stream(f"Run your brief now. Today is "
-                                         f"{datetime.date.today().isoformat()}."))
+            await client.connect(_stream(opening))
             async for msg in client.receive_response():
                 if isinstance(msg, AssistantMessage):
                     for block in msg.content:

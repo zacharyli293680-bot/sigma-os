@@ -49,6 +49,7 @@ REFLECT = HERE / "reflect.py"
 CAPTURE = HERE / "session_logger.py"
 INTAKE = HERE / "intake.py"
 DEVLOG = HERE / "devlog.py"
+MAPPER = HERE / "mapper.py"
 HOOKS = HERE / "install_hooks.py"
 
 
@@ -237,6 +238,19 @@ def cmd_devlog(a):
     return run(DEVLOG, *args, needs_sdk=not a.dry_run)
 
 
+def cmd_map(a):
+    if a.map_cmd == "status":
+        return run(MAPPER, "--status", *(["--project", a.project] if a.project else []))
+    args = []
+    if a.project:
+        args += ["--project", a.project]
+    if a.dry_run:
+        args.append("--dry-run")
+    if a.max:
+        args += ["--max", a.max]
+    return run(MAPPER, *args, needs_sdk=not a.dry_run)
+
+
 def cmd_install(a):
     what = a.what or "all"
     rc = 0
@@ -330,6 +344,17 @@ def build_parser():
                        help="name the commits; call no model")
         p.add_argument("--max", metavar="N")
 
+    mp = sub.add_parser("map", help="turn a project's codebase into architecture notes")
+    ms = mp.add_subparsers(dest="map_cmd")
+    mss = ms.add_parser("status", help="which projects have no architecture notes")
+    mss.add_argument("--project", default="", help="only this hub note's name")
+    mr = ms.add_parser("run", help="survey the code and write the notes")
+    for p in (mp, mr):
+        p.add_argument("--project", default="", help="only this hub note's name")
+        p.add_argument("--dry-run", action="store_true",
+                       help="build the survey and report its size; call no model")
+        p.add_argument("--max", metavar="N")
+
     i = sub.add_parser("install", help="git hooks and scheduled tasks")
     i.add_argument("what", nargs="?", choices=["all", "hooks", "schedules"])
 
@@ -351,7 +376,7 @@ def main(argv=None):
     # something plausible — guessing is how a CLI teaches you the wrong model.
     for group, dest in (("fleet", "fleet_cmd"), ("reflect", "reflect_cmd"),
                         ("capture", "capture_cmd"), ("intake", "intake_cmd"),
-                        ("devlog", "devlog_cmd")):
+                        ("devlog", "devlog_cmd"), ("map", "map_cmd")):
         if a.cmd == group and not getattr(a, dest, None):
             if group == "fleet":
                 return run(FLEET, "--status")
@@ -360,16 +385,16 @@ def main(argv=None):
             # Bare `sigma intake` reports; `sigma intake run` spends the window.
             if group == "intake":
                 return run(INTAKE, "--status")
-            # Same for devlog: reporting is free, writing is the explicit verb.
-            if group == "devlog":
-                return run(DEVLOG, "--status",
+            # Same for devlog and map: reporting is free, writing is the verb.
+            if group in ("devlog", "map"):
+                return run(DEVLOG if group == "devlog" else MAPPER, "--status",
                            *(["--project", a.project] if a.project else []))
             return run(REFLECT, "--status")
 
     return {
         "status": cmd_status, "doctor": cmd_doctor, "fleet": cmd_fleet,
         "reflect": cmd_reflect, "capture": cmd_capture, "intake": cmd_intake,
-        "devlog": cmd_devlog, "install": cmd_install, "ui": cmd_ui,
+        "devlog": cmd_devlog, "map": cmd_map, "install": cmd_install, "ui": cmd_ui,
     }[a.cmd](a)
 
 
