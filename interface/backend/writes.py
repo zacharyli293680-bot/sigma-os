@@ -32,7 +32,7 @@ from privacy import sealed_paths
 _RUNTIME = str(Path(__file__).resolve().parents[2] / "runtime")
 if _RUNTIME not in sys.path:
     sys.path.insert(0, _RUNTIME)
-from sigma import gitops, ledger  # noqa: E402
+from sigma import gitops, ledger, write_note  # noqa: E402
 
 import panels  # noqa: E402  — to drop its caches after a write
 
@@ -106,7 +106,10 @@ def api_toggle(req: ToggleReq):
             if core != req.raw:
                 return _err(409, "stale", detail="the line changed underneath you")
             segs[i] = flipped + ("\r" if had_cr else "")
-            dest.write_text("\n".join(segs), encoding="utf-8")
+            # write_note keeps the note's own line endings. write_text would
+            # rewrite an LF note as CRLF, so ticking one box showed up in git as
+            # every line changing — and buried the tick in the noise.
+            write_note(dest, "\n".join(segs))
             res = w.commit(rel, f"zach (dashboard): "
                                 f"{'tick' if req.done else 'untick'} task in {rel}")
     except gitops.GitBusy:
@@ -209,7 +212,7 @@ def api_capture(body: Capture):
     try:
         with gitops.vault_write(VAULT) as w:
             dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_text(note, encoding="utf-8")
+            write_note(dest, note)
             res = w.commit(rel, f"zach (dashboard): capture {rel}")
     except gitops.GitBusy as e:
         return _err(409, "busy", detail=f"another Sigma write is in progress ({e})")

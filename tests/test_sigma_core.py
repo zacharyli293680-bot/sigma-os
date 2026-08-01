@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "runtime"))
 
+import sigma  # noqa: E402
 from sigma import gitops, ledger, spend  # noqa: E402
 
 
@@ -217,3 +218,44 @@ class TestSpend(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WriteNote(unittest.TestCase):
+    """`write_text` translates newlines on Windows, so every script write of a
+    vault note silently rewrote the whole file. The first dev log entry landed as
+    35 insertions and 35 deletions on a 35-line note — nothing lost, but the
+    diff, the staged-change review and the ledger's one-click undo all stop
+    meaning anything when every line changes every time."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.p = Path(self.tmp.name) / "note.md"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_an_lf_note_stays_lf(self):
+        self.p.write_bytes(b"a\nb\nc\n")
+        sigma.write_note(self.p, "a\nb\nc\nd\n")
+        self.assertEqual(self.p.read_bytes(), b"a\nb\nc\nd\n")
+
+    def test_a_crlf_note_stays_crlf(self):
+        self.p.write_bytes(b"a\r\nb\r\n")
+        sigma.write_note(self.p, "a\nb\nc\n")
+        self.assertEqual(self.p.read_bytes(), b"a\r\nb\r\nc\r\n")
+
+    def test_a_new_note_defaults_to_lf(self):
+        sigma.write_note(self.p, "a\nb\n")
+        self.assertEqual(self.p.read_bytes(), b"a\nb\n")
+
+    def test_crlf_in_the_content_does_not_double_up(self):
+        """Content assembled from a universal-newline read can carry either."""
+        self.p.write_bytes(b"a\r\n")
+        sigma.write_note(self.p, "a\r\nb\n")
+        self.assertEqual(self.p.read_bytes(), b"a\r\nb\r\n")
+        self.assertNotIn(b"\r\r", self.p.read_bytes())
+
+    def test_a_mixed_note_settles_on_its_majority(self):
+        self.p.write_bytes(b"a\r\nb\r\nc\r\nd\n")
+        sigma.write_note(self.p, "a\nb\n")
+        self.assertEqual(self.p.read_bytes(), b"a\r\nb\r\n")

@@ -23,7 +23,7 @@ is stamped with why, so waiting-on-you explains itself.
 import re
 from pathlib import Path
 
-from sigma import gitops, ledger, make_logger
+from sigma import gitops, ledger, make_logger, write_note
 
 HERE = Path(__file__).resolve().parent
 log = make_logger(HERE / "fleet.log", "sigma applier")
@@ -48,7 +48,7 @@ def _title_of(text: str, fallback: str) -> str:
 def _stamp(path: Path, block: str):
     try:
         text = path.read_text(encoding="utf-8")
-        path.write_text(text.rstrip() + "\n\n---\n" + block + "\n", encoding="utf-8")
+        write_note(path, text.rstrip() + "\n\n---\n" + block + "\n")
     except OSError as e:
         log(f"could not stamp {path.name}: {e}")
 
@@ -59,7 +59,7 @@ def _mark_auto_applied(path: Path, today: str, rel: str, sha: str | None):
         text = re.sub(r"^status: pending\s*$", "status: applied", text, count=1, flags=re.M)
         text = re.sub(r"^applied:\s*$", f"applied: {today}", text, count=1, flags=re.M)
         text = text.replace("status **pending**", "status **applied**", 1)
-        path.write_text(text, encoding="utf-8")
+        write_note(path, text)
     except OSError as e:
         log(f"could not mark {path.name} applied: {e}")
         return
@@ -144,7 +144,9 @@ def apply_one(prop_path: Path, actor: str) -> dict:
                                 f"{int(HOLLOW_RATIO * 100)}% of its current size")
 
             dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_text(content.rstrip() + "\n", encoding="utf-8")
+            # write_note, not write_text: the latter rewrites an LF note as CRLF
+            # on Windows, turning a one-line entry into a whole-file diff.
+            write_note(dest, content.rstrip() + "\n")
             verb = "update" if existed else "create"
             res = w.commit(rel, f"sigma({actor}): {verb} {rel} - {title[:60]}")
     except gitops.GitBusy as e:

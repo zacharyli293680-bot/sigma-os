@@ -22,7 +22,7 @@ from pathlib import Path
 
 from sigma import (DEFAULT_VAULT as _VAULT_FALLBACK, call_model, frontmatter,
                    kebab, load_config, make_logger, parse_model_json,
-                   read_state, setting_reader, write_state)
+                   read_state, setting_reader, write_note, write_state)
 
 # --- config: a durable JSON file next to this script, so a scheduled run (which
 #     carries no environment) sees the same settings as an interactive one.
@@ -276,7 +276,7 @@ def write_insight(ins, window, today) -> Path:
             "## Related\n"
             "- [[system|🧠 System]] · [[sigma-os]] · [[reflection-loop]]\n")
     p = unique_path(INSIGHTS, kebab(ins.get("title", "insight"), "insight"))
-    p.write_text(fm + body, encoding="utf-8")
+    write_note(p, fm + body)
     return p
 
 
@@ -337,7 +337,7 @@ def write_proposal(pr, today) -> Path:
             "- [[system|🧠 System]] · [[reflection-loop]]"
             + (f" · from [[{kebab(pr['insight'])}]]" if pr.get("insight") else "") + "\n")
     p = unique_path(PROPOSALS, f"{today}-{kebab(pr.get('title', 'proposal'), 'proposal')}")
-    p.write_text(fm + body, encoding="utf-8")
+    write_note(p, fm + body)
     return p
 
 
@@ -515,7 +515,7 @@ def append_to_contract(content: str, title: str, today: str) -> str:
         end = after + m.start() if m else len(text)
         rest = text[end:]
         text = text[:end].rstrip() + "\n" + block + ("\n" + rest.lstrip("\n") if rest.strip() else "")
-    CONTRACT.write_text(text, encoding="utf-8")
+    write_note(CONTRACT, text)
     return "CLAUDE.md"
 
 
@@ -542,7 +542,19 @@ def staged_path(target: str, scope: str = "vault") -> Path:
 def stage_change(target: str, scope: str, content: str) -> Path:
     dest = staged_path(target, scope)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(content.rstrip() + "\n", encoding="utf-8")
+    # Match the *target's* line endings, not this copy's own. The whole purpose
+    # of a staged file is `--diff` against the real one, and a staged LF copy of
+    # a CRLF note diffs as a total rewrite with the real change buried in it.
+    nl = "\n"
+    try:
+        real = safe_target(target, scope)
+        raw = real.read_bytes() if real and real.exists() else b""
+        if raw:
+            crlf = raw.count(b"\r\n")
+            nl = "\r\n" if crlf > (raw.count(b"\n") - crlf) else "\n"
+    except OSError:
+        pass
+    write_note(dest, content.rstrip() + "\n", default=nl)
     return dest
 
 
@@ -569,7 +581,7 @@ def mark_staged(path: Path, today: str, target: str, staged_rel: str):
             f"Then either merge it (`python reflect.py --merge {path.stem}`), edit the "
             f"staged file first if you want it different, or set `status: rejected` "
             f"here and delete the staged file.\n")
-    path.write_text(text, encoding="utf-8")
+    write_note(path, text)
 
 
 def mark_applied(path: Path, today: str, where: str):
@@ -578,7 +590,7 @@ def mark_applied(path: Path, today: str, where: str):
     text = re.sub(r"^applied:\s*$", f"applied: {today}", text, count=1, flags=re.M)
     text = text.replace("status **pending**", "status **applied**", 1)
     text = text.rstrip() + f"\n\n---\n**Applied {today}** → `{where}`\n"
-    path.write_text(text, encoding="utf-8")
+    write_note(path, text)
 
 
 def staged_proposals(name_filter: str = ""):
@@ -662,7 +674,7 @@ def do_merge(a):
     content = staged.read_text(encoding="utf-8")
     dest.parent.mkdir(parents=True, exist_ok=True)
     existed = dest.exists()
-    dest.write_text(content, encoding="utf-8")
+    write_note(dest, content)
     staged.unlink()
     for parent in (staged.parent, *staged.parent.parents):   # tidy empty dirs
         if parent == STAGED or STAGED not in parent.parents:
@@ -682,7 +694,7 @@ def do_merge(a):
 
     text = p.read_text(encoding="utf-8")
     text = re.sub(r"^staged:.*\n", "", text, count=1, flags=re.M)
-    p.write_text(text, encoding="utf-8")
+    write_note(p, text)
     mark_applied(p, today, fm.get("target", ""))
     log(f"merged {p.stem} -> {fm.get('target')} "
         f"({'overwrote' if existed else 'created'}; git has the previous version)")
@@ -752,7 +764,7 @@ def do_apply(a):
                       f"from {p.name}")
                 continue
             dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_text(content.rstrip() + "\n", encoding="utf-8")
+            write_note(dest, content.rstrip() + "\n")
             where = f"{target} ({scope})" if kind == "skill" else target
             if scope == "vault":
                 rel = dest.resolve().relative_to(Path(VAULT).resolve()).as_posix()

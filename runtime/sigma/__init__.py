@@ -16,7 +16,7 @@ from pathlib import Path
 __all__ = [
     "load_config", "setting_reader", "kebab", "frontmatter", "parse_model_json",
     "call_model", "make_logger", "spawn_detached", "project_hubs",
-    "resolve_project", "read_state", "write_state", "DEFAULT_VAULT",
+    "resolve_project", "read_state", "write_state", "write_note", "DEFAULT_VAULT",
 ]
 
 
@@ -175,6 +175,40 @@ def write_state(path, state: dict, on_error=None) -> bool:
         if on_error:
             on_error(e)
         return False
+
+
+def write_note(path, text: str, default: str = "\n") -> None:
+    """Write a note without silently changing its line endings.
+
+    `Path.write_text` opens in text mode with `newline=None`, which on Windows
+    translates every `\\n` to `\\r\\n`. Every script write of a vault note went
+    through it, so a one-line addition to an LF note came back as a whole-file
+    rewrite: the first dev log entry showed up in git as **35 insertions and 35
+    deletions** on a 35-line note. Nothing was lost, but everything downstream
+    that depends on a legible diff was — `reflect --diff` review, the dashboard's
+    "what would this change" panel, and the ledger's promise that one click
+    undoes one change you can actually see.
+
+    So: match whatever the file already uses, and fall back to LF for a file that
+    does not exist yet. This vault is genuinely mixed (103 LF, 81 CRLF), which is
+    Zach's business and not something a write path should quietly settle on his
+    behalf — the rule here is only that editing a note must not *change* it.
+    """
+    p = Path(path)
+    nl = default
+    try:
+        raw = p.read_bytes()
+    except OSError:
+        raw = b""
+    if raw:
+        crlf = raw.count(b"\r\n")
+        nl = "\r\n" if crlf > (raw.count(b"\n") - crlf) else "\n"
+    body = text.replace("\r\n", "\n").replace("\r", "\n")
+    if nl != "\n":
+        body = body.replace("\n", nl)
+    # newline="" writes exactly these bytes: the normalisation above is the only
+    # thing deciding line endings, which is the point.
+    p.write_text(body, encoding="utf-8", newline="")
 
 
 def make_logger(log_path: Path, prefix: str, stream=None):

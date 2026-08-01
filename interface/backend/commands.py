@@ -105,6 +105,16 @@ VERBS: dict = {
                         # Several documents × a multi-note conversation each.
                         "argv": _script("intake.py"),
                         "timeout": 2400, "model": True, "writes": True},
+    # Dev log (Phase 6). No argument for the same reason intake has none: the
+    # input is discovered (hubs with a `repo:` and commits past their last
+    # entry), never named, so the verb stays a dictionary key.
+    "devlog-status":   {"title": "Dev log — what is unlogged",
+                        "hint": "projects whose commits are not in their hub yet",
+                        "argv": _script("devlog.py", "--status"), "timeout": 120},
+    "devlog":          {"title": "Dev log — write up recent work",
+                        "hint": "commits + session logs → the project hub's dev log",
+                        "argv": _script("devlog.py"),
+                        "timeout": 1800, "model": True, "writes": True},
 }
 
 DISABLED = [
