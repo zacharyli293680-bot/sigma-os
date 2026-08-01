@@ -646,6 +646,137 @@ def api_study():
 
 
 # --------------------------------------------------------------------------
+# GET /api/repos — repo awareness (dashboard-plan Phase 6)
+# --------------------------------------------------------------------------
+# [[dashboard-vision]]: "what is dirty, what is unpushed, what has not been
+# touched in three weeks, which hub notes have gone stale against their code."
+#
+# The Projects panel already answers this for hubs that *declare* a `repo:`.
+# What it cannot see is the other direction — a repo with no hub at all — and
+# that is the more useful half, because a project you never wrote a hub for is
+# exactly the one you will forget.
+#
+# **The scan root is derived, not configured.** The vault already knows where
+# code lives: every project hub carries an absolute `repo:` path, so the folder
+# most of them share is the code folder. That avoids both a hardcoded
+# `C:\Users\...` and a config file nobody remembers to update — and it moves by
+# itself when the hubs do. Sealed hubs never reach this, so an internship repo
+# outside that folder stays invisible here as it does everywhere else.
+
+STALE_DAYS = 21
+
+
+def _code_root() -> Path | None:
+    """The folder most project hubs point into."""
+    parents: dict = {}
+    for p in sorted((VAULT / "03-Projects").glob("*.md")):
+        rel = _rel(p)
+        sealed, _ = _split([rel])
+        if rel in sealed:
+            continue
+        try:
+            fm = frontmatter(p.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+        repo = str((fm or {}).get("repo") or "").strip()
+        if not repo:
+            continue
+        try:
+            parent = Path(repo).resolve().parent
+        except (OSError, ValueError):
+            continue
+        parents[parent] = parents.get(parent, 0) + 1
+    if not parents:
+        return None
+    return max(parents.items(), key=lambda kv: kv[1])[0]
+
+
+def _scan_repos() -> dict:
+    root = _code_root()
+    if root is None or not root.is_dir():
+        return {"root": None, "repos": [], "note": "no project hub declares a repo path"}
+
+    # Hub notes by the repo path they claim, so a repo can find its hub.
+    hubs: dict = {}
+    for p in sorted((VAULT / "03-Projects").glob("*.md")):
+        rel = _rel(p)
+        if rel in _split([rel])[0]:
+            continue
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+            fm = frontmatter(text) or {}
+        except OSError:
+            continue
+        repo = str(fm.get("repo") or "").strip()
+        if not repo:
+            continue
+        try:
+            hubs[str(Path(repo).resolve()).lower()] = (p, fm)
+        except (OSError, ValueError):
+            continue
+
+    now = datetime.datetime.now()
+    out = []
+    for d in sorted(p for p in root.iterdir() if p.is_dir()):
+        if not (d / ".git").exists():
+            continue
+        state = _repo_state(d) or {}
+        last = state.get("last_commit")
+        idle = None
+        if last:
+            try:
+                dt = datetime.datetime.fromisoformat(str(last))
+                if dt.tzinfo:
+                    dt = dt.replace(tzinfo=None)
+                idle = (now - dt).days
+            except ValueError:
+                idle = None
+
+        hub_p, hub_fm = hubs.get(str(d.resolve()).lower(), (None, None))
+        hub_stale = None
+        if hub_p is not None and last:
+            # "Stale" = the code moved on after the hub note last did. Measured
+            # against the note's own mtime rather than a field, because a hub
+            # that is being maintained gets touched.
+            try:
+                hub_mtime = datetime.datetime.fromtimestamp(hub_p.stat().st_mtime)
+                dt = datetime.datetime.fromisoformat(str(last))
+                if dt.tzinfo:
+                    dt = dt.replace(tzinfo=None)
+                hub_stale = max(0, (dt - hub_mtime).days)
+            except (OSError, ValueError):
+                hub_stale = None
+
+        out.append({
+            "name": d.name, "path": str(d),
+            "branch": state.get("branch"), "dirty": state.get("dirty"),
+            "unpushed": state.get("unpushed"),
+            "last_commit": last, "last_subject": state.get("last_subject", ""),
+            "idle_days": idle,
+            "hub": hub_p.stem if hub_p is not None else None,
+            "hub_status": (hub_fm or {}).get("status") if hub_fm else None,
+            "hub_stale_days": hub_stale,
+        })
+
+    return {
+        "root": str(root),
+        "repos": out,
+        "orphans": [r["name"] for r in out if r["hub"] is None],
+        "stale_hubs": [r["name"] for r in out
+                       if r["hub"] and (r["hub_stale_days"] or 0) > 0],
+        "idle": [r["name"] for r in out
+                 if r["idle_days"] is not None and r["idle_days"] >= STALE_DAYS],
+        "stale_days": STALE_DAYS,
+    }
+
+
+@router.get("/repos")
+def api_repos():
+    # 30s: every row shells out to git several times.
+    return _cached("repos", 30, _scan_repos)
+
+
+# --------------------------------------------------------------------------
 # GET /api/window
 # --------------------------------------------------------------------------
 

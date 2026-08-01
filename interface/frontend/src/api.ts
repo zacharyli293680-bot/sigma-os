@@ -70,6 +70,19 @@ export type CourseCoverage = {
 };
 export type Study = { exams: ExamUnit[]; coverage: CourseCoverage[] };
 
+/** Repo awareness (Phase 6). `root` is derived from where hubs point. */
+export type RepoRow = {
+  name: string; path: string; branch: string | null;
+  dirty: number | null; unpushed: number | null;
+  last_commit: string | null; last_subject: string;
+  idle_days: number | null;
+  hub: string | null; hub_status: string | null; hub_stale_days: number | null;
+};
+export type Repos = {
+  root: string | null; note?: string; repos: RepoRow[];
+  orphans: string[]; stale_hubs: string[]; idle: string[]; stale_days: number;
+};
+
 /** The Phase 5 audit view: everything that never leaves this machine. */
 export type NoSyncGroup = {
   prefix: string; count: number; bytes: number; newest: string | null;

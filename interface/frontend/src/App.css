@@ -979,3 +979,21 @@ pre.diff .meta { color: var(--muted); }
 .cov-files li { padding: 1px 6px 1px 24px; font-size: 11.5px; }
 .cov-files a { color: var(--ink-2); text-decoration: none; }
 .cov-files a:hover { color: var(--cyan); }
+
+/* ------------------------------------------- Phase 6: build / repo awareness */
+.repo-list, .repo-flags { list-style: none; margin: 0; padding: 0; }
+.repo-list li {
+  display: flex; align-items: baseline; gap: 12px;
+  padding: 3px 0; font-size: 12px; font-family: var(--mono);
+}
+.repo-name { min-width: 120px; color: var(--ink); }
+.repo-branch {
+  min-width: 110px; color: var(--ink-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.repo-git { min-width: 120px; color: var(--ink-2); }
+.repo-idle { min-width: 80px; }
+.repo-hub a { color: var(--ink-2); text-decoration: none; }
+.repo-hub a:hover { color: var(--cyan); }
+.repo-flags li { padding: 2px 0; font-size: 12px; color: var(--ink-2); }
+.repo-flags b { color: var(--ink); font-family: var(--mono); }

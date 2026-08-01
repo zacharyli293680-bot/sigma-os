@@ -18,6 +18,7 @@ import NoSyncView from "./nosync";
 import Palette from "./palette";
 import Review from "./review";
 import StudyView from "./study";
+import BuildView from "./build";
 import { Foot, Panel, ProjectsPanel, Rail, TodayPanel, TopStrip, WaitingPanel } from "./panels";
 import Reactor, { activityLine, useElapsed } from "./reactor";
 
@@ -50,6 +51,7 @@ export default function App() {
   const [noSyncOpen, setNoSyncOpen] = useState(false);
   const [reviewing, setReviewing] = useState<string | null>(null);
   const [studyOpen, setStudyOpen] = useState(false);
+  const [buildOpen, setBuildOpen] = useState(false);
   // Fetched once for the rail's count badge; the view refetches on open.
   const [noSync, setNoSync] = useState<NoSync | null>(null);
   const [job, setJob] = useState<Job | null>(null);
@@ -123,6 +125,7 @@ export default function App() {
         // Esc peels one layer: review, palette, no-sync, ledger, drawer, brain.
         if (reviewing) setReviewing(null);
         else if (studyOpen) setStudyOpen(false);
+        else if (buildOpen) setBuildOpen(false);
         else if (paletteOpen) setPaletteOpen(false);
         else if (noSyncOpen) setNoSyncOpen(false);
         else if (ledgerOpen) setLedgerOpen(false);
@@ -132,7 +135,7 @@ export default function App() {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [paletteOpen, ledgerOpen, chatOpen, noSyncOpen, reviewing, studyOpen]);
+  }, [paletteOpen, ledgerOpen, chatOpen, noSyncOpen, reviewing, studyOpen, buildOpen]);
 
   // Palette jobs stream here and take over the dock while they run; when one
   // finishes, the panels it may have changed refetch immediately.
@@ -186,7 +189,8 @@ export default function App() {
       <Rail brainOpen={brainOpen} onBrain={() => setBrainOpen(o => !o)}
             noSyncOpen={noSyncOpen} onNoSync={() => setNoSyncOpen(o => !o)}
             noSyncCount={noSync?.ok ? noSync.total : null}
-            studyOpen={studyOpen} onStudy={() => setStudyOpen(o => !o)} />
+            studyOpen={studyOpen} onStudy={() => setStudyOpen(o => !o)}
+            buildOpen={buildOpen} onBuild={() => setBuildOpen(o => !o)} />
       <Reactor fleet={fleet ?? null} progress={progress} waitingCount={waitingCount} />
       <div className="right">
         <WaitingPanel proposals={proposals ?? null} onReview={setReviewing} />
@@ -208,6 +212,7 @@ export default function App() {
       <Review name={reviewing} vault={vault} onClose={() => setReviewing(null)}
               onMutate={refresh} />
       <StudyView open={studyOpen} vault={vault} onClose={() => setStudyOpen(false)} />
+      <BuildView open={buildOpen} vault={vault} onClose={() => setBuildOpen(false)} />
       <Palette open={paletteOpen} onClose={() => setPaletteOpen(false)}
                onLaunched={() => {}} />
       <ChatDrawer open={chatOpen} vault={vault} onClose={() => setChatOpen(false)}
