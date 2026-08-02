@@ -1311,8 +1311,22 @@ Honest list. Nothing here is hidden behind a "coming soon".
 
 ### Designed and not built
 
-From the vision note, in rough order of how ready each is:
+From the vision note, in rough order of how ready each is. The first entry is not from the vision note,
+and is further along than anything below it:
 
+- **The agenda subsystem.** A real calendar replacing the 14-day `calendar.tsx` strip: one resolver over
+  tasks, dated notes, event rows and recurrence rules, every occurrence carrying its source kind and
+  origin path; a today rail on the dashboard; a full week/month/agenda view on `Ctrl+'`; writes from the
+  first version behind their own holds table; and committed hours feeding queue windowing and the 06:00
+  retrospective at the end of it — which is the actual reason it exists, since the queue currently has no
+  idea what a day already costs. **No code exists.** The brief is
+  `03-Projects/sigma-os/sigma-os-calendar-plan.md` in the vault, and as of 2026-08-02 its nine open
+  questions are answered: the event line grammar (full date on every line, block ID `sg-evt-<8 hex>`),
+  recurrence rules in `02-Areas/Personal/Calendar/schedule.md`, tasks staying date-only because the Tasks
+  plugin has no concept of a time, and a dashboard write into a gitignored path being **refused rather
+  than permitted** — `gitops.commit()` returns no SHA for an ignored path, so that write would be the
+  only one in Sigma with no ledger row and no undo. Next step is P0: one proposal amending `CLAUDE.md`,
+  approved by hand before any code.
 - **Application pipeline** — paste a posting, get a tracked application note, deadlines on the calendar,
   a nudge before each goes stale. Not built because `02-Areas/Career/Applications/` is *empty*; the
   tracker has reported "pipeline is clear" every week since it started. A panel with nothing to show.
