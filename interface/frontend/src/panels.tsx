@@ -74,6 +74,7 @@ const RAIL: [string, string, boolean][] = [
   ["OV", "Overview — the dashboard around it", true],
   ["BR", "Brain — expand the sky (Ctrl+G)", true],
   ["AG", "Agents — Phase 1", false],
+  ["CA", "Calendar — week, month and the 14-day list (Ctrl+')", true],
   ["WK", "Work — the four priority queues", true],
   ["ST", "Study — exam mode", true],
   ["BD", "Build — repo awareness", true],
@@ -85,21 +86,23 @@ const RAIL: [string, string, boolean][] = [
  *  these name how much of the shell it gets, which is why BR reads "expand". */
 export function Rail({ diving, onBrain, noSyncOpen, onNoSync, noSyncCount,
                       studyOpen, onStudy, buildOpen, onBuild,
-                      workOpen, onWork }: {
+                      workOpen, onWork, agendaOpen, onAgenda }: {
   diving: boolean; onBrain: () => void;
   noSyncOpen: boolean; onNoSync: () => void; noSyncCount: number | null;
   studyOpen: boolean; onStudy: () => void;
   buildOpen: boolean; onBuild: () => void;
   workOpen: boolean; onWork: () => void;
+  agendaOpen: boolean; onAgenda: () => void;
 }) {
   return (
     <nav className="rail">
       {RAIL.map(([k, title, live]) => {
         const active = k === "BR" ? diving : k === "ST" ? studyOpen
-          : k === "BD" ? buildOpen : k === "WK" ? workOpen
-          : k === "OV" ? !diving && !studyOpen && !buildOpen && !workOpen : false;
+          : k === "BD" ? buildOpen : k === "WK" ? workOpen : k === "CA" ? agendaOpen
+          : k === "OV" ? !diving && !studyOpen && !buildOpen && !workOpen && !agendaOpen
+          : false;
         const go = k === "BR" ? onBrain : k === "ST" ? onStudy : k === "BD" ? onBuild
-          : k === "WK" ? onWork
+          : k === "WK" ? onWork : k === "CA" ? onAgenda
           : k === "OV" && diving ? onBrain : undefined;
         return (
           <button key={k} className={active ? "active" : ""} disabled={!live}
@@ -290,11 +293,11 @@ export function ProjectsPanel({ projects, vault }: { projects: Project[] | null;
 // ---------------------------------------------------------------- foot
 
 export function Foot({ activity, onChat, onBrain, onPalette, onLedger, onNoSync,
-                      onCapture, onWork }: {
+                      onCapture, onWork, onAgenda }: {
   activity: { text: string; live: boolean };
   onChat: () => void; onBrain: () => void; onPalette: () => void;
   onLedger: () => void; onNoSync: () => void; onCapture: () => void;
-  onWork: () => void;
+  onWork: () => void; onAgenda: () => void;
 }) {
   // The hints are also the buttons — Chrome sometimes eats Ctrl+G/Ctrl+K, so
   // every keystroke has a clickable twin. The dock is a door too: clicking
@@ -309,6 +312,7 @@ export function Foot({ activity, onChat, onBrain, onPalette, onLedger, onNoSync,
         <button onClick={onNoSync}><kbd>Ctrl</kbd>+<kbd>.</kbd> no-sync</button> ·{" "}
         <button onClick={onCapture}><kbd>Ctrl</kbd>+<kbd>N</kbd> capture</button> ·{" "}
         <button onClick={onWork}><kbd>Ctrl</kbd>+<kbd>;</kbd> task</button> ·{" "}
+        <button onClick={onAgenda}><kbd>Ctrl</kbd>+<kbd>'</kbd> agenda</button> ·{" "}
         <kbd>Esc</kbd> back
       </span>
       <button className={`dock ${activity.live ? "live" : "dim"}`} onClick={onLedger}

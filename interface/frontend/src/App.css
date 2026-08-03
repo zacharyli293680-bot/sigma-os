@@ -1174,6 +1174,163 @@ pre.diff .meta { color: var(--muted); }
 }
 .ag-bar.today .ag-bar-d { color: var(--cyan); }
 
+/* ------------------- Agenda P4: the full view (Ctrl+') */
+
+.agview {
+  width: min(1360px, 94vw); height: min(860px, 92vh);
+  display: flex; flex-direction: column;
+  background: var(--void); border: 1px solid var(--panel-line);
+  box-shadow: 0 0 60px rgba(0, 229, 255, 0.06);
+}
+.agview-head {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 8px 12px; border-bottom: 1px solid var(--panel-line-dim);
+}
+.agview-head .label { color: var(--cyan); letter-spacing: 0.18em; font-size: 10.5px; font-weight: 600; }
+.agview-head .ghost { margin-left: auto; }
+.agview-range { font: 400 11px/1 var(--mono); color: var(--ink-2); }
+.agview-modes, .agview-nav, .agview-filter { display: flex; gap: 4px; }
+.agview-modes button, .agview-nav button, .agview-filter button {
+  background: none; border: 1px solid var(--panel-line-dim); color: var(--ink-2);
+  font: 600 9px/1 var(--sans); letter-spacing: 0.12em; padding: 4px 7px; cursor: pointer;
+}
+.agview-modes button:hover, .agview-nav button:hover, .agview-filter button:hover {
+  border-color: var(--panel-line); color: var(--ink);
+}
+.agview-modes button.on, .agview-filter button.on { border-color: var(--cyan); color: var(--cyan); }
+.agview-problems {
+  margin: 0; padding: 5px 12px; font: 400 11px/1.4 var(--mono);
+  color: var(--amber); border-bottom: 1px solid var(--panel-line-dim); cursor: help;
+}
+.agview-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 10px 12px; }
+
+.agview-foot {
+  flex: none; display: flex; align-items: center; gap: 10px;
+  padding: 6px 12px; border-top: 1px solid var(--panel-line-dim);
+  font: 400 11px/1.4 var(--mono); color: var(--ink-2); min-height: 30px;
+}
+.agview-foot.has { border-top-color: var(--cyan); }
+.agview-foot b { color: var(--ink); font-weight: 400; }
+.agview-foot .ghost { margin-left: auto; }
+.agview-src { color: var(--cyan); text-decoration: none; }
+.agview-src:hover { text-decoration: underline; }
+.agview-why { color: var(--amber); }
+.agview-foot .warn { color: var(--amber); }
+
+/* rows shared by the gutter and the list */
+.agrow { display: flex; align-items: baseline; gap: 6px; list-style: none; }
+.agrow-why {
+  flex: none; background: none; border: none; padding: 0; cursor: pointer;
+  color: var(--muted); font: 400 9.5px/1 var(--mono);
+}
+.agrow-why:hover { color: var(--cyan); }
+.agrow-when { flex: none; width: 82px; font: 400 11px/1.5 var(--mono); color: var(--ink-2); }
+.agrow-title {
+  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; color: var(--ink-2); text-decoration: none;
+  font: 400 11.5px/1.5 var(--mono);
+}
+.agrow-title:hover { color: var(--ink); }
+
+/* ---- week */
+.agweek { display: flex; flex-direction: column; gap: 6px; min-height: 100%; }
+.agweek-gutter {
+  display: grid; grid-template-columns: 58px repeat(7, 1fr); gap: 1px;
+  border-bottom: 1px solid var(--panel-line-dim); padding-bottom: 5px;
+}
+.agweek-corner {
+  font: 600 8.5px/1 var(--sans); letter-spacing: 0.14em;
+  color: var(--muted); align-self: start; padding: 2px 6px 0 0; text-align: right;
+}
+.agweek-allday { min-width: 0; padding: 0 3px; border-left: 1px solid var(--panel-line-dim); }
+.agweek-allday.today { background: rgba(34, 211, 238, 0.04); }
+.agweek-dow {
+  display: block; font: 400 10px/1.6 var(--mono); color: var(--ink-2);
+  letter-spacing: 0.04em;
+}
+.agweek-allday.today .agweek-dow { color: var(--cyan); }
+.agweek-allday ul { margin: 0; padding: 0; }
+.agweek-allday .agrow-title { font-size: 10.5px; }
+
+.agweek-grid {
+  flex: 1 1 auto; min-height: 460px; position: relative;
+  display: grid; grid-template-columns: 58px repeat(7, 1fr); gap: 1px;
+}
+.agweek-hours { position: relative; }
+.agweek-hours span {
+  position: absolute; right: 6px; transform: translateY(-50%);
+  font: 400 9.5px/1 var(--mono); color: var(--muted);
+}
+.agweek-col { position: relative; border-left: 1px solid var(--panel-line-dim); min-width: 0; }
+.agweek-col.today { background: rgba(34, 211, 238, 0.035); }
+.agweek-line {
+  position: absolute; left: 0; right: 0; height: 1px;
+  background: rgba(34, 211, 238, 0.07);
+}
+.agblock {
+  /* A 45-minute block in a 16-hour grid is ~17px, which fits neither the time
+     nor the title — the 19:00 club social rendered as a clipped sliver. The
+     floor is in pixels because the offender is a text height, not a fraction
+     of the day. */
+  min-height: 30px;
+  position: absolute; left: 2px; right: 2px; overflow: hidden;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+  padding: 2px 4px; cursor: pointer; text-align: left;
+  border: 1px solid var(--panel-line); border-left-width: 2px;
+  background: rgba(34, 211, 238, 0.10); color: var(--ink);
+}
+.agblock:hover { background: rgba(34, 211, 238, 0.18); }
+.agblock.k-rule { border-left-color: var(--muted); background: rgba(58, 74, 85, 0.22); }
+.agblock.k-task { border-left-color: var(--ink-2); }
+.agblock-t { font: 400 9px/1 var(--mono); color: var(--cyan); }
+.agblock-n {
+  font: 400 10.5px/1.25 var(--mono); overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+}
+
+/* ---- month */
+.agmonth { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; }
+.agmonth-dow {
+  font: 600 8.5px/1 var(--sans); letter-spacing: 0.14em; color: var(--muted);
+  padding: 0 4px 4px; text-align: center;
+}
+.agmonth-cell {
+  position: relative; min-height: 96px; padding: 3px 4px 12px;
+  border: 1px solid var(--panel-line-dim); min-width: 0;
+}
+.agmonth-cell.outside { opacity: 0.42; }
+.agmonth-cell.today { border-color: var(--cyan); background: rgba(34, 211, 238, 0.05); }
+.agmonth-n { font: 400 11px/1.3 var(--mono); color: var(--ink-2); }
+.agmonth-cell.today .agmonth-n { color: var(--cyan); }
+.agmonth-cell ul { margin: 2px 0 0; padding: 0; list-style: none; }
+.agmonth-item button {
+  display: flex; align-items: baseline; gap: 3px; width: 100%;
+  background: none; border: none; padding: 0; cursor: pointer; text-align: left;
+  color: var(--ink-2); font: 400 10px/1.45 var(--mono);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.agmonth-item button:hover { color: var(--ink); }
+.agmonth-more {
+  position: absolute; right: 4px; bottom: 2px;
+  font: 400 9px/1 var(--mono); color: var(--muted); cursor: help;
+}
+
+/* ---- 14-day list */
+.aglist { display: flex; flex-direction: column; gap: 2px; }
+.aglist section { display: grid; grid-template-columns: 132px 1fr; gap: 10px; padding: 3px 0; }
+.aglist section + section { border-top: 1px solid rgba(34, 211, 238, 0.07); }
+.aglist h4 {
+  margin: 0; font: 400 11px/1.6 var(--mono); color: var(--ink-2);
+  letter-spacing: 0.03em; display: flex; gap: 6px; align-items: baseline;
+}
+.aglist section.today h4 { color: var(--cyan); }
+.aglist h4 em {
+  font-style: normal; font: 600 8px/1 var(--sans); letter-spacing: 0.14em;
+  color: var(--cyan);
+}
+.aglist ul { margin: 0; padding: 0; }
+.aglist p { margin: 0; font: 400 11px/1.6 var(--mono); }
+
 .capture {
   margin-top: 16vh; width: min(620px, 94vw);
   background: var(--void); border: 1px solid var(--panel-line);

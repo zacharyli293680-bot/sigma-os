@@ -21,6 +21,7 @@ import StudyView from "./study";
 import BuildView from "./build";
 import WorkView from "./work";
 import AgendaRail from "./agenda-rail";
+import AgendaView from "./agenda";
 import Capture from "./capture";
 import { Foot, Panel, ProjectsPanel, QueuePanel, Rail, TopStrip, WaitingPanel } from "./panels";
 import Reactor, { activityLine, useElapsed } from "./reactor";
@@ -83,6 +84,7 @@ export default function App() {
   const [studyOpen, setStudyOpen] = useState(false);
   const [buildOpen, setBuildOpen] = useState(false);
   const [workOpen, setWorkOpen] = useState(false);
+  const [agendaOpen, setAgendaOpen] = useState(false);
   const [captureOpen, setCaptureOpen] = useState(false);
   // Fetched once for the rail's count badge; the view refetches on open.
   const [noSync, setNoSync] = useState<NoSync | null>(null);
@@ -181,6 +183,14 @@ export default function App() {
         // means "I want to type a task", not "close this".
         e.preventDefault();
         setWorkOpen(true);
+      } else if (e.ctrlKey && e.key === "'") {
+        // The full agenda. `'` sits next to `;` (work) and `.` (no-sync), so
+        // the three "what is on my plate" surfaces are three neighbouring keys.
+        // Verified reaching the page in Chrome before the view was built —
+        // Ctrl+K and Ctrl+G are both eaten at the browser level here, and
+        // finding that out after the fact would have meant rebuilding for it.
+        e.preventDefault();
+        setAgendaOpen(o => !o);
       } else if (e.key === "Escape") {
         // Esc peels one layer: review, palette, no-sync, ledger, drawer, then
         // the dive, then an active filter. That last rung is new — a filter had
@@ -189,6 +199,9 @@ export default function App() {
         if (captureOpen) setCaptureOpen(false);
         else if (reviewing) setReviewing(null);
         else if (workOpen) setWorkOpen(false);
+        // Agenda peels after work: it is normally entered from the work view or
+        // from the today rail, so Esc unwinds in the order you arrived.
+        else if (agendaOpen) setAgendaOpen(false);
         else if (studyOpen) setStudyOpen(false);
         else if (buildOpen) setBuildOpen(false);
         else if (paletteOpen) setPaletteOpen(false);
@@ -201,8 +214,13 @@ export default function App() {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
+    // Every state the Esc ladder *reads* has to be in here. A missing one does
+    // not fail loudly: the toggle keybind keeps working, because those use the
+    // functional form of setState and never read the old value — so the view
+    // opens and closes on Ctrl+' while Esc silently skips its rung. `agendaOpen`
+    // was missing exactly that way and it took driving the view to notice.
   }, [paletteOpen, ledgerOpen, chatOpen, noSyncOpen, reviewing, studyOpen,
-      buildOpen, workOpen, captureOpen, diving, brainFilter]);
+      buildOpen, workOpen, agendaOpen, captureOpen, diving, brainFilter]);
 
   // Palette jobs stream here and take over the dock while they run; when one
   // finishes, the panels it may have changed refetch immediately.
@@ -258,7 +276,8 @@ export default function App() {
             noSyncCount={noSync?.ok ? noSync.total : null}
             studyOpen={studyOpen} onStudy={() => setStudyOpen(o => !o)}
             buildOpen={buildOpen} onBuild={() => setBuildOpen(o => !o)}
-            workOpen={workOpen} onWork={() => setWorkOpen(o => !o)} />
+            workOpen={workOpen} onWork={() => setWorkOpen(o => !o)}
+            agendaOpen={agendaOpen} onAgenda={() => setAgendaOpen(o => !o)} />
       {/* The centre stage: one scene, not a panel with a picture in it. The
           sky fills the cell, the reactor sits at its heart in a pool of
           darkened sky, and the chips ride the bottom edge. */}
@@ -293,7 +312,8 @@ export default function App() {
             onLedger={() => setLedgerOpen(o => !o)}
             onNoSync={() => setNoSyncOpen(o => !o)}
             onCapture={() => setCaptureOpen(o => !o)}
-            onWork={() => setWorkOpen(true)} />
+            onWork={() => setWorkOpen(true)}
+            onAgenda={() => setAgendaOpen(o => !o)} />
       <Ledger open={ledgerOpen} vault={vault} onClose={() => setLedgerOpen(false)}
               onMutate={refresh} />
       <NoSyncView open={noSyncOpen} vault={vault} onClose={() => setNoSyncOpen(false)} />
@@ -303,6 +323,7 @@ export default function App() {
       <BuildView open={buildOpen} vault={vault} onClose={() => setBuildOpen(false)} />
       <WorkView open={workOpen} vault={vault} onClose={() => setWorkOpen(false)}
                 onMutate={refresh} />
+      <AgendaView open={agendaOpen} vault={vault} onClose={() => setAgendaOpen(false)} />
       <Capture open={captureOpen} onClose={() => setCaptureOpen(false)} onDone={refresh} />
       <Palette open={paletteOpen} onClose={() => setPaletteOpen(false)}
                onLaunched={() => {}} />
