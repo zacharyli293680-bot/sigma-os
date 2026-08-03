@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./App.css";
 import { API, get } from "./api";
-import type { Fleet, Graph, Health, Job, NoSync, Progress, Projects, Proposals, Queue, Tasks, Window_ } from "./api";
+import type { Agenda, Fleet, Graph, Health, Job, NoSync, Progress, Projects, Proposals, Queue, Tasks, Window_ } from "./api";
 import Brain, { VaultHud } from "./brain";
 import ChatDrawer from "./chat";
 import Ledger from "./ledger";
@@ -20,12 +20,23 @@ import Review from "./review";
 import StudyView from "./study";
 import BuildView from "./build";
 import WorkView from "./work";
-import CalendarStrip from "./calendar";
+import AgendaRail from "./agenda-rail";
 import Capture from "./capture";
 import { Foot, Panel, ProjectsPanel, QueuePanel, Rail, TopStrip, WaitingPanel } from "./panels";
 import Reactor, { activityLine, useElapsed } from "./reactor";
 
 const REFRESH_MS = 60_000;
+
+/** Local dates, not UTC. `toISOString()` would roll the day over at 17:00
+ *  Pacific and ask the calendar for tomorrow. */
+function iso(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function addDays(d: Date, n: number): Date {
+  const out = new Date(d);
+  out.setDate(d.getDate() + n);
+  return out;
+}
 /** The graph endpoint is cached server-side for 300s; polling it faster only
  *  ever returns the same thing. */
 const GRAPH_MS = 300_000;
@@ -49,6 +60,10 @@ export default function App() {
   // vault (the calendar strip, the top strip's study block), `queue` is the
   // four priority queues, which ignore 01-Daily entirely.
   const [tasks, setTasks] = useState<Tasks | null | undefined>(undefined);
+  // The calendar, from the one resolver. Still distinct from `tasks`: this is
+  // windowed and holds events, notes and expanded rules as well as checkboxes,
+  // where `tasks` is every dated task in the vault with no horizon.
+  const [agenda, setAgenda] = useState<Agenda | null | undefined>(undefined);
   const [queue, setQueue] = useState<Queue | null | undefined>(undefined);
   const [proposals, setProposals] = useState<Proposals | null | undefined>(undefined);
   const [projects, setProjects] = useState<Projects | null | undefined>(undefined);
@@ -78,6 +93,10 @@ export default function App() {
   const refresh = useCallback(() => {
     get<Fleet>("fleet").then(setFleet).catch(() => setFleet(null));
     get<Tasks>("tasks").then(setTasks).catch(() => setTasks(null));
+    // Exactly the rail's horizon: today plus the six days its density bar
+    // shows. A wider window would be payload nobody renders, on a 60s poll.
+    get<Agenda>(`agenda?from=${iso(new Date())}&to=${iso(addDays(new Date(), 6))}`)
+      .then(setAgenda).catch(() => setAgenda(null));
     get<Queue>("queue").then(setQueue).catch(() => setQueue(null));
     get<Proposals>("proposals").then(setProposals).catch(() => setProposals(null));
     get<Projects>("projects").then(setProjects).catch(() => setProjects(null));
@@ -263,7 +282,8 @@ export default function App() {
                     onOpen={() => setWorkOpen(true)} />
       </div>
       <div className="lower">
-        <CalendarStrip tasks={tasks ?? null} onOpen={() => setStudyOpen(true)} />
+        <AgendaRail agenda={agenda ?? null} vault={vault}
+                    onOpen={() => setStudyOpen(true)} />
         <ProjectsPanel projects={projects?.projects ?? null} vault={vault} />
       </div>
       <Foot activity={dock}

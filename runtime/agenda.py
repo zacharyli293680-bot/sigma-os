@@ -420,6 +420,22 @@ def collect_cached(vault, split=None, ttl: float = CACHE_TTL) -> dict:
 # occurrences — one shape, provenance on every one
 # --------------------------------------------------------------------------
 
+def _display(text: str) -> str:
+    """A title as a human reads it: wikilinks reduced to their label.
+
+    `[[CSE-311]] lecture` is right in `schedule.md` — the link is what keeps the
+    row and the course connected in the graph — and wrong on a calendar, where
+    it should read as a sentence. Same reduction `todo.display_text` does for a
+    checkbox, borrowing its regex rather than writing a second one.
+
+    **`parse_event`/`parse_rule` keep the literal title**, because `compose_event`
+    has to round-trip it byte-for-byte; only the occurrence carries the reduced
+    form. The two are different jobs and the round-trip test pins the first.
+    """
+    return " ".join(td._LINK_RE.sub(
+        lambda m: (m.group(2) or m.group(1).split("/")[-1]).strip(), text).split())
+
+
 def _occ(kind, oid, date, title, *, path, line=None, block_id=None,
          rule_id=None, field=None, start=None, end=None, span=None,
          no_sync=False, owner="sigma", section=None, parent=None,
@@ -469,7 +485,7 @@ def _event_occurrences(ev: dict, lo: str, hi: str) -> list:
             continue
         multi = total > 1
         out.append(_occ(
-            "event", f"{base}@{day}" if multi else base, day, ev["title"],
+            "event", f"{base}@{day}" if multi else base, day, _display(ev["title"]),
             path=ev["file"], line=ev["line"], block_id=ev["block_id"],
             start=ev["start"] if (n == 0 or not multi) else None,
             end=ev["end"] if (n == total - 1 or not multi) else None,
@@ -558,31 +574,39 @@ def resolve(vault, frm: str, to: str, split=None, ttl: float = CACHE_TTL) -> dic
                 "error": f"range too wide ({span} days, max {MAX_RANGE_DAYS})"}
 
     src = collect_cached(vault, split, ttl)
-    out = []
+
+    # **Conflicts are found over every note and task in the vault, then the
+    # window is applied** — not the other way round. A note due today whose own
+    # checkbox says next week is in disagreement whether or not you happened to
+    # ask for next week; detecting it only when both sides fall inside the range
+    # makes the warning blink in and out as you page through months, which is a
+    # worse failure than not having it, because it teaches you to distrust it.
+    dated = [_occ("note", n["file"], n["date"], _display(n["title"]),
+                  path=n["file"], field=n["field"], no_sync=n["no_sync"])
+             for n in src["notes"]]
+    dated += _task_occurrences(src["tasks"])
+    _conflicts(dated)
+
+    out = [o for o in dated if lo <= o["date"] <= hi]
 
     for ev in src["events"]:
         out.extend(_event_occurrences(ev, lo, hi))
 
-    for note in src["notes"]:
-        if lo <= note["date"] <= hi:
-            out.append(_occ("note", note["file"], note["date"], note["title"],
-                            path=note["file"], field=note["field"],
-                            no_sync=note["no_sync"]))
-
     for ru in src["rules"]:
         for day in expand(ru, lo, hi):
             rid = ru["rule_id"] or f"sg-rule-{td.task_id(ru['file'], ru['title'])}"
-            out.append(_occ("rule", f"{rid}@{day}", day, ru["title"],
+            out.append(_occ("rule", f"{rid}@{day}", day, _display(ru["title"]),
                             path=ru["file"], line=ru["line"], rule_id=rid,
                             start=ru["start"], end=ru["end"],
                             no_sync=ru["no_sync"], raw=ru["raw"]))
 
-    out.extend(o for o in _task_occurrences(src["tasks"])
-               if lo <= o["date"] <= hi)
-
-    n = _conflicts(out)
     out.sort(key=lambda o: (o["date"], o["start"] or "", o["kind"], o["title"]))
-    return {"from": lo, "to": hi, "occurrences": out, "conflicts": n,
+    # How many occurrences *in this window* disagree with another source. Both
+    # sides of a disagreement are flagged, so a note and its own task count as
+    # two — the number is "how many rows carry a warning", which is what the UI
+    # can actually point at, not an estimate of how many arguments exist.
+    return {"from": lo, "to": hi, "occurrences": out,
+            "conflicts": sum(1 for o in out if o["conflict"]),
             "timezone": src["timezone"], "problems": src["problems"]}
 
 

@@ -1083,36 +1083,96 @@ pre.diff .meta { color: var(--muted); }
 .repo-flags li { padding: 2px 0; font-size: 12px; color: var(--ink-2); }
 .repo-flags b { color: var(--ink); font-family: var(--mono); }
 
-/* ------------------- Phase 6: calendar strip, capture, brain filters */
+/* ------------------- Phase 6: capture, brain filters */
 
 .lower { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
 
-.calstrip { flex: none; }
-.calstrip > h2 {
+/* ------------------- Agenda P3: the today rail
+   Replaces the 14-day calendar strip. An instrument strip, not a calendar:
+   NOW and the next few commitments on the left, one number and a week of
+   committed hours on the right. Numbers are the hero and status is never
+   colour alone — every kind carries a glyph as well as a hue. */
+
+.agrail { flex: none; }
+.agrail > h2 {
   display: flex; align-items: center; gap: 10px; margin: 0 0 6px;
   color: var(--cyan); font: 600 10.5px/1.6 var(--sans); letter-spacing: 0.18em;
 }
-.calstrip > h2::after {
+.agrail > h2::after {
   content: ""; flex: 1 1 auto; height: 1px;
   background: linear-gradient(90deg, var(--panel-line), transparent);
 }
-.cal-days { display: flex; gap: 4px; align-items: stretch; }
-.cal-day {
-  flex: 1 1 0; min-width: 0;
-  display: flex; flex-direction: column; align-items: center; gap: 1px;
-  background: none; border: 1px solid var(--panel-line-dim);
-  color: var(--ink-2); font-family: var(--mono); cursor: pointer;
-  padding: 4px 2px;
+.ag-now { font: 400 10px/1 var(--mono); color: var(--ink-2); letter-spacing: 0.08em; }
+.ag-problem {
+  order: 9; font: 400 10px/1 var(--mono); color: var(--amber);
+  letter-spacing: 0.04em; cursor: help;
 }
-.cal-day:hover { border-color: var(--panel-line); color: var(--ink); }
-.cal-day.weekend { background: rgba(34, 211, 238, 0.02); }
-.cal-day.today { border-color: var(--cyan); color: var(--cyan); }
-.cal-day.has .cal-num { color: var(--ink); }
-.cal-day.overdue { border-color: var(--red); color: var(--red); flex: 0 0 52px; }
-.cal-dow { font-size: 9px; letter-spacing: 0.1em; opacity: 0.7; }
-.cal-num { font-size: 14px; line-height: 1.1; }
-.cal-dots { font-size: 9px; min-height: 11px; color: var(--cyan); }
-.cal-beyond { font-size: 11px; margin-top: 3px; display: inline-block; }
+
+.ag-body { display: flex; align-items: stretch; justify-content: space-between; gap: 16px; }
+
+/* Bounded, so the countdown stays beside the thing it counts down to. Letting
+   this grow to the full strip width parked "in 6h 23m" a thousand pixels from
+   its own title, where it read as a detached column of numbers. */
+.ag-next {
+  flex: 0 1 auto; max-width: 560px; min-width: 0;
+  list-style: none; margin: 0; padding: 0;
+}
+.ag-item a {
+  display: flex; align-items: baseline; gap: 8px; padding: 2px 0;
+  color: var(--ink-2); text-decoration: none; font-family: var(--mono);
+  font-size: 11.5px; border-bottom: 1px solid transparent;
+}
+.ag-item a:hover { color: var(--ink); border-bottom-color: var(--panel-line-dim); }
+/* The next thing is the one the strip is actually for. */
+.ag-item.is-next a { color: var(--ink); }
+.ag-item.is-next .ag-when { color: var(--cyan); }
+.ag-glyph { flex: none; width: 12px; text-align: center; }
+.ag-glyph.k-event { color: var(--cyan); }
+.ag-glyph.k-rule  { color: var(--ink-2); }
+.ag-glyph.k-note  { color: var(--cyan); opacity: 0.7; }
+.ag-glyph.k-task  { color: var(--ink-2); }
+.ag-when { flex: none; width: 88px; letter-spacing: 0.02em; }
+.ag-title {
+  flex: 1 1 auto; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.ag-count { flex: none; font-size: 10px; color: var(--ink-2); letter-spacing: 0.04em; }
+.ag-seal { color: var(--bronze); margin-right: 4px; }
+.ag-conflict { color: var(--amber); margin-right: 4px; cursor: help; }
+.ag-empty { padding: 2px 0; font-family: var(--mono); font-size: 11.5px; }
+
+.ag-right { flex: none; display: flex; align-items: stretch; gap: 14px; }
+
+.ag-free {
+  display: flex; flex-direction: column; align-items: flex-end; justify-content: center;
+  gap: 2px; padding: 2px 10px 2px 0; background: none; border: none;
+  border-right: 1px solid var(--panel-line-dim); color: var(--ink); cursor: pointer;
+}
+.ag-free-n { font: 400 22px/1 var(--mono); color: var(--cyan); }
+.ag-free-n em { font-style: normal; font-size: 12px; opacity: 0.65; margin-left: 1px; }
+.ag-free-l {
+  font: 600 8.5px/1 var(--sans); letter-spacing: 0.16em; color: var(--ink-2);
+}
+
+.ag-week { display: flex; align-items: flex-end; gap: 3px; }
+.ag-bar {
+  width: 18px; height: 40px; padding: 0; background: none; cursor: pointer;
+  border: none; border-bottom: 1px solid var(--panel-line-dim);
+  display: flex; flex-direction: column; justify-content: flex-end; align-items: center;
+}
+.ag-bar-fill {
+  width: 100%; min-height: 1px;
+  background: linear-gradient(180deg, var(--cyan), rgba(34, 211, 238, 0.25));
+  opacity: 0.55; transition: opacity 200ms ease;
+}
+.ag-bar:hover .ag-bar-fill { opacity: 0.9; }
+.ag-bar.today { border-bottom-color: var(--cyan); }
+.ag-bar.today .ag-bar-fill { opacity: 0.9; }
+.ag-bar-d {
+  flex: none; margin-top: 2px;
+  font: 400 8.5px/1 var(--mono); color: var(--ink-2);
+}
+.ag-bar.today .ag-bar-d { color: var(--cyan); }
 
 .capture {
   margin-top: 16vh; width: min(620px, 94vw);

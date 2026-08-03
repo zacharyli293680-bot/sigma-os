@@ -24,6 +24,51 @@ export type VaultTask = {
 };
 export type Tasks = { today: string; block: string | null; tasks: VaultTask[] };
 
+/** One thing on the calendar, from the one resolver (agenda.py).
+ *
+ *  `source` is never empty — provenance is an invariant, which is what lets any
+ *  occurrence answer "why is this here" the way a queue row answers "why is
+ *  this ranked here". `raw` is the exact line, and it is the staleness token
+ *  the write path will hand back in P5. */
+export type OccurrenceKind = "task" | "note" | "event" | "rule";
+export type Occurrence = {
+  kind: OccurrenceKind;
+  id: string;
+  date: string;                  // YYYY-MM-DD
+  /** null when the thing has no clock time — it belongs in the all-day gutter. */
+  start: string | null;          // HH:MM
+  end: string | null;
+  all_day: boolean;
+  title: string;
+  owner: string;
+  raw: string | null;
+  priority: number | null;
+  source: {
+    path: string; line: number | null;
+    block_id: string | null; rule_id: string | null;
+    /** "date" | "due" on a dated note — which key put it on this day. */
+    field: string | null;
+  };
+  /** Set on every day of a multi-day event, so a bar knows which end it is. */
+  span: { start: string; end: string; index: number; length: number } | null;
+  section: string; parent: string | null;
+  no_sync: boolean;              // gitignored but model-exempt — bronze, never hidden
+  /** Two sources disagreeing about the same subject. Shown, never resolved. */
+  conflict: { with: string[]; why: string } | null;
+};
+/** A line that was meant to be an event and is not. Reported rather than
+ *  dropped: an occurrence that silently stopped existing is this subsystem's
+ *  worst failure, because nothing about the calendar looks wrong. */
+export type AgendaProblem = { path: string; line: number; raw: string; why: string };
+export type Agenda = {
+  from: string; to: string; today: string;
+  occurrences: Occurrence[];
+  conflicts: number;
+  problems: AgendaProblem[];
+  /** The vault's single declaration, from schedule.md. null until one exists. */
+  timezone: string | null;
+};
+
 /** The four priority queues (todo.py). Days are no longer the organising unit;
  *  each section shows a window of its highest-scoring *eligible* tasks. */
 export type ScoreParts = {

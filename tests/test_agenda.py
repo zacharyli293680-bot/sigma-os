@@ -285,6 +285,15 @@ class TestResolve(unittest.TestCase):
         text = (self.v / agenda.CALENDAR_DIR / "2026-08.md").read_text(encoding="utf-8")
         self.assertNotIn("lecture", text)
 
+    def test_a_wikilink_reads_as_a_sentence_but_round_trips_as_a_link(self):
+        """Two jobs, two answers. The occurrence's title is what a human reads
+        on a calendar; the parsed title is what a writer has to put back
+        byte-for-byte, so the link survives where it matters."""
+        occ = [o for o in self.get()["occurrences"] if o["kind"] == "rule"][0]
+        self.assertEqual(occ["title"], "CSE-311 lecture")
+        parsed = agenda.parse_rule(occ["raw"])
+        self.assertEqual(parsed["title"], "[[CSE-311]] lecture")
+
     def test_the_timezone_comes_from_schedule_md(self):
         self.assertEqual(self.get()["timezone"], "America/Los_Angeles")
 
@@ -410,12 +419,29 @@ class TestConflicts(unittest.TestCase):
                 "tags: [assignment]\n---\n\n# HW3\n\n- [ ] Finish HW3 📅 2026-08-12\n",
         })
         got = agenda.resolve(v, "2026-08-01", "2026-08-31", split=OPEN, ttl=0)
-        self.assertEqual(got["conflicts"], 1)
+        self.assertEqual(got["conflicts"], 2)
         flagged = [o for o in got["occurrences"] if o["conflict"]]
         self.assertEqual(len(flagged), 2, "both sides are flagged, not one")
         self.assertEqual({o["kind"] for o in flagged}, {"note", "task"})
         self.assertIn("2026-08-10", flagged[0]["conflict"]["why"]
                       + flagged[1]["conflict"]["why"])
+
+    def test_a_conflict_is_found_even_when_one_side_is_outside_the_window(self):
+        """The window decides what is *returned*, never what is *detected*. A
+        warning that blinks in and out as you page through months is worse than
+        no warning, because it teaches you not to trust it."""
+        agenda.invalidate()
+        v = vault_with({
+            "02-Areas/Academics/CSE-311/assignments/hw5.md":
+                "---\ntype: assignment\ncourse: CSE-311\ndue: 2026-08-03\n"
+                "tags: [assignment]\n---\n\n# HW5\n\n- [ ] Finish HW5 📅 2026-09-20\n",
+        })
+        # One day wide. The disagreeing task is seven weeks outside it.
+        got = agenda.resolve(v, "2026-08-03", "2026-08-03", split=OPEN, ttl=0)
+        note = [o for o in got["occurrences"] if o["kind"] == "note"][0]
+        self.assertIsNotNone(note["conflict"])
+        self.assertIn("2026-09-20", note["conflict"]["why"])
+        self.assertEqual(got["conflicts"], 1, "only the in-window side is counted")
 
     def test_agreement_is_not_a_conflict(self):
         agenda.invalidate()
