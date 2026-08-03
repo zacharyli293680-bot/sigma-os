@@ -23,11 +23,19 @@
  * `todo.section_of`. A second classifier here would be a second answer to
  * "whose work is this".
  */
-import { useEffect, useMemo, useState } from "react";
-import { get, obsidianHref } from "./api";
-import type { Agenda, Occurrence } from "./api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ApiError, get, obsidianHref, post } from "./api";
+import type { Agenda, AgendaWrite, Occurrence } from "./api";
 
 type Mode = "week" | "month" | "agenda";
+
+/** How long a drag settles before it becomes a commit.
+ *
+ *  §4.4: "a five-minute replanning session must not produce thirty ledger rows —
+ *  the ledger is the morning view, and its readability is a feature." Repeated
+ *  moves of the same event coalesce into one write, and because no write has
+ *  landed in between, the `raw` the client still holds is still current. */
+const SETTLE_MS = 1400;
 
 /** Weeks start Monday: the academic grammar this vault is full of is MWF and
  *  TR, and a Monday start keeps the weekend together instead of splitting it
@@ -84,7 +92,58 @@ function Marks({ o }: { o: Occurrence }) {
     <>
       {o.no_sync && <span className="ag-seal" title="never leaves this machine">⊘</span>}
       {o.conflict && <span className="ag-conflict" title={o.conflict.why}>⚠</span>}
+      {o.cancelled && <span className="ag-cancelled" title={`cancelled ${o.cancelled}`}>⊗</span>}
     </>
+  );
+}
+
+/** Quick-add. Nothing here calls a model and nothing here guesses: an event
+ *  lands the instant it is typed, in the month note its date names. */
+function QuickAdd({ anchor, onAdded }: { anchor: string; onAdded: () => void }) {
+  const [date, setDate] = useState(anchor);
+  const [start, setStart] = useState("");
+  const [end, setEnd] = useState("");
+  const [title, setTitle] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [said, setSaid] = useState<string | null>(null);
+
+  useEffect(() => setDate(anchor), [anchor]);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    const t = title.trim();
+    if (!t || busy) return;
+    setBusy(true); setErr(null); setSaid(null);
+    try {
+      const r = await post<AgendaWrite>("agenda/add", {
+        date, title: t, start: start || null, end: end || null,
+      });
+      setTitle(""); setStart(""); setEnd("");
+      // What landed, not what was asked for — the server composes the line and
+      // the round-trip is the only thing that proves it reads back.
+      setSaid(r.raw);
+      onAdded();
+    } catch (e2) {
+      setErr(e2 instanceof ApiError ? (e2.detail || e2.code) : "backend unreachable");
+    }
+    setBusy(false);
+  }
+
+  return (
+    <form className="agadd" onSubmit={submit}>
+      <input type="date" value={date} onChange={e => setDate(e.target.value)}
+             aria-label="date" required />
+      <input type="time" value={start} onChange={e => setStart(e.target.value)}
+             aria-label="start time" title="leave blank for an all-day event" />
+      <input type="time" value={end} onChange={e => setEnd(e.target.value)}
+             aria-label="end time" title="leave blank for an open-ended event" />
+      <input className="agadd-t" value={title} placeholder="new event…"
+             onChange={e => setTitle(e.target.value)} aria-label="title" />
+      <button type="submit" disabled={busy || !title.trim()}>{busy ? "…" : "ADD"}</button>
+      {err && <span className="err">{err}</span>}
+      {said && <span className="dim agadd-said" title={said}>wrote {said}</span>}
+    </form>
   );
 }
 
@@ -96,6 +155,16 @@ export default function AgendaView({ open, vault, onClose }: {
   const [section, setSection] = useState("all");
   const [probe, setProbe] = useState<Occurrence | null>(null);
   const [d, setD] = useState<Agenda | null | undefined>(undefined);
+  /** Optimistic dates, keyed by occurrence id. The move renders instantly and
+   *  is removed on failure, which snaps the row back where it came from. */
+  const [moving, setMoving] = useState<Record<string, string>>({});
+  const [errs, setErrs] = useState<Record<string, string>>({});
+  const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const alive = useRef(true);
+  useEffect(() => () => {
+    alive.current = false;
+    Object.values(timers.current).forEach(clearTimeout);
+  }, []);
 
   const { from, to } = useMemo(() => range(mode, anchor), [mode, anchor]);
   const fromISO = iso(from), toISO = iso(to);
@@ -109,9 +178,62 @@ export default function AgendaView({ open, vault, onClose }: {
   // Reopening should land on today rather than wherever it was left weeks ago.
   useEffect(() => { if (open) { setAnchor(new Date()); setProbe(null); } }, [open]);
 
+  const reload = useCallback(() => {
+    get<Agenda>(`agenda?from=${fromISO}&to=${toISO}`)
+      .then(a => { if (alive.current) { setD(a); setMoving({}); } })
+      .catch(() => { if (alive.current) setD(null); });
+  }, [fromISO, toISO]);
+
+  /** Only an event row can be moved from here. A task's date belongs to
+   *  `/api/queue/edit`, which already rewrites task lines with its own holds
+   *  and ledger row — a second way to move a task's date is exactly the second
+   *  write path this subsystem is not allowed to grow. Notes and rules are
+   *  refused with a reason rather than silently ignored. */
+  const why = (o: Occurrence): string | null =>
+    o.kind === "task" ? "a task's date moves in the work view (Ctrl+;), which owns task lines"
+      : o.kind === "rule" ? "this is a recurrence rule — moving one occurrence of it is P6"
+      : o.kind === "note" ? "a dated note's date lives in its frontmatter, which this view does not write"
+      // A span occupies several days and is one line. Dragging the day you
+      // happened to grab would rewrite it as a single-day event and lose the
+      // other end — silent data loss dressed as a reschedule.
+      : o.span ? "a multi-day event is moved by editing its line, not by dragging one of its days"
+      : null;
+
+  const commit = useCallback(async (o: Occurrence, date: string) => {
+    try {
+      await post<AgendaWrite>("agenda/edit", {
+        file: o.source.path, line: o.source.line, raw: o.raw,
+        date, title: o.title, start: o.start, end: o.end,
+        cancelled: o.cancelled,
+      });
+      if (alive.current) reload();
+    } catch (e) {
+      if (!alive.current) return;
+      setMoving(({ [o.id]: _drop, ...rest }) => rest);   // snap back
+      const msg = e instanceof ApiError
+        ? (e.code === "stale" ? "the note changed underneath — reloaded" : e.detail || e.code)
+        : "backend unreachable";
+      setErrs(p => ({ ...p, [o.id]: msg }));
+      if (e instanceof ApiError && e.code === "stale") reload();
+    }
+  }, [reload]);
+
+  const reschedule = useCallback((o: Occurrence, date: string) => {
+    const refuse = why(o);
+    if (refuse) { setErrs(p => ({ ...p, [o.id]: refuse })); return; }
+    if (date === o.date) return;
+    setErrs(({ [o.id]: _drop, ...rest }) => rest);
+    setMoving(p => ({ ...p, [o.id]: date }));
+    clearTimeout(timers.current[o.id]);
+    timers.current[o.id] = setTimeout(() => commit(o, date), SETTLE_MS);
+  }, [commit]);
+
   const shown = useMemo(
-    () => (d?.occurrences ?? []).filter(o => section === "all" || o.section === section),
-    [d, section]);
+    () => (d?.occurrences ?? [])
+      .filter(o => section === "all" || o.section === section)
+      .map(o => (moving[o.id] ? { ...o, date: moving[o.id], pending: true } as Occurrence : o))
+      .sort((a, b) => (a.date + (a.start ?? "")).localeCompare(b.date + (b.start ?? ""))),
+    [d, section, moving]);
 
   if (!open) return null;
 
@@ -167,11 +289,22 @@ export default function AgendaView({ open, vault, onClose }: {
               </p>
             )}
 
+            <QuickAdd anchor={mode === "month" ? iso(anchor) : fromISO} onAdded={reload} />
+
+            {Object.entries(errs).length > 0 && (
+              <p className="agview-errs">
+                {Object.values(errs)[0]}
+                <button className="ghost" onClick={() => setErrs({})}>✕</button>
+              </p>
+            )}
+
             <div className="agview-body">
               {mode === "week" && <Week occ={shown} from={from} today={today}
-                                       vault={vault} onProbe={setProbe} />}
+                                       vault={vault} onProbe={setProbe}
+                                       onDrop={reschedule} />}
               {mode === "month" && <Month occ={shown} from={from} to={to} anchor={anchor}
-                                          today={today} onProbe={setProbe} />}
+                                          today={today} onProbe={setProbe}
+                                          onDrop={reschedule} />}
               {mode === "agenda" && <List occ={shown} from={from} today={today}
                                           vault={vault} onProbe={setProbe} />}
             </div>
@@ -191,6 +324,25 @@ export default function AgendaView({ open, vault, onClose }: {
                     {probe.source.path}{probe.source.line ? `:${probe.source.line}` : ""}
                   </a>
                   {probe.conflict && <span className="agview-why">⚠ {probe.conflict.why}</span>}
+                  {/* Cancel lives here rather than on the row: it is a status
+                      change to a real line, and the strip is where you can see
+                      exactly which line before changing it. */}
+                  {probe.kind === "event" && !probe.cancelled && (
+                    <button className="agview-cancel"
+                            title="mark cancelled — the line stays, struck through"
+                            onClick={() => { commit({ ...probe, cancelled: today } as Occurrence,
+                                                    probe.date); setProbe(null); }}>
+                      CANCEL EVENT
+                    </button>
+                  )}
+                  {probe.cancelled && (
+                    <button className="agview-cancel"
+                            title="un-cancel — removes the cancelled:: marker"
+                            onClick={() => { commit({ ...probe, cancelled: null } as Occurrence,
+                                                    probe.date); setProbe(null); }}>
+                      UN-CANCEL
+                    </button>
+                  )}
                   <button className="ghost" onClick={() => setProbe(null)}>✕</button>
                 </>
               ) : (
@@ -209,12 +361,41 @@ export default function AgendaView({ open, vault, onClose }: {
   );
 }
 
+/** Drag is by occurrence id: the drop target looks the occurrence back up in
+ *  the list it is already rendering, so no object crosses the DataTransfer and
+ *  nothing can be dropped that is not on screen. */
+const DRAG_MIME = "application/x-sigma-occurrence";
+
+function dragProps(o: Occurrence) {
+  return {
+    draggable: true,
+    onDragStart: (e: React.DragEvent) => {
+      e.dataTransfer.setData(DRAG_MIME, o.id);
+      e.dataTransfer.effectAllowed = "move";
+    },
+  };
+}
+
+function dropProps(date: string, occ: Occurrence[], onDrop: (o: Occurrence, d: string) => void) {
+  return {
+    onDragOver: (e: React.DragEvent) => {
+      if (e.dataTransfer.types.includes(DRAG_MIME)) { e.preventDefault(); }
+    },
+    onDrop: (e: React.DragEvent) => {
+      const id = e.dataTransfer.getData(DRAG_MIME);
+      const o = occ.find(x => x.id === id);
+      if (o) { e.preventDefault(); onDrop(o, date); }
+    },
+  };
+}
+
 /** One row in a list or a gutter. */
 function Row({ o, vault, onProbe, showTime = true }: {
   o: Occurrence; vault: string; onProbe: (o: Occurrence) => void; showTime?: boolean;
 }) {
   return (
-    <li className={`agrow k-${o.kind}`}>
+    <li className={`agrow k-${o.kind} ${o.cancelled ? "off" : ""} ${o.pending ? "pending" : ""}`}
+        {...dragProps(o)}>
       <button className="agrow-why" onClick={() => onProbe(o)}
               title="where does this come from?">[?]</button>
       <span className={`ag-glyph k-${o.kind}`}>{GLYPH[o.kind]}</span>
@@ -230,9 +411,9 @@ function Row({ o, vault, onProbe, showTime = true }: {
   );
 }
 
-function Week({ occ, from, today, vault, onProbe }: {
+function Week({ occ, from, today, vault, onProbe, onDrop }: {
   occ: Occurrence[]; from: Date; today: string; vault: string;
-  onProbe: (o: Occurrence) => void;
+  onProbe: (o: Occurrence) => void; onDrop: (o: Occurrence, date: string) => void;
 }) {
   const days = Array.from({ length: 7 }, (_, i) => addDays(from, i));
   const timed = occ.filter(o => o.start);
@@ -251,7 +432,8 @@ function Week({ occ, from, today, vault, onProbe }: {
           const key = iso(dd);
           const items = occ.filter(o => o.date === key && !o.start);
           return (
-            <div key={key} className={`agweek-allday ${key === today ? "today" : ""}`}>
+            <div key={key} className={`agweek-allday ${key === today ? "today" : ""}`}
+                 {...dropProps(key, occ, onDrop)}>
               <span className="agweek-dow">
                 {dd.toLocaleDateString(undefined, { weekday: "short" })} {dd.getDate()}
               </span>
@@ -274,7 +456,8 @@ function Week({ occ, from, today, vault, onProbe }: {
         {days.map(dd => {
           const key = iso(dd);
           return (
-            <div key={key} className={`agweek-col ${key === today ? "today" : ""}`}>
+            <div key={key} className={`agweek-col ${key === today ? "today" : ""}`}
+                 {...dropProps(key, occ, onDrop)}>
               {hours.map(h => (
                 <span key={h} className="agweek-line"
                       style={{ top: `${((h * 60 - lo) / span) * 100}%` }} />
@@ -283,7 +466,9 @@ function Week({ occ, from, today, vault, onProbe }: {
                 const s = minutes(o.start!);
                 const e = o.end ? minutes(o.end) : s + 30;
                 return (
-                  <button key={o.id} className={`agblock k-${o.kind}`}
+                  <button key={o.id} {...dragProps(o)}
+                          className={`agblock k-${o.kind} ${o.cancelled ? "off" : ""} `
+                                   + `${o.pending ? "pending" : ""}`}
                           onClick={() => onProbe(o)}
                           title={`${o.start}${o.end ? `–${o.end}` : ""} ${o.title}\n${o.source.path}`}
                           style={{ top: `${((s - lo) / span) * 100}%`,
@@ -304,9 +489,9 @@ function Week({ occ, from, today, vault, onProbe }: {
 /** No `vault` here on purpose: a month cell is too small to be a link as well
  *  as a target, so every item opens the provenance strip instead, and that
  *  strip carries the Obsidian link. One way in, from a cell this size. */
-function Month({ occ, from, to, anchor, today, onProbe }: {
+function Month({ occ, from, to, anchor, today, onProbe, onDrop }: {
   occ: Occurrence[]; from: Date; to: Date; anchor: Date; today: string;
-  onProbe: (o: Occurrence) => void;
+  onProbe: (o: Occurrence) => void; onDrop: (o: Occurrence, date: string) => void;
 }) {
   const cells: Date[] = [];
   for (let d = new Date(from); iso(d) <= iso(to); d = addDays(d, 1)) cells.push(new Date(d));
@@ -324,11 +509,14 @@ function Month({ occ, from, to, anchor, today, onProbe }: {
         const items = occ.filter(o => o.date === key);
         return (
           <div key={key} className={`agmonth-cell ${key === today ? "today" : ""} `
-                                  + `${dd.getMonth() === month ? "" : "outside"}`}>
+                                  + `${dd.getMonth() === month ? "" : "outside"}`}
+               {...dropProps(key, occ, onDrop)}>
             <span className="agmonth-n">{dd.getDate()}</span>
             <ul>
               {items.slice(0, MONTH_CELL_MAX).map(o => (
-                <li key={o.id} className={`agmonth-item k-${o.kind}`}>
+                <li key={o.id} className={`agmonth-item k-${o.kind} `
+                                        + `${o.cancelled ? "off" : ""} ${o.pending ? "pending" : ""}`}
+                    {...dragProps(o)}>
                   <button onClick={() => onProbe(o)}
                           title={`${o.start ?? "all day"} ${o.title}\n${o.source.path}`}>
                     <span className={`ag-glyph k-${o.kind}`}>{GLYPH[o.kind]}</span>

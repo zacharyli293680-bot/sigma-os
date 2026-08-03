@@ -35,6 +35,7 @@ _RUNTIME = str(Path(__file__).resolve().parents[2] / "runtime")
 if _RUNTIME not in sys.path:
     sys.path.insert(0, _RUNTIME)
 from sigma import call_model, gitops, ledger, parse_model_json, write_note  # noqa: E402
+import agenda as ag  # noqa: E402  — the calendar grammar and its serialiser
 import todo as td  # noqa: E402  — section inference, destinations, line grammar
 
 import commands  # noqa: E402  — the one spend-window policy, not a second copy
@@ -449,6 +450,251 @@ def api_queue_meta(req: MetaReq):
         return _err(500, "write failed", detail="the index could not be written")
     panels._cache.pop("queue", None)
     return {"ok": True, "id": req.id, **fields}
+
+
+# --------------------------------------------------------------------------
+# POST /api/agenda/add · /api/agenda/edit — the calendar's write path (P5)
+# --------------------------------------------------------------------------
+# **No new write path.** These compose a line, then go through the same
+# splice → mutex → pull → verify → commit → ledger machinery `/api/queue/add`
+# and `/api/capture` use. What is new is the *holds table*, in the spirit of
+# applier.py's: every refusal below is a rule, not a judgement, and each one has
+# an adversarial test.
+#
+#   line changed underneath the client   409 stale
+#   the composed line does not re-parse  400   never write what the scanner cannot read
+#   the line would span more than one    400   scope
+#   the note's checkbox count changes    400   completion is a human signal
+#   target escapes the vault             400   scope
+#   target is gitignored                 403   checked INSIDE the mutex, failing closed
+#   the occurrence is not an event row   400   rules are P6; notes are a different shape
+#   the git mutex is busy                409   refuse, never queue
+#
+# The gitignored check runs *after* the pull and *inside* the mutex, the way
+# applier.py does it and deliberately not the way the toggle does — a .gitignore
+# that changed during the pull is only judged correctly there. And it refuses
+# whether or not the path is `model_allow`-exempt: exemption governs what the
+# model may see, never what may be written, and `gitops.commit()` returns no SHA
+# for an ignored path, so such a write would be the only one in Sigma with no
+# ledger row and no undo.
+
+_CHECKBOX = re.compile(r"^\s*[-*]\s+\[[ xX]\]", re.M)
+
+
+class EventAdd(BaseModel):
+    date: str                      # YYYY-MM-DD
+    title: str
+    start: str | None = None       # HH:MM
+    end: str | None = None
+    end_date: str | None = None
+
+
+class EventEdit(BaseModel):
+    file: str                      # the month note it is in now
+    line: int
+    raw: str                       # the exact line the client saw
+    date: str
+    title: str
+    start: str | None = None
+    end: str | None = None
+    end_date: str | None = None
+    cancelled: str | None = None   # "" clears it, a date sets it
+
+
+def _month_rel(date: str) -> str:
+    return f"{ag.CALENDAR_DIR}/{date[:7]}.md"
+
+
+def _compose_checked(**kw) -> tuple:
+    """Compose a line and prove it reads back as the same event.
+
+    Returns (line, error). This is the "never write something the scanner cannot
+    read" hold, and it is a round-trip rather than a validation: the only
+    definition of a well-formed line that matters is *the parser's*, so the
+    parser is what is asked.
+    """
+    line = ag.compose_event(**kw)
+    if "\n" in line or "\r" in line:
+        return None, "a line may not span more than one line"
+    got = ag.parse_event(line)
+    if not got:
+        return None, "the composed line does not parse as an event row"
+    if (got["date"], got["start"], got["end"], got["end_date"],
+            got["cancelled"]) != (kw["date"], kw.get("start"), kw.get("end"),
+                                  kw.get("end_date") if kw.get("end_date") != kw["date"] else None,
+                                  kw.get("cancelled")):
+        return None, "the composed line does not read back as what was asked for"
+    return line, None
+
+
+def _sealed_inside_mutex(rel: str) -> str | None:
+    """`git check-ignore`, failing closed. Runs inside the write's mutex."""
+    r = gitops._git(VAULT, "check-ignore", "-q", rel)
+    if r.returncode == 0:
+        return "sealed path — gitignored, so a write here could never be committed or undone"
+    if r.returncode not in (0, 1):
+        return "could not verify the privacy boundary — failing closed"
+    return None
+
+
+@router.post("/agenda/add")
+def api_agenda_add(req: EventAdd):
+    """One typed event becomes a real line in a real month note."""
+    title = " ".join((req.title or "").split())
+    if not title:
+        return _err(400, "empty")
+    if len(title) > 300:
+        return _err(400, "too long", detail="an event title is not a note")
+    for label, value in (("date", req.date), ("end date", req.end_date)):
+        if value and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+            return _err(400, f"bad {label}", detail="expected YYYY-MM-DD")
+    if not req.date:
+        return _err(400, "bad date", detail="expected YYYY-MM-DD")
+    for label, value in (("start", req.start), ("end", req.end)):
+        if value and not re.fullmatch(r"\d{1,2}:\d{2}", value):
+            return _err(400, f"bad {label}", detail="expected HH:MM")
+
+    rel = _month_rel(req.date)
+    if _vault_rel(rel) != rel:
+        return _err(400, "bad path")
+
+    line, why = _compose_checked(
+        date=req.date, title=title, start=req.start, end=req.end,
+        end_date=req.end_date,
+        block_id=ag.new_block_id(rel, req.date, title))
+    if why:
+        return _err(400, "bad event", detail=why)
+
+    dest = VAULT / rel
+    try:
+        with gitops.vault_write(VAULT) as w:
+            sealed = _sealed_inside_mutex(rel)
+            if sealed:
+                return _err(403, "sealed path", detail=sealed)
+            existed = dest.exists()
+            body = (dest.read_text(encoding="utf-8", errors="replace") if existed
+                    else ag.MONTH_NOTE.format(month=req.date[:7]))
+            before = len(_CHECKBOX.findall(body))
+            out = td.splice(body, ag.EVENTS_HEADING, line)
+            if len(_CHECKBOX.findall(out)) != before:
+                return _err(400, "checkbox", detail="a calendar write may not add a checkbox")
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            write_note(dest, out)
+            res = w.commit(rel, f"zach (dashboard): add event to {rel}")
+    except gitops.GitBusy as e:
+        return _err(409, "busy", detail=f"another Sigma write is in progress ({e})")
+    except OSError as e:
+        return _err(500, "write failed", detail=str(e))
+
+    ledger.record("zach", "append" if existed else "create", rel, res["sha"],
+                  f"added an event: {title[:60]}")
+    panels.drop_task_caches(*(("graph",) if not existed else ()))
+    return {"ok": True, "file": rel, "raw": line, "sha": res["sha"],
+            "created_note": not existed, "note": res["note"]}
+
+
+@router.post("/agenda/edit")
+def api_agenda_edit(req: EventEdit):
+    """Rewrite one event line — retitle, retime, reschedule, or cancel.
+
+    A reschedule across a month boundary moves the line between month notes in
+    **one commit touching both**, the same rule `/api/queue/edit` follows: two
+    commits would let an undo leave the event in neither note or in both.
+    """
+    src = _vault_rel(req.file)
+    if src is None:
+        return _err(400, "bad path")
+    title = " ".join((req.title or "").split())
+    if not title:
+        return _err(400, "empty")
+    if len(title) > 300:
+        return _err(400, "too long")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", req.date or ""):
+        return _err(400, "bad date", detail="expected YYYY-MM-DD")
+    cancelled = (req.cancelled or "").strip() or None
+    if cancelled and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", cancelled):
+        return _err(400, "bad cancelled", detail="expected YYYY-MM-DD")
+
+    # The line the client claims to be editing has to *be* an event row. A rule
+    # occurrence reaches this endpoint only through a UI bug or a hand-rolled
+    # request, and moving one would silently rewrite a recurrence for every week
+    # rather than this one — which is precisely what P6 exists to do properly.
+    was = ag.parse_event(req.raw or "")
+    if not was:
+        if ag.parse_rule(req.raw or ""):
+            return _err(400, "not an event",
+                        detail="this is a recurrence rule — editing one occurrence "
+                               "of it is P6, and moving the rule would move every week")
+        return _err(400, "not an event", detail="that line is not an event row")
+
+    line, why = _compose_checked(
+        date=req.date, title=title, start=req.start, end=req.end,
+        end_date=req.end_date, cancelled=cancelled,
+        block_id=was["block_id"] or ag.new_block_id(src, req.date, title))
+    if why:
+        return _err(400, "bad event", detail=why)
+
+    dst = _month_rel(req.date)
+    if _vault_rel(dst) != dst:
+        return _err(400, "bad path")
+    moving = dst != src
+    src_p, dst_p = VAULT / src, VAULT / dst
+
+    try:
+        with gitops.vault_write(VAULT) as w:
+            for rel in ({src, dst} if moving else {src}):
+                sealed = _sealed_inside_mutex(rel)
+                if sealed:
+                    return _err(403, "sealed path", detail=sealed)
+            try:
+                body = src_p.read_text(encoding="utf-8")
+            except OSError:
+                return _err(409, "stale", detail="the note is gone or unreadable")
+            before = len(_CHECKBOX.findall(body))
+
+            if not moving:
+                out = td.replace_line(body, req.line, req.raw, line)
+                if out is None:
+                    return _err(409, "stale", detail="the line changed underneath you")
+                if len(_CHECKBOX.findall(out)) != before:
+                    return _err(400, "checkbox",
+                                detail="a calendar write may not change a checkbox")
+                write_note(src_p, out)
+                touched = [src]
+            else:
+                cut = td.unsplice(body, req.line, req.raw)
+                if cut is None:
+                    return _err(409, "stale", detail="the line changed underneath you")
+                existed = dst_p.exists()
+                dst_body = (dst_p.read_text(encoding="utf-8", errors="replace")
+                            if existed else ag.MONTH_NOTE.format(month=req.date[:7]))
+                spliced = td.splice(dst_body, ag.EVENTS_HEADING, line)
+                if (len(_CHECKBOX.findall(cut)) + len(_CHECKBOX.findall(spliced))
+                        != before + len(_CHECKBOX.findall(dst_body))):
+                    return _err(400, "checkbox",
+                                detail="a calendar write may not change a checkbox")
+                write_note(src_p, cut)
+                dst_p.parent.mkdir(parents=True, exist_ok=True)
+                write_note(dst_p, spliced)
+                touched = [src, dst]
+
+            verb = "cancel" if cancelled and not was["cancelled"] else (
+                "move" if moving else "edit")
+            res = w.commit(touched, f"zach (dashboard): {verb} event in {dst}")
+    except gitops.GitBusy as e:
+        return _err(409, "busy", detail=f"another Sigma write is in progress ({e})")
+    except OSError as e:
+        return _err(500, "write failed", detail=str(e))
+
+    # Spelled out rather than suffixed. `f"{verb}d"` gave "editd" in the ledger,
+    # which is the morning view — the one place in this system whose readability
+    # is a stated feature, so it does not get to have typos generated into it.
+    said = {"cancel": "cancelled", "move": "moved", "edit": "edited"}[verb]
+    ledger.record("zach", "update", dst, res["sha"],
+                  f"{said} an event: {title[:60]}")
+    panels.drop_task_caches()
+    return {"ok": True, "file": dst, "raw": line, "sha": res["sha"],
+            "moved": moving, "note": res["note"]}
 
 
 @router.get("/activity")

@@ -1331,6 +1331,57 @@ pre.diff .meta { color: var(--muted); }
 .aglist ul { margin: 0; padding: 0; }
 .aglist p { margin: 0; font: 400 11px/1.6 var(--mono); }
 
+/* ------------------- Agenda P5: writes */
+
+.agadd {
+  flex: none; display: flex; align-items: center; gap: 6px;
+  padding: 6px 12px; border-bottom: 1px solid var(--panel-line-dim);
+}
+.agadd input {
+  background: rgba(34, 211, 238, 0.04); border: 1px solid var(--panel-line-dim);
+  color: var(--ink); font: 400 11px/1 var(--mono); padding: 4px 6px;
+}
+.agadd input:focus { outline: none; border-color: var(--cyan); }
+.agadd .agadd-t { flex: 1 1 auto; min-width: 120px; }
+.agadd button {
+  background: none; border: 1px solid var(--panel-line); color: var(--cyan);
+  font: 600 9px/1 var(--sans); letter-spacing: 0.14em; padding: 5px 10px; cursor: pointer;
+}
+.agadd button:disabled { color: var(--muted); border-color: var(--panel-line-dim); cursor: default; }
+.agadd .err { color: var(--red); font: 400 10.5px/1 var(--mono); }
+.agadd-said { font: 400 10px/1 var(--mono); max-width: 300px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+
+.agview-errs {
+  margin: 0; padding: 5px 12px; font: 400 11px/1.4 var(--mono);
+  color: var(--red); border-bottom: 1px solid var(--red);
+  display: flex; align-items: center; gap: 8px;
+}
+.agview-errs .ghost { margin-left: auto; }
+
+.agview-cancel {
+  background: none; border: 1px solid var(--amber); color: var(--amber);
+  font: 600 8.5px/1 var(--sans); letter-spacing: 0.14em; padding: 4px 8px; cursor: pointer;
+}
+.agview-cancel:hover { background: rgba(255, 176, 32, 0.12); }
+
+/* A cancelled occurrence keeps its place and stops asking for attention.
+   Struck *and* dimmed *and* glyphed — status is never colour alone. */
+.agrow.off .agrow-title, .agmonth-item.off button { text-decoration: line-through; opacity: 0.5; }
+.agblock.off { opacity: 0.45; border-style: dashed; }
+.agblock.off .agblock-n { text-decoration: line-through; }
+.ag-cancelled { color: var(--amber); margin-right: 4px; }
+
+/* In flight: the move has rendered but not landed. It snaps back if a hold
+   fires, so it must not look settled while it is still a claim. */
+.agrow.pending, .agmonth-item.pending { opacity: 0.6; }
+.agblock.pending { opacity: 0.6; border-style: dotted; }
+.agrow.pending .agrow-when::after,
+.agmonth-item.pending button::after { content: " ⟳"; color: var(--cyan); }
+
+[draggable="true"] { cursor: grab; }
+.agmonth-cell.drop-on, .agweek-col.drop-on { background: rgba(34, 211, 238, 0.10); }
+
 .capture {
   margin-top: 16vh; width: min(620px, 94vw);
   background: var(--void); border: 1px solid var(--panel-line);

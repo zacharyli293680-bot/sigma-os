@@ -96,6 +96,11 @@ _TIME = r"\d{1,2}:\d{2}"
 # two decisions independent and the failure loud.
 EVENT_BID_RE = re.compile(r"\s+\^(sg-evt-[0-9a-fA-F]{8})\s*$")
 RULE_RID_RE = re.compile(r"\s+\^(sg-rule-[A-Za-z0-9._-]+)\s*$")
+# Cancelling is a status, never a line removal (CLAUDE.md §3). The date is the
+# day it was cancelled, not the day it was going to happen — this vault does not
+# delete the record of something that was once true, and "when did I drop this"
+# is usually the interesting half when you look back.
+CANCELLED_RE = re.compile(rf"\s+cancelled::\s*({_DATE})\s*$")
 # A marker left in the body after stripping is a malformed ID, not a title.
 _ORPHAN_ID_RE = re.compile(r"\^sg-(?:evt|rule)-")
 
@@ -157,10 +162,15 @@ def parse_event(line: str) -> dict | None:
     looks close. The write path's "must re-parse as the same kind of occurrence"
     hold depends on this being strict about what it accepts back.
     """
-    body, block_id = (line or "").rstrip(), None
+    # Strip from the end inward: the ID last written is the outermost token, and
+    # the status sits between it and the title.
+    body, block_id, cancelled = (line or "").rstrip(), None, None
     hit = EVENT_BID_RE.search(body)
     if hit:
         block_id, body = hit.group(1), body[:hit.start()]
+    hit = CANCELLED_RE.search(body)
+    if hit:
+        cancelled, body = hit.group(1), body[:hit.start()]
     m = EVENT_RE.match(body)
     if not m:
         return None
@@ -189,17 +199,17 @@ def parse_event(line: str) -> dict | None:
     return {"date": date, "end_date": end_date, "start": start, "end": end,
             "all_day": start is None,
             "open_ended": bool(start and not end),
-            "title": title, "block_id": block_id}
+            "title": title, "block_id": block_id, "cancelled": cancelled}
 
 
 def compose_event(date: str, title: str, start: str | None = None,
                   end: str | None = None, end_date: str | None = None,
-                  block_id: str | None = None) -> str:
-    """The canonical line for an event. Writes nothing — P5 owns the writing.
+                  block_id: str | None = None, cancelled: str | None = None) -> str:
+    """The canonical line for an event. Writes nothing — the endpoint does that.
 
-    Exists in P1 so the round-trip test has something to test: every line this
-    produces must parse back to the same occurrence, and that property is a
-    property of the grammar rather than of the endpoint that will use it.
+    The single serialiser: the write path composes through here and then parses
+    the result back before committing, so "never write something the scanner
+    cannot read" is enforced by construction rather than by discipline.
     """
     line = f"- {date}"
     if end_date and end_date != date:
@@ -207,9 +217,28 @@ def compose_event(date: str, title: str, start: str | None = None,
     if start:
         line += f" {start}–{end}" if end else f" {start}–"
     line += f" {' '.join(title.split())}"
+    if cancelled:
+        line += f" cancelled::{cancelled}"
     if block_id:
         line += f" ^{block_id}"
     return line
+
+
+# The month note a write creates when the month has none yet. It lives here
+# rather than in the endpoint because this module owns the grammar, and the
+# heading is part of it — `splice` appends under `## Events`, and a note without
+# that heading would grow a second one.
+MONTH_NOTE = """---
+type: calendar-month
+month: {month}
+tags: [calendar]
+---
+
+# {month}
+
+## Events
+"""
+EVENTS_HEADING = "## Events"
 
 
 def new_block_id(*parts: str) -> str:
@@ -439,7 +468,7 @@ def _display(text: str) -> str:
 def _occ(kind, oid, date, title, *, path, line=None, block_id=None,
          rule_id=None, field=None, start=None, end=None, span=None,
          no_sync=False, owner="sigma", section=None, parent=None,
-         raw=None, priority=None) -> dict:
+         raw=None, priority=None, cancelled=None) -> dict:
     if section is None:
         section, parent = td.section_of(path)
     return {
@@ -452,6 +481,11 @@ def _occ(kind, oid, date, title, *, path, line=None, block_id=None,
         # to add a field to a shape four call sites already build. None for a
         # note occurrence, whose source is frontmatter rather than a line.
         "raw": raw, "priority": priority,
+        # The date it was cancelled, or None. The occurrence is still emitted —
+        # a cancelled thing that vanishes is indistinguishable from one that was
+        # deleted, and this vault does not delete. The UI dims it; capacity
+        # ignores it.
+        "cancelled": cancelled,
         # Provenance is not optional and not conditional. Every occurrence can
         # answer "which file, which line" — that is what the [?] affordance
         # renders, and asserting it as an invariant is cheaper than trusting
@@ -491,7 +525,7 @@ def _event_occurrences(ev: dict, lo: str, hi: str) -> list:
             end=ev["end"] if (n == total - 1 or not multi) else None,
             span=({"start": first, "end": last, "index": n, "length": total}
                   if multi else None),
-            no_sync=ev["no_sync"], raw=ev["raw"]))
+            no_sync=ev["no_sync"], raw=ev["raw"], cancelled=ev["cancelled"]))
     return out
 
 
@@ -620,8 +654,8 @@ def committed_hours(occurrences: list) -> dict:
     """
     hours: dict = {}
     for o in occurrences:
-        if not o["start"] or not o["end"]:
-            continue
+        if not o["start"] or not o["end"] or o.get("cancelled"):
+            continue                     # a cancelled hour is not a spent one
         sh, sm = (int(x) for x in o["start"].split(":"))
         eh, em = (int(x) for x in o["end"].split(":"))
         mins = (eh * 60 + em) - (sh * 60 + sm)

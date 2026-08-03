@@ -55,6 +55,14 @@ export type Occurrence = {
   no_sync: boolean;              // gitignored but model-exempt — bronze, never hidden
   /** Two sources disagreeing about the same subject. Shown, never resolved. */
   conflict: { with: string[]; why: string } | null;
+  /** The date it was cancelled, or null. A cancelled event keeps its line and
+   *  keeps being emitted — it renders struck and stops counting toward
+   *  committed hours. Nothing here deletes a record of something once true. */
+  cancelled: string | null;
+  /** Client-only: an optimistic move is in flight for this occurrence. Never
+   *  sent by the server; set by the view so a moved row can render as unsettled
+   *  until its commit lands. */
+  pending?: boolean;
 };
 /** A line that was meant to be an event and is not. Reported rather than
  *  dropped: an occurrence that silently stopped existing is this subsystem's
@@ -67,6 +75,15 @@ export type Agenda = {
   problems: AgendaProblem[];
   /** The vault's single declaration, from schedule.md. null until one exists. */
   timezone: string | null;
+};
+
+/** What POST /api/agenda/add and /edit answer with — where the line landed and
+ *  what it now reads, so the client can verify rather than assume. */
+export type AgendaWrite = {
+  ok: true; file: string; raw: string; sha: string | null;
+  created_note?: boolean; moved?: boolean;
+  /** Carries a failed pull: "committed locally but never reached the remote". */
+  note?: string | null;
 };
 
 /** The four priority queues (todo.py). Days are no longer the organising unit;
