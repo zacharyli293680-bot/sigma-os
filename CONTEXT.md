@@ -958,8 +958,23 @@ now to its end, minus what is still ahead in it. A number that counts down throu
 you read it, where a whole-day figure still claims nine free hours at 21:00. **It feeds nothing until
 P7**, deliberately: three phases of checking it against a real day before the queue may believe it.
 
-Clicking anything opens its note in Obsidian. In P4 that becomes the full agenda view; until that
-exists, a click that opens the source beats a click that does nothing.
+Clicking anything opens its note in Obsidian.
+
+**The full view** (`agenda.tsx`, agenda P4) opens on `Ctrl+'` or rail slot **CA**, and peels *after*
+work — it is normally entered from the work view or the rail, so Esc unwinds in the order you arrived.
+Read-only; writing is P5. Three modes, because they answer different questions: **Week** is the
+workhorse (an hour grid, with an all-day gutter for everything dated but untimed, which is every task),
+**Month** is density and horizon, **Agenda** is the 14-day list the old strip was reaching for.
+
+The hour grid **widens rather than clips** — a 06:30 event is not something a calendar may hide because
+its default window starts at 08:00. Month cells draw three items and count the rest; what is not drawn
+is never silently dropped. Filtering by section reuses `todo.section_of` through the resolver rather
+than growing a second answer to whose work something is.
+
+**`[?]` on any occurrence answers *why is this here***, opening a provenance strip at the foot of the
+view: the file, the line, and which key or rule put it on that day (`frontmatter due:`,
+`rule sg-rule-cse311`, a block ID). It is the queue's score breakdown applied to dates, and it sits in
+one fixed place rather than in a popover so there is nothing to position and one place to look.
 
 **The centre stage** is one scene rather than a panel with a picture in it: the brain fills the cell,
 the **reactor** sits at its heart in a pool of darkened sky, and the vault stat chips ride the bottom
@@ -993,7 +1008,8 @@ Chrome intermittently eats Ctrl+K and Ctrl+G at the browser level.
 | `Ctrl+.` | the no-sync lens |
 | `Ctrl+N` | quick capture (Ctrl+Enter submits) |
 | `Ctrl+;` | the work view — the four queues, and quick-add |
-| `Esc` | peels one layer: capture → review → work → study → build → palette → no-sync → ledger → chat → dive → active brain filter |
+| `Ctrl+'` | the full agenda — week, month, and the 14-day list |
+| `Esc` | peels one layer: capture → review → work → **agenda** → study → build → palette → no-sync → ledger → chat → dive → active brain filter |
 
 **Rail slots.** `OV` overview · `BR` brain · `AG` agents *(not built)* · `WK` work · `ST` study ·
 `BD` build · `CR` career *(not built)* · `SY` system *(not built)* · `⊘ SEAL` the no-sync lens with a
@@ -1303,7 +1319,7 @@ unambiguous version.
 | 2026-07-31 | **D5** — the no-sync boundary as one scan with two opposite failure directions; the mark, the ring, and the Ctrl+. lens. **D6** — study intake (incl. `.pptx` with slide structure), exam mode, repo awareness, the calendar strip, quick capture, brain filters, approve-a-proposal-from-the-dashboard. The auditor fixed by **precomputing the scan** instead of buying more turns. `devlog.py`. The cadence bug (`is_due` by calendar day) and the backup check |
 | 2026-08-01 | `mapper.py` and `scaffold.py`. **The priority-queue engine** — four self-maintaining queues replacing the day-bucketed list, with quick-add, AI reword, completion/promotion, expansion views, and snooze/pin/archive/move. **`retro.py`** — the 06:00 retrospective, and the planner it replaces, retired |
 | 2026-08-02 | **Agenda P0** — the calendar's contract amendment: `02-Areas/Personal/Calendar/`, the `#calendar` tag, tasks are date-only, a `Calendar events` section holding the line grammar, and the `calendar-month` and `schedule` schemas. Approved and placed by hand, because `reflect --apply` appends contract blocks to one section and this one belongs in five |
-| 2026-08-03 | **Agenda P1** — `runtime/agenda.py`: the resolver, read-only. Event and rule parsing, read-time expansion, the merge, provenance on every occurrence, conflict detection, a TTL over the scan. **Agenda P2** — `GET /api/agenda`, and `/api/tasks` folded in behind the same resolver rather than left as a second answer to "what is due". **Agenda P3** — the today rail, replacing the 14-day strip and retiring `calendar.tsx`; free-hours-left displayed and feeding nothing |
+| 2026-08-03 | **Agenda P1** — `runtime/agenda.py`: the resolver, read-only. Event and rule parsing, read-time expansion, the merge, provenance on every occurrence, conflict detection, a TTL over the scan. **Agenda P2** — `GET /api/agenda`, and `/api/tasks` folded in behind the same resolver rather than left as a second answer to "what is due". **Agenda P3** — the today rail, replacing the 14-day strip and retiring `calendar.tsx`; free-hours-left displayed and feeding nothing. **Agenda P4** — the full week/month/agenda view on `Ctrl+'` and rail slot CA, read-only, with `[?]` provenance on every occurrence |
 
 ### The feature list, by area
 
@@ -1384,7 +1400,8 @@ re-measured since; what changed is listed under it rather than by editing number
 
 **Since then (2026-08-02 → 03), the agenda subsystem's first four phases.** P0 amended `CLAUDE.md` in
 five places; P1 added `runtime/agenda.py`; P2 added `GET /api/agenda` and moved `/api/tasks` onto the
-resolver; P3 replaced the 14-day strip with the today rail and deleted `calendar.tsx`. Tests are now
+resolver; P3 replaced the 14-day strip with the today rail and deleted `calendar.tsx`; P4 added the
+full view on `Ctrl+'`. **All of it is still read-only.** Tests are now
 **21 suites, 413 test functions**, green under `interface/backend/.venv`. Doctor reports one item
 waiting — a pending proposal unrelated to this work.
 
@@ -1434,11 +1451,10 @@ Honest list. Nothing here is hidden behind a "coming soon".
 From the vision note, in rough order of how ready each is. The first entry is not from the vision note,
 and is further along than anything below it:
 
-- **The agenda subsystem, P4 onward.** P0–P3 have shipped (§7.15, §8, §9, §11): the contract, the
-  resolver, the read endpoint, and the today rail. What is left is the full view and everything that
-  writes — **P4** the full
-  week/month/agenda view on `Ctrl+'` (verified free in Chrome on 2026-08-03, unlike `Ctrl+K` and
-  `Ctrl+G`); **P5** writes, behind their own holds table and one adversarial test per hold; **P6** rule
+- **The agenda subsystem, P5 onward.** P0–P4 have shipped (§7.15, §8, §9, §11): the contract, the
+  resolver, the read endpoint, the today rail, and the full view. **Everything so far is read-only —
+  what is left is everything that writes.** **P5** writes, behind their own holds table and one
+  adversarial test per hold; **P6** rule
   exceptions; **P7** committed hours feeding queue windowing and the 06:00 retrospective — the actual
   reason the subsystem exists, since the queue still has no idea what a day already costs; **P8** Google
   Calendar. The brief is `03-Projects/sigma-os/sigma-os-calendar-plan.md` in the vault, and its nine open
