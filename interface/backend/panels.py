@@ -35,9 +35,10 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import APIRouter
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Query
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from agent import VAULT
 from privacy import gitignore_scan, model_allow_prefixes, model_allow_raw
@@ -47,6 +48,7 @@ from privacy import gitignore_scan, model_allow_prefixes, model_allow_raw
 _RUNTIME = str(Path(__file__).resolve().parents[2] / "runtime")
 if _RUNTIME not in sys.path:
     sys.path.insert(0, _RUNTIME)
+import agenda as ag         # noqa: E402  — the calendar resolver
 import fleet as fl          # noqa: E402
 import reflect as rf        # noqa: E402
 import retro                # noqa: E402  — the 06:00 review; NOT backend/review.py
@@ -73,6 +75,24 @@ _cache: dict = {}
 # because rebuilding it is expensive, and a new graph identity relays the sky —
 # ticking a box must not do that.
 TASK_PANELS = ("tasks", "queue")
+
+
+def drop_task_caches(*extra):
+    """Drop every cache derived from checkbox state — including the resolver's.
+
+    Since P2, `/api/tasks` is a projection of `agenda.collect()`, so there are
+    now **two** caches behind one panel. Popping the panel key alone recomputes
+    the projection from the resolver's still-warm 15s scan, and the task you
+    just ticked comes straight back — which is the exact 15-second lag
+    TASK_PANELS was named to make impossible. Two caches, one fact, one
+    function that drops both.
+
+    `/api/queue/meta` deliberately does not call this: snooze, pin and archive
+    live in the sidecar, and the resolver never reads the sidecar.
+    """
+    for key in (*TASK_PANELS, *extra):
+        _cache.pop(key, None)
+    ag.invalidate(VAULT)
 
 
 def _cached(key: str, ttl: float, compute):
@@ -202,46 +222,34 @@ _META_RE = td.META_RE
 _EXCLUDED_TOPS = td.EXCLUDED_TOPS
 
 
-def _scan_tasks() -> dict:
-    today = datetime.date.today().isoformat()
-    files = [p for p in VAULT.rglob("*.md")
-             if not (set(p.relative_to(VAULT).parts[:-1]) & _EXCLUDED_TOPS)
-             and not p.relative_to(VAULT).parts[0].startswith(".")
-             and p.relative_to(VAULT).parts[0] not in _EXCLUDED_TOPS]
-    rels = [_rel(p) for p in files]
-    sealed, no_sync = _split(rels)
+def _ag_split(_vault, rels):
+    """agenda.py passes the vault explicitly; `_split` closes over it. Same
+    adapter `/api/queue` already uses, for the same reason."""
+    return _split(rels)
 
-    tasks = []
-    for p, rel in zip(files, rels):
-        if rel in sealed:
-            continue                      # gitignored and not exempted — hidden
-        try:
-            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
-            continue
-        in_fence = False
-        for i, line in enumerate(lines, 1):
-            if line.lstrip().startswith("```"):
-                in_fence = not in_fence
-                continue
-            if in_fence:
-                continue     # CLAUDE.md's fenced example task must not become
-                             # a phantom overdue item on the Today panel
-            m = _TASK_RE.match(line)
-            if not m or m.group(1) != " ":
-                continue                  # done tasks stay in the notes, not here
-            due = _DUE_RE.search(m.group(2))
-            if not due:
-                continue                  # the Today panel shows dated work only
-            text = _META_RE.sub("", m.group(2)).strip()
-            prio = next((v for e, v in _PRIORITY.items() if e in m.group(2)), None)
-            # `raw` is the staleness token for POST /api/tasks/toggle: the
-            # client hands back the exact line it saw, and the toggle refuses
-            # if the note moved underneath it.
-            tasks.append({"text": text, "due": due.group(1), "priority": prio,
-                          "overdue": due.group(1) < today,
-                          "no_sync": rel in no_sync,
-                          "file": rel, "line": i, "raw": line})
+
+def _scan_tasks() -> dict:
+    """The Today panel, now a projection of the resolver rather than a second
+    scan of the vault.
+
+    This endpoint's own walk-and-parse is gone: it and `agenda.py` were two
+    implementations of *what is due*, which is precisely the disagreement the
+    calendar's one-resolver rule exists to prevent — and it had already drifted
+    once, into `todo.py`, before that copy was pulled back out.
+
+    The response shape is unchanged on purpose. `panels.tsx` and the 14-day
+    strip read this today, and a phase that swaps the engine should not also
+    move the wires; the shape changes at P3, when the rail replaces the strip.
+    """
+    today = datetime.date.today().isoformat()
+    tasks = [{"text": o["title"], "due": o["date"], "priority": o["priority"],
+              "overdue": o["date"] < today, "no_sync": o["no_sync"],
+              # `raw` is the staleness token for POST /api/tasks/toggle: the
+              # client hands back the exact line it saw, and the toggle refuses
+              # if the note moved underneath it.
+              "file": o["source"]["path"], "line": o["source"]["line"],
+              "raw": o["raw"]}
+             for o in ag.due_tasks(VAULT, split=_ag_split)]
 
     tasks.sort(key=lambda t: (t["due"], -(t["priority"] if t["priority"] is not None else -1)))
 
@@ -265,6 +273,55 @@ def _scan_tasks() -> dict:
 @router.get("/tasks")
 def api_tasks():
     return _cached("tasks", 15, _scan_tasks)
+
+
+# --------------------------------------------------------------------------
+# GET /api/agenda — the calendar (agenda.py)
+# --------------------------------------------------------------------------
+
+AGENDA_DEFAULT_DAYS = 14        # the horizon the 14-day strip already shows
+
+
+def _is_date(s) -> bool:
+    try:
+        datetime.date.fromisoformat((s or "").strip())
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+@router.get("/agenda")
+def api_agenda(frm: Annotated[str | None, Query(alias="from")] = None,
+               to: Annotated[str | None, Query()] = None):
+    """Everything on the calendar between two dates, from the one resolver.
+
+    Deliberately **not** wrapped in `_cached`: the key would have to include the
+    range, and `_cache` is a plain dict with no eviction — a month of navigating
+    would leave a scan of the vault behind for every window visited. The cache
+    that matters lives in `agenda.collect_cached`, keyed by vault, because the
+    scan is the expensive part and projecting a range out of it is not.
+
+    A refused range comes back as 400 carrying the resolver's own words, because
+    "this range is not allowed" and "this range is empty" are different answers
+    and a UI that cannot tell them apart will render the first as the second.
+    """
+    today = datetime.date.today()
+    start = (frm or "").strip() or today.isoformat()
+    if not _is_date(start):
+        return JSONResponse({"error": "bad from", "detail": "expected YYYY-MM-DD"},
+                            status_code=400)
+    end = (to or "").strip() or (
+        datetime.date.fromisoformat(start)
+        + datetime.timedelta(days=AGENDA_DEFAULT_DAYS - 1)).isoformat()
+    if not _is_date(end):
+        return JSONResponse({"error": "bad to", "detail": "expected YYYY-MM-DD"},
+                            status_code=400)
+
+    got = ag.resolve(VAULT, start, end, split=_ag_split)
+    if got.get("error"):
+        return JSONResponse({"error": got["error"], "from": start, "to": end},
+                            status_code=400)
+    return {**got, "today": today.isoformat()}
 
 
 # --------------------------------------------------------------------------

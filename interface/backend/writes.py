@@ -128,9 +128,11 @@ def api_toggle(req: ToggleReq):
                   extra={"line": req.line})
     # Both task panels, not just /api/tasks. The work view's window promotes the
     # next task the moment one pops, and a 15s stale cache would make the queue
-    # feel broken at exactly the moment it is meant to feel immediate.
-    for key in panels.TASK_PANELS:
-        panels._cache.pop(key, None)
+    # feel broken at exactly the moment it is meant to feel immediate. Since P2
+    # this also drops the resolver's scan, which /api/tasks is now a projection
+    # of — popping the panel key alone would recompute from a warm scan and hand
+    # back the task that was just ticked.
+    panels.drop_task_caches()
     return {"ok": True, "sha": res["sha"], "absorbed": res["absorbed"],
             "note": res["note"], "raw": flipped}
 
@@ -221,8 +223,7 @@ def api_queue_add(req: AddReq):
     # A new note is a new node, so the graph is genuinely stale; appending to an
     # existing one is not, and relaying the sky over a one-line append would be
     # a visible jolt for nothing.
-    for key in (*panels.TASK_PANELS, *(("graph",) if not existed else ())):
-        panels._cache.pop(key, None)
+    panels.drop_task_caches(*(("graph",) if not existed else ()))
     return {"ok": True, "file": rel, "section": section, "parent": parent,
             "raw": line, "sha": res["sha"], "created_note": not existed}
 
@@ -392,8 +393,7 @@ def api_queue_edit(req: EditReq):
 
     ledger.record("zach", "update", dst, res["sha"],
                   f"{'moved' if moving else 'edited'} a task: {text[:60]}")
-    for key in panels.TASK_PANELS:
-        panels._cache.pop(key, None)
+    panels.drop_task_caches()
     return {"ok": True, "file": dst, "section": section, "parent": parent,
             "raw": line, "id": new_id, "moved": moving, "sha": res["sha"]}
 
@@ -479,8 +479,7 @@ def api_revert(req: RevertReq):
     ledger.record("zach", "revert", target.get("target", ""), r["sha"],
                   f"reverted: {target.get('summary', target.get('sha', ''))}",
                   extra={"reverts": req.sha})
-    for key in (*panels.TASK_PANELS, "proposals", "projects"):
-        panels._cache.pop(key, None)
+    panels.drop_task_caches("proposals", "projects")
     return {"ok": True, "sha": r["sha"]}
 
 
@@ -548,6 +547,5 @@ def api_capture(body: Capture):
         return _err(500, "write failed", detail=str(e))
 
     ledger.record("zach", "create", rel, res["sha"], f"captured: {first[:60]}")
-    for key in (*panels.TASK_PANELS, "graph", "study"):
-        panels._cache.pop(key, None)
+    panels.drop_task_caches("graph", "study")
     return {"ok": True, "file": rel, "sha": res["sha"], "note": res["note"]}

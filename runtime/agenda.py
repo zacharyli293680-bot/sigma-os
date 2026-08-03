@@ -62,11 +62,22 @@ CALENDAR_DIR = "02-Areas/Personal/Calendar"
 SCHEDULE_REL = f"{CALENDAR_DIR}/schedule.md"
 MONTH_NAME_RE = re.compile(r"^(\d{4})-(\d{2})\.md$")
 
-# Daily notes carry `date:` and are journal, not commitment — putting all of
-# them on the calendar would bury every real event under one entry per day.
-# QUEUE_EXCLUDED_TOPS is exactly the right set (EXCLUDED_TOPS + 01-Daily) and is
-# reused rather than restated, so a folder added there is added here too.
-EXCLUDED_TOPS = td.QUEUE_EXCLUDED_TOPS
+# The two exclusions differ by exactly one folder, and the difference is not an
+# oversight.
+#
+# A daily note carries `date:` and is journal, not commitment: putting all of
+# them on the calendar buries every real event under one entry per day (the
+# vault has seven such notes and zero real dated notes today, so the ratio is
+# not hypothetical). But a dated *checkbox* inside a daily note is real work
+# with a real deadline, and `/api/tasks` has always shown it — todo.py says so
+# where it defines QUEUE_EXCLUDED_TOPS. So notes skip 01-Daily and tasks do not.
+NOTE_EXCLUDED_TOPS = td.QUEUE_EXCLUDED_TOPS
+TASK_EXCLUDED_TOPS = td.EXCLUDED_TOPS
+
+# A range guard, because expansion is per-day. `?from=1900-01-01&to=2999-12-31`
+# would walk 400,000 days per rule; refusing is the only sane answer and saying
+# so beats a request that never returns.
+MAX_RANGE_DAYS = 800
 
 # --------------------------------------------------------------------------
 # the line grammar
@@ -285,9 +296,9 @@ def expand(rule: dict, frm: str, to: str) -> list:
 
 def _rels(vault: Path) -> tuple:
     files = [p for p in vault.rglob("*.md")
-             if not (set(p.relative_to(vault).parts[:-1]) & EXCLUDED_TOPS)
+             if not (set(p.relative_to(vault).parts[:-1]) & NOTE_EXCLUDED_TOPS)
              and not p.relative_to(vault).parts[0].startswith(".")
-             and p.relative_to(vault).parts[0] not in EXCLUDED_TOPS]
+             and p.relative_to(vault).parts[0] not in NOTE_EXCLUDED_TOPS]
     return files, [p.relative_to(vault).as_posix() for p in files]
 
 
@@ -377,8 +388,8 @@ def collect(vault, split=None) -> dict:
                           "no_sync": rel in no_sync})
 
     return {"events": events, "notes": notes, "rules": rules,
-            "tasks": td.scan(vault, split=split), "timezone": timezone,
-            "problems": problems}
+            "tasks": td.scan(vault, split=split, tops=TASK_EXCLUDED_TOPS),
+            "timezone": timezone, "problems": problems}
 
 
 # --------------------------------------------------------------------------
@@ -411,13 +422,20 @@ def collect_cached(vault, split=None, ttl: float = CACHE_TTL) -> dict:
 
 def _occ(kind, oid, date, title, *, path, line=None, block_id=None,
          rule_id=None, field=None, start=None, end=None, span=None,
-         no_sync=False, owner="sigma", section=None, parent=None) -> dict:
+         no_sync=False, owner="sigma", section=None, parent=None,
+         raw=None, priority=None) -> dict:
     if section is None:
         section, parent = td.section_of(path)
     return {
         "kind": kind, "id": oid, "date": date,
         "start": start, "end": end, "all_day": start is None,
         "title": title, "owner": owner,
+        # `raw` is the exact line, and it is the staleness token every write in
+        # this system already runs on — the client hands back what it saw and
+        # the server refuses on mismatch. It is here from P1 so P5 does not have
+        # to add a field to a shape four call sites already build. None for a
+        # note occurrence, whose source is frontmatter rather than a line.
+        "raw": raw, "priority": priority,
         # Provenance is not optional and not conditional. Every occurrence can
         # answer "which file, which line" — that is what the [?] affordance
         # renders, and asserting it as an invariant is cheaper than trusting
@@ -457,8 +475,36 @@ def _event_occurrences(ev: dict, lo: str, hi: str) -> list:
             end=ev["end"] if (n == total - 1 or not multi) else None,
             span=({"start": first, "end": last, "index": n, "length": total}
                   if multi else None),
-            no_sync=ev["no_sync"]))
+            no_sync=ev["no_sync"], raw=ev["raw"]))
     return out
+
+
+def _task_occurrences(tasks: list) -> list:
+    """Open, dated checkboxes as occurrences.
+
+    Both `resolve()` and `/api/tasks` go through here, which is the point: one
+    definition of *an open dated task is a commitment on a day*, rather than the
+    endpoint keeping its own and drifting from the calendar it feeds.
+
+    Done boxes are dropped — `todo.scan` collects them for completion detection,
+    but the calendar shows what is still owed. An undated task is queue work,
+    not a commitment on a day, and has no place to be drawn.
+    """
+    return [_occ("task", t["id"], t["deadline"], t["text"],
+                 path=t["file"], line=t["line"], raw=t["raw"],
+                 priority=t["priority"], no_sync=t["no_sync"])
+            for t in tasks if not t["done"] and t["deadline"]]
+
+
+def due_tasks(vault, split=None, ttl: float = None) -> list:
+    """Every open dated task, unbounded by range — what `/api/tasks` serves.
+
+    Deliberately not `resolve(a_very_wide_range)`: expansion is per-day, so a
+    range wide enough to hold every deadline would walk decades of calendar per
+    recurrence rule to answer a question about checkboxes.
+    """
+    src = collect_cached(vault, split, CACHE_TTL if ttl is None else ttl)
+    return _task_occurrences(src["tasks"])
 
 
 def _conflicts(occurrences: list) -> int:
@@ -505,6 +551,11 @@ def resolve(vault, frm: str, to: str, split=None, ttl: float = CACHE_TTL) -> dic
     if not lo or not hi or lo > hi:
         return {"from": frm, "to": to, "occurrences": [], "conflicts": 0,
                 "timezone": None, "problems": [], "error": "bad range"}
+    span = (datetime.date.fromisoformat(hi) - datetime.date.fromisoformat(lo)).days
+    if span > MAX_RANGE_DAYS:
+        return {"from": lo, "to": hi, "occurrences": [], "conflicts": 0,
+                "timezone": None, "problems": [],
+                "error": f"range too wide ({span} days, max {MAX_RANGE_DAYS})"}
 
     src = collect_cached(vault, split, ttl)
     out = []
@@ -524,16 +575,10 @@ def resolve(vault, frm: str, to: str, split=None, ttl: float = CACHE_TTL) -> dic
             out.append(_occ("rule", f"{rid}@{day}", day, ru["title"],
                             path=ru["file"], line=ru["line"], rule_id=rid,
                             start=ru["start"], end=ru["end"],
-                            no_sync=ru["no_sync"]))
+                            no_sync=ru["no_sync"], raw=ru["raw"]))
 
-    for t in src["tasks"]:
-        # Done tasks are collected by td.scan for completion detection; the
-        # calendar shows what is still owed. A deadline is required — an undated
-        # task is queue work, not a commitment on a day.
-        if t["done"] or not t["deadline"] or not (lo <= t["deadline"] <= hi):
-            continue
-        out.append(_occ("task", t["id"], t["deadline"], t["text"],
-                        path=t["file"], line=t["line"], no_sync=t["no_sync"]))
+    out.extend(o for o in _task_occurrences(src["tasks"])
+               if lo <= o["date"] <= hi)
 
     n = _conflicts(out)
     out.sort(key=lambda o: (o["date"], o["start"] or "", o["kind"], o["title"]))

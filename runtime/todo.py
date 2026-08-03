@@ -463,19 +463,28 @@ def display_text(raw_text: str) -> str:
     return " ".join(t.split()).strip(" ·—-")
 
 
-def scan(vault: Path, split=None) -> list:
+def scan(vault: Path, split=None, tops=None) -> list:
     """Every checkbox in the vault, open **and** done, in document order.
 
     Done boxes are collected too, and that is the whole completion-detection
     mechanism: a task whose id flips from open to checked between two scans was
     completed, which is what the 06:00 review counts. Reading the ledger instead
     would miss every tick made in Obsidian rather than on the dashboard.
+
+    `tops` is which top-level folders to skip, defaulting to the queue's set.
+    It is a parameter rather than a constant because the queue and the calendar
+    genuinely disagree about one folder: a daily note's ritual checklist is not
+    queue work, but a dated checkbox inside one is still dated work, and the
+    calendar has always shown it (see QUEUE_EXCLUDED_TOPS above). One scanner,
+    two callers, one argument — rather than a second scanner with a second copy
+    of this grammar.
     """
     vault = Path(vault)
+    tops = QUEUE_EXCLUDED_TOPS if tops is None else tops
     files = [p for p in vault.rglob("*.md")
-             if not (set(p.relative_to(vault).parts[:-1]) & QUEUE_EXCLUDED_TOPS)
+             if not (set(p.relative_to(vault).parts[:-1]) & tops)
              and not p.relative_to(vault).parts[0].startswith(".")
-             and p.relative_to(vault).parts[0] not in QUEUE_EXCLUDED_TOPS]
+             and p.relative_to(vault).parts[0] not in tops]
     rels = [p.relative_to(vault).as_posix() for p in files]
     sealed, no_sync = (split or _default_split)(vault, rels)
 
