@@ -774,7 +774,45 @@ A new project from one line: a git-initialised folder in the code root, a stack-
   inside the code root, and the directory must not already exist with anything in it. No remote is
   created and nothing is pushed.
 
-### 7.15 `interface/backend/` — the API
+### 7.15 `runtime/agenda.py` — the calendar resolver (P1–P2 of the agenda subsystem)
+
+**One resolver, and disagreement is visible rather than silent.** Four kinds of thing land on the
+calendar — a dated task, a dated note, an event row, a recurrence rule — and they are merged here,
+once, so nothing else has to hold an opinion about what is due. Every occurrence carries where it came
+from: a path, and a line, block ID or rule ID. When two sources disagree about the same subject (a
+task's 📅 against its own note's `date:`) **both** are emitted and both are flagged; a resolver that
+silently picks a winner is one you cannot audit.
+
+Key functions: `parse_event(line)` / `compose_event(...)` (the canonical serialiser, so the round-trip
+property is testable before a writer exists) · `parse_rule(line)` / `expand(rule, frm, to)` — one
+swappable pair, a deliberately small grammar (weekly by weekday, a start, an until, named exceptions),
+never RRULE · `collect(vault, split)` — the range-independent scan, which is what the TTL caches ·
+`collect_cached()` / `invalidate()` · `resolve(vault, frm, to)` — the merge · `due_tasks()` — every
+open dated task, unbounded by range, which is what `/api/tasks` serves · `committed_hours()`.
+
+Three decisions worth knowing:
+
+- **The block ID is optional on read.** A hand-typed line will not have one, and a line that does not
+  parse is a line that has silently left your calendar. Absent, identity falls back to a hash of path +
+  date + title — what `todo.task_id` already does for a checkbox, which has no ID of its own either.
+  The ID is stripped off the end *before* the body is matched; as a trailing optional group it is
+  ambiguous against a lazy title, and the engine happily reads `Dentist ^sg-evt-…` as a longer title.
+- **`collect()` returns `problems`.** A line that was meant to be an event and is not is reported with
+  its path and line rather than dropped. This subsystem's worst failure has no symptom — the calendar
+  looks fine, it just quietly has less in it.
+- **A multi-day event emits one occurrence per covered day**, sharing a `span`, so a range query still
+  sees an event that began before the window opened.
+
+`todo.scan(vault, split, tops)` grew its third argument for this: the queue and the calendar genuinely
+disagree about `01-Daily/`. A daily note's `date:` is journal — seven of them would bury every real
+event — but a dated *checkbox* inside one is work, and `/api/tasks` has always shown it. One scanner,
+two callers, one argument, rather than a second copy of the checkbox grammar.
+
+Not named `calendar.py`: `runtime/` is at the front of `sys.path`, so it would shadow the stdlib
+`calendar` for uvicorn's dependency tree. Third time — after `todo.py`/`queue.py` and
+`retro.py`/`review.py` — and the first one that cost nothing.
+
+### 7.16 `interface/backend/` — the API
 
 **`app.py`** (269 lines) — the FastAPI app. `POST /api/ask` streams an answer over SSE with a
 collapsible trail of every tool call; `GET /api/health` runs `doctor.collect()`; the built frontend is
@@ -833,7 +871,7 @@ Queue add/edit/reword/meta, quick capture, activity read, and revert live here t
 hide what the system will actually do: a change to an existing note *stages* rather than applies, and
 the header says so before you press anything.
 
-### 7.16 `tools/` — not Sigma
+### 7.17 `tools/` — not Sigma
 
 `convert_pdfs.py` (147 lines) is a batch PDF→Markdown converter that predates the OS and lives here so
 it is versioned and backed up. `intake.py` imports it. It is explicitly not part of the system's
@@ -854,6 +892,7 @@ this disk, and inherits a *machine* login — so the machine is the natural boun
 | `GET` | `/api/fleet` | per specialist: cadence, model, last ok/run/result, proposals raised, due |
 | `GET` | `/api/fleet/progress` | **SSE** — the live fleet state, replayed on connect |
 | `GET` | `/api/tasks` | every dated task in the vault + the current study-block position |
+| `GET` | `/api/agenda?from=&to=` | the calendar: every occurrence in a window, with provenance |
 | `GET` | `/api/queue` | the four priority queues, windowed, with score breakdowns |
 | `GET` | `/api/review` | the latest retrospective row |
 | `GET` | `/api/proposals` | pending / approved / staged proposals |
@@ -1101,6 +1140,50 @@ unscored.**
 `sha` is `null` for a write to an exempt-but-gitignored path — there is nothing to commit, and the row
 says "no commit" honestly rather than making a promise the UI cannot keep.
 
+### Calendar event row (`02-Areas/Personal/Calendar/YYYY-MM.md`)
+
+```
+- 2026-08-04 14:30–15:30 Dentist ^sg-evt-8f2a1c04
+- 2026-08-06 Flight to SFO ^sg-evt-91c3ade7
+- 2026-08-12→2026-08-15 Family visit ^sg-evt-a77d2b19
+- 2026-08-19 09:00– Career fair ^sg-evt-c04b6e83
+```
+
+`- <date>[→<date>] [HH:MM[–HH:MM]] <title> ^sg-evt-<8 hex>`. No time = all-day · a date range =
+multi-day · a trailing dash = open-ended. The full date is on every line even though the filename
+repeats it, so a line parses without context — which is what the write path's *must re-parse as the
+same kind of occurrence* hold needs, and it keeps a reschedule a one-line diff. **Liberal on input,
+canonical on output**: `-`, `–`, `—`, `->` and `→` all parse, and `compose_event` only ever writes the
+canonical form.
+
+The ID is **eight** hex. It said eight in the contract and four in the contract's own examples for one
+day; P1's parser followed the rule and P1's fixtures followed the examples, which is how it was found.
+
+### Recurrence rule row (`02-Areas/Personal/Calendar/schedule.md`)
+
+```
+- MWF 10:30–11:20 [[CSE-311]] lecture until::2026-12-12 except::2026-09-14 ^sg-rule-cse311
+```
+
+`- <weekdays> [HH:MM[–HH:MM]] <title> [from::<date>] [until::<date>] [except::<date>,…] ^sg-rule-<slug>`.
+Weekdays are `M T W R F S U`. Expanded when read and **never materialised** into a month note — the row
+is the only record. `schedule.md`'s frontmatter carries `timezone:`, the vault's single timezone
+declaration; times are local wall time with no offset.
+
+### Occurrence (`GET /api/agenda`, in memory only)
+
+```json
+{"kind": "task|note|event|rule", "id": "…", "date": "2026-08-04",
+ "start": "14:30", "end": "15:30", "all_day": false,
+ "title": "…", "owner": "sigma", "raw": "- …", "priority": null,
+ "source": {"path": "…", "line": 12, "block_id": "…", "rule_id": null, "field": null},
+ "span": null, "section": "courses", "parent": "CSE-311",
+ "no_sync": false, "conflict": null}
+```
+
+`source.path` is never null — provenance is an invariant, asserted in the tests rather than trusted to
+four call sites. `raw` is the staleness token every write in this system already runs on.
+
 ---
 
 ## 12. The algorithms
@@ -1201,6 +1284,8 @@ unambiguous version.
 | 2026-07-30 | **D3** — the whitelisted command palette. **Option B** — the model boundary opened for ProCertus while the sync boundary stayed shut. Two deep audits (~60 findings) and a three-commit fix sprint, including a **verified NTFS stream bypass** of the sealed boundary. **D4** — the autonomy flip: `gitops.py`, the ledger, the spend log, `applier.py`, `POST /api/tasks/toggle`, the Ctrl+J ledger with one-click revert, degrade→pause, and the contract + six constraint notes amended in the same unit of work |
 | 2026-07-31 | **D5** — the no-sync boundary as one scan with two opposite failure directions; the mark, the ring, and the Ctrl+. lens. **D6** — study intake (incl. `.pptx` with slide structure), exam mode, repo awareness, the calendar strip, quick capture, brain filters, approve-a-proposal-from-the-dashboard. The auditor fixed by **precomputing the scan** instead of buying more turns. `devlog.py`. The cadence bug (`is_due` by calendar day) and the backup check |
 | 2026-08-01 | `mapper.py` and `scaffold.py`. **The priority-queue engine** — four self-maintaining queues replacing the day-bucketed list, with quick-add, AI reword, completion/promotion, expansion views, and snooze/pin/archive/move. **`retro.py`** — the 06:00 retrospective, and the planner it replaces, retired |
+| 2026-08-02 | **Agenda P0** — the calendar's contract amendment: `02-Areas/Personal/Calendar/`, the `#calendar` tag, tasks are date-only, a `Calendar events` section holding the line grammar, and the `calendar-month` and `schedule` schemas. Approved and placed by hand, because `reflect --apply` appends contract blocks to one section and this one belongs in five |
+| 2026-08-03 | **Agenda P1** — `runtime/agenda.py`: the resolver, read-only. Event and rule parsing, read-time expansion, the merge, provenance on every occurrence, conflict detection, a TTL over the scan. **Agenda P2** — `GET /api/agenda`, and `/api/tasks` folded in behind the same resolver rather than left as a second answer to "what is due" |
 
 ### The feature list, by area
 
@@ -1260,7 +1345,8 @@ reactor · the activity ledger · the no-sync lens · quick capture · proposal 
 
 ## 15. Current state
 
-*As of 2026-08-01.*
+*As of 2026-08-03. The table below still reads 2026-08-01 for every count that has not been
+re-measured since; what changed is listed under it rather than by editing numbers nobody recounted.*
 
 | | |
 |---|---|
@@ -1277,6 +1363,16 @@ reactor · the activity ledger · the no-sync lens · quick capture · proposal 
 | Frontend modules | 18 TS/TSX + one 1,630-line stylesheet |
 | Tests | **19 suites, 358 test functions** in `tests/` — all green 2026-08-01 |
 | Doctor | 0 alerts; one item waiting (the review has never run) |
+
+**Since then (2026-08-02 → 03), the agenda subsystem's first three phases.** P0 amended `CLAUDE.md`
+in five places; P1 added `runtime/agenda.py`; P2 added `GET /api/agenda` and moved `/api/tasks` onto
+the resolver. Tests are now **21 suites, 411 test functions**, green under
+`interface/backend/.venv`. Doctor reports one item waiting — a pending proposal unrelated to this work.
+
+**A trap worth recording: the suite must be run with `interface/backend/.venv/Scripts/python.exe`.**
+Under a bare system Python, five API modules and the tool gate cannot import at all (`fastapi`,
+`claude_agent_sdk`), and the run reports 11 errors that are not real. `cli.py` already picks that
+interpreter for the same reason; a human running `python -m unittest` by hand does not.
 
 ---
 
@@ -1314,19 +1410,28 @@ Honest list. Nothing here is hidden behind a "coming soon".
 From the vision note, in rough order of how ready each is. The first entry is not from the vision note,
 and is further along than anything below it:
 
-- **The agenda subsystem.** A real calendar replacing the 14-day `calendar.tsx` strip: one resolver over
-  tasks, dated notes, event rows and recurrence rules, every occurrence carrying its source kind and
-  origin path; a today rail on the dashboard; a full week/month/agenda view on `Ctrl+'`; writes from the
-  first version behind their own holds table; and committed hours feeding queue windowing and the 06:00
-  retrospective at the end of it — which is the actual reason it exists, since the queue currently has no
-  idea what a day already costs. **No code exists.** The brief is
-  `03-Projects/sigma-os/sigma-os-calendar-plan.md` in the vault, and as of 2026-08-02 its nine open
-  questions are answered: the event line grammar (full date on every line, block ID `sg-evt-<8 hex>`),
-  recurrence rules in `02-Areas/Personal/Calendar/schedule.md`, tasks staying date-only because the Tasks
-  plugin has no concept of a time, and a dashboard write into a gitignored path being **refused rather
-  than permitted** — `gitops.commit()` returns no SHA for an ignored path, so that write would be the
-  only one in Sigma with no ledger row and no undo. Next step is P0: one proposal amending `CLAUDE.md`,
-  approved by hand before any code.
+- **The agenda subsystem, P3 onward.** P0–P2 have shipped (§7.15, §8, §11): the contract, the resolver,
+  and the read endpoint. What is left is everything you can see and everything that writes —
+  **P3** the today rail, replacing the 14-day strip and retiring `calendar.tsx`; **P4** the full
+  week/month/agenda view on `Ctrl+'` (verified free in Chrome on 2026-08-03, unlike `Ctrl+K` and
+  `Ctrl+G`); **P5** writes, behind their own holds table and one adversarial test per hold; **P6** rule
+  exceptions; **P7** committed hours feeding queue windowing and the 06:00 retrospective — the actual
+  reason the subsystem exists, since the queue still has no idea what a day already costs; **P8** Google
+  Calendar. The brief is `03-Projects/sigma-os/sigma-os-calendar-plan.md` in the vault, and its nine open
+  questions were answered on 2026-08-02.
+
+  Two of those answers were settled by this repo rather than by preference, and both still bind: tasks
+  stay **date-only**, because the Tasks plugin has no concept of a time and the calendar would become
+  the sole source of truth for a field the note is supposed to own; and a dashboard write into a
+  gitignored path is **refused rather than permitted**, because `gitops.commit()` returns no SHA for an
+  ignored path and that write would be the only one in Sigma with no ledger row and no undo. P5 enforces
+  the second as a hold, checked inside the mutex after the pull, the way `applier.py` does it — not
+  before the mutex, the way the toggle does.
+
+  Three things P8 needs that already exist: `owner:` on every occurrence, local wall time plus the
+  `timezone:` declaration on `schedule.md`, and the fact that outbound sync is the first place where
+  **visible ≠ syncable**. The ID map (`runtime/agenda.state.json`) does not exist yet and is not needed
+  until there is something to map.
 - **Application pipeline** — paste a posting, get a tracked application note, deadlines on the calendar,
   a nudge before each goes stale. Not built because `02-Areas/Career/Applications/` is *empty*; the
   tracker has reported "pipeline is clear" every week since it started. A panel with nothing to show.
