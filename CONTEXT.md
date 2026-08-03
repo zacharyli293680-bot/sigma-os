@@ -808,6 +808,13 @@ disagree about `01-Daily/`. A daily note's `date:` is journal — seven of them 
 event — but a dated *checkbox* inside one is work, and `/api/tasks` has always shown it. One scanner,
 two callers, one argument, rather than a second copy of the checkbox grammar.
 
+**The write path (P5)** lives in `interface/backend/writes.py`, not here — this module stays the one
+that reads and the one that owns the grammar. What it contributes is `compose_event`, the single
+serialiser, and `MONTH_NOTE`, the note a write creates when a month has none. The endpoint composes
+through `compose_event` and then **parses its own output back** before committing, so "never write
+something the scanner cannot read" is enforced by construction rather than by discipline: the only
+definition of a well-formed line that matters is this module's parser, so the parser is what is asked.
+
 Not named `calendar.py`: `runtime/` is at the front of `sys.path`, so it would shadow the stdlib
 `calendar` for uvicorn's dependency tree. Third time — after `todo.py`/`queue.py` and
 `retro.py`/`review.py` — and the first one that cost nothing.
@@ -917,6 +924,8 @@ this disk, and inherits a *machine* login — so the machine is the natural boun
 | `POST` | `/api/queue/edit` | edit a task's text in place |
 | `POST` | `/api/queue/reword` | ask a model to reword/enrich a task, after it is already filed |
 | `POST` | `/api/queue/meta` | snooze / pin / archive / move — index-only, never destructive |
+| `POST` | `/api/agenda/add` | one typed event becomes a line in a month note |
+| `POST` | `/api/agenda/edit` | retitle, retime, reschedule or cancel one event line |
 | `POST` | `/api/capture` | quick capture → one note in `00-Inbox`, as its own revertible commit |
 | `POST` | `/api/activity/revert` | `git revert` of exactly one ledger commit |
 | `POST` | `/api/proposals/{name}/decide` | approve · reject · apply · merge |
@@ -975,6 +984,18 @@ than growing a second answer to whose work something is.
 view: the file, the line, and which key or rule put it on that day (`frontmatter due:`,
 `rule sg-rule-cse311`, a block ID). It is the queue's score breakdown applied to dates, and it sits in
 one fixed place rather than in a popover so there is nothing to position and one place to look.
+
+**Writing (agenda P5).** Quick-add is a form row under the header; a drag between days reschedules;
+cancel lives on the provenance strip, because that is where you can see exactly which line you are
+about to change. A move renders **instantly and unsettled** — dimmed, with a `⟳` — and snaps back
+carrying the server's own word if a hold fires. Repeated moves of one event **coalesce** into a single
+commit after a settle delay: a replanning session is a handful of ledger rows, not thirty.
+
+**Only event rows move from here.** A task's date belongs to `/api/queue/edit`, which already rewrites
+task lines with its own holds and ledger row — a second way to move a task's date would be the second
+write path this subsystem is not allowed to grow. Dated notes (their date is frontmatter), rule
+occurrences (P6) and multi-day spans (dragging one of its days would rewrite it as single-day and lose
+the other end) are refused **with a named reason** rather than being quietly undraggable.
 
 **The centre stage** is one scene rather than a panel with a picture in it: the brain fills the cell,
 the **reactor** sits at its heart in a pool of darkened sky, and the vault stat chips ride the bottom
@@ -1193,6 +1214,11 @@ canonical form.
 The ID is **eight** hex. It said eight in the contract and four in the contract's own examples for one
 day; P1's parser followed the rule and P1's fixtures followed the examples, which is how it was found.
 
+A cancelled event keeps its line and gains `cancelled::YYYY-MM-DD` before its block ID — the date it
+was *cancelled*, not the date it was going to happen. It is still emitted as an occurrence, so it
+renders struck through rather than vanishing, and it stops counting toward committed hours. Same
+`key::value` shape the rule row already uses, so it is one grammar rather than two.
+
 ### Recurrence rule row (`02-Areas/Personal/Calendar/schedule.md`)
 
 ```
@@ -1319,7 +1345,7 @@ unambiguous version.
 | 2026-07-31 | **D5** — the no-sync boundary as one scan with two opposite failure directions; the mark, the ring, and the Ctrl+. lens. **D6** — study intake (incl. `.pptx` with slide structure), exam mode, repo awareness, the calendar strip, quick capture, brain filters, approve-a-proposal-from-the-dashboard. The auditor fixed by **precomputing the scan** instead of buying more turns. `devlog.py`. The cadence bug (`is_due` by calendar day) and the backup check |
 | 2026-08-01 | `mapper.py` and `scaffold.py`. **The priority-queue engine** — four self-maintaining queues replacing the day-bucketed list, with quick-add, AI reword, completion/promotion, expansion views, and snooze/pin/archive/move. **`retro.py`** — the 06:00 retrospective, and the planner it replaces, retired |
 | 2026-08-02 | **Agenda P0** — the calendar's contract amendment: `02-Areas/Personal/Calendar/`, the `#calendar` tag, tasks are date-only, a `Calendar events` section holding the line grammar, and the `calendar-month` and `schedule` schemas. Approved and placed by hand, because `reflect --apply` appends contract blocks to one section and this one belongs in five |
-| 2026-08-03 | **Agenda P1** — `runtime/agenda.py`: the resolver, read-only. Event and rule parsing, read-time expansion, the merge, provenance on every occurrence, conflict detection, a TTL over the scan. **Agenda P2** — `GET /api/agenda`, and `/api/tasks` folded in behind the same resolver rather than left as a second answer to "what is due". **Agenda P3** — the today rail, replacing the 14-day strip and retiring `calendar.tsx`; free-hours-left displayed and feeding nothing. **Agenda P4** — the full week/month/agenda view on `Ctrl+'` and rail slot CA, read-only, with `[?]` provenance on every occurrence |
+| 2026-08-03 | **Agenda P1** — `runtime/agenda.py`: the resolver, read-only. Event and rule parsing, read-time expansion, the merge, provenance on every occurrence, conflict detection, a TTL over the scan. **Agenda P2** — `GET /api/agenda`, and `/api/tasks` folded in behind the same resolver rather than left as a second answer to "what is due". **Agenda P3** — the today rail, replacing the 14-day strip and retiring `calendar.tsx`; free-hours-left displayed and feeding nothing. **Agenda P4** — the full week/month/agenda view on `Ctrl+'` and rail slot CA, read-only, with `[?]` provenance on every occurrence. **Agenda P5** — the write path: quick-add, drag-to-reschedule, cancel, an eight-hold table with one adversarial test each, and `cancelled::` added to the contract |
 
 ### The feature list, by area
 
@@ -1401,7 +1427,8 @@ re-measured since; what changed is listed under it rather than by editing number
 **Since then (2026-08-02 → 03), the agenda subsystem's first four phases.** P0 amended `CLAUDE.md` in
 five places; P1 added `runtime/agenda.py`; P2 added `GET /api/agenda` and moved `/api/tasks` onto the
 resolver; P3 replaced the 14-day strip with the today rail and deleted `calendar.tsx`; P4 added the
-full view on `Ctrl+'`. **All of it is still read-only.** Tests are now
+full view on `Ctrl+'`; P5 added the write path and its holds table. Tests are now **22 suites,
+438 test functions**. Tests are now
 **21 suites, 413 test functions**, green under `interface/backend/.venv`. Doctor reports one item
 waiting — a pending proposal unrelated to this work.
 
@@ -1451,10 +1478,9 @@ Honest list. Nothing here is hidden behind a "coming soon".
 From the vision note, in rough order of how ready each is. The first entry is not from the vision note,
 and is further along than anything below it:
 
-- **The agenda subsystem, P5 onward.** P0–P4 have shipped (§7.15, §8, §9, §11): the contract, the
-  resolver, the read endpoint, the today rail, and the full view. **Everything so far is read-only —
-  what is left is everything that writes.** **P5** writes, behind their own holds table and one
-  adversarial test per hold; **P6** rule
+- **The agenda subsystem, P6 onward.** P0–P5 have shipped (§7.15, §8, §9, §11): the contract, the
+  resolver, the read endpoint, the today rail, the full view, and the write path with its holds
+  table. What is left is **P6** rule
   exceptions; **P7** committed hours feeding queue windowing and the 06:00 retrospective — the actual
   reason the subsystem exists, since the queue still has no idea what a day already costs; **P8** Google
   Calendar. The brief is `03-Projects/sigma-os/sigma-os-calendar-plan.md` in the vault, and its nine open
