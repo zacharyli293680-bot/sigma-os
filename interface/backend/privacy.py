@@ -321,6 +321,19 @@ class VaultPrivacy:
                                        "permissionDecision": "deny",
                                        "permissionDecisionReason": why}}
 
+    def refuses(self, tool: str, args: dict) -> bool:
+        """Whether this call is about to be denied — for observers, not deciders.
+
+        The same `_classify` the hook and the callback both use, so it cannot
+        disagree with the boundary it reports on. It exists because a PreToolUse
+        observer runs *before* the decision is applied: without asking, the fire
+        feed would describe a read of a sealed note that never happened, putting
+        the carved-out path on the wire and into a file on disk. Nothing may act
+        on the answer — deciding is still the hook's job, and only the hook's.
+        """
+        _, why = self._classify(tool, args)
+        return why is not None
+
     async def can_use_tool(self, tool: str, args: dict, ctx) -> object:
         """Second layer, for tools that do route through the permission prompt.
 

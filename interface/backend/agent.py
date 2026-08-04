@@ -83,12 +83,43 @@ same gate the weekly reflection goes through.
 """.strip()
 
 
+def describe(tool: str, args: dict) -> str:
+    """One short line naming what the agent is doing.
+
+    It lives here beside `build_options` rather than in the web layer because it
+    has two consumers now: the chat drawer's activity trail, and the brain's
+    firing. Every string this returns for a `Read` is looked up as a graph node,
+    so its shape is a contract with the renderer, not a label.
+    """
+    if tool == "Read":
+        # Vault-relative, not basename: the brain fires the node this names,
+        # and two notes can share a basename (three do). The trail reads
+        # better with the path anyway.
+        fp = str(args.get("file_path", ""))
+        try:
+            p = Path(fp)
+            p = (p if p.is_absolute() else VAULT / p).resolve()
+            return p.relative_to(VAULT).as_posix()
+        except Exception:
+            return Path(fp).name
+    if tool == "Grep":
+        return f"/{args.get('pattern', '')}/"
+    if tool == "Glob":
+        return str(args.get("pattern", ""))
+    if tool.endswith("propose_change"):
+        # The one call that changes something on disk deserves to be legible in
+        # the trail rather than showing up as a bare tool name.
+        return str(args.get("title") or "").strip()
+    return ""
+
+
 def build_options(allow_proposals: bool = True,
                   orientation: str = ORIENTATION,
                   model: str | None = None,
                   effort: str = "medium",
                   max_turns: int = 30,
-                  actor: str = "interface") -> ClaudeAgentOptions:
+                  actor: str = "interface",
+                  on_tool=None) -> ClaudeAgentOptions:
     """Options for one agent run — a chat question, or one Phase 4 specialist.
 
     Parameterised rather than copied because the *guarantees* below must not be
@@ -105,6 +136,10 @@ def build_options(allow_proposals: bool = True,
 
     `actor` only labels audit lines, so a refusal can be traced to the run that
     caused it: "interface" for a chat question, the specialist's key otherwise.
+
+    `on_tool(tool, detail)` is called for every tool call the guard is going to
+    allow — observation only, never a veto. It is what lets an unattended run
+    light the notes it reads in the dashboard's brain.
     """
     # ONE list, used twice — as the grant and as the gate. The guard refuses any
     # tool outside it (privacy.VETTED_TOOLS), and building it here means the two
@@ -113,6 +148,35 @@ def build_options(allow_proposals: bool = True,
     granted = READ_ONLY_TOOLS + (WRITE_TOOLS if allow_proposals else [])
     privacy = VaultPrivacy(VAULT, allow_writes=False,
                            granted_tools=granted, actor=actor)
+
+    # PreToolUse is the one place every tool call passes through, whatever the
+    # permission mode — which makes it the only honest place to observe what an
+    # agent is touching, and the reason a caller gets firing by passing one
+    # argument rather than by instrumenting itself. `on_tool` gets its own
+    # matcher instead of a line inside the guard: the guard decides, and a
+    # guard that also has a side effect is a guard with two reasons to change.
+    hooks = [HookMatcher(matcher=None, hooks=[privacy.pre_tool_hook])]
+    if on_tool is not None:
+        async def observe(input_data: dict, tool_use_id, context) -> dict:
+            # Returns {} unconditionally and swallows everything it touches: an
+            # observer that can refuse a call, or fail one, is not an observer.
+            try:
+                tool = str(input_data.get("tool_name") or "")
+                args = input_data.get("tool_input") or {}
+                # Hooks run *before* the decision is applied, so a sealed read
+                # arrives here looking exactly like an allowed one. Ask the
+                # guard rather than describing something about to be denied —
+                # otherwise the feed puts a carved-out path on the wire for a
+                # read that never happened.
+                if not privacy.refuses(tool, args):
+                    detail = describe(tool, args)
+                    if detail:
+                        on_tool(tool, detail)
+            except Exception:
+                pass
+            return {}
+        hooks.append(HookMatcher(matcher=None, hooks=[observe]))
+
     return ClaudeAgentOptions(
         cwd=str(VAULT),
         # `tools` limits which tools EXIST. `allowed_tools` would be a different
@@ -136,8 +200,7 @@ def build_options(allow_proposals: bool = True,
         # PreToolUse fires for EVERY tool call regardless of permission mode.
         # This is the guarantee; can_use_tool below is a second layer that only
         # covers calls which would otherwise prompt.
-        hooks={"PreToolUse": [HookMatcher(matcher=None,
-                                          hooks=[privacy.pre_tool_hook])]},
+        hooks={"PreToolUse": hooks},
         can_use_tool=privacy.can_use_tool,
         permission_mode="default",
         # Load NO filesystem settings. The default (None) loads all of them,

@@ -74,11 +74,15 @@ body {
    and half of it teleported, which reads as broken rather than fast.
    A `<length>` in both states animates properly, and @property is what makes a
    custom property a length rather than a string. */
+/* They inherit, so the sky's region mask can read the same two numbers the
+   grid is animating and open its bright window in step with the tracks —
+   rather than keeping a second copy of the layout, which would drift from this
+   one the first time a track changed. */
 @property --right-w {
-  syntax: "<length>"; inherits: false; initial-value: 360px;
+  syntax: "<length>"; inherits: true; initial-value: 360px;
 }
 @property --lower-h {
-  syntax: "<length>"; inherits: false; initial-value: 210px;
+  syntax: "<length>"; inherits: true; initial-value: 210px;
 }
 :root { --dive-ms: 340ms; --dive-ease: cubic-bezier(0.32, 0.72, 0, 1); }
 
@@ -240,10 +244,6 @@ code { font-family: var(--mono); font-size: 0.92em; }
   container-type: size;
 }
 .center > h2 { position: relative; z-index: 5; }
-.vault-line {
-  margin-left: 10px; color: var(--ink-2); letter-spacing: 0.08em;
-  font: 400 10.5px var(--mono); text-transform: none;
-}
 
 /* The pool of darkened sky the reactor sits in. Without it the instrument and
    the densest part of the cloud fight for the same pixels and neither reads.
@@ -657,26 +657,75 @@ kbd {
 
 /* ---------------------------------------------------------------- the brain */
 
-/* The sky is a layer of the centre stage now, not a view of its own. It fills
-   the cell behind the reactor and stays mounted at every zoom level — there is
-   no screen on which you can see one and not the other.
+/* The sky is the shell's substrate, not a layer of one cell. It spans the whole
+   grid behind every panel, so a firing node is visible wherever you are
+   looking rather than only if you happen to be watching the centre.
 
    It fades in when the layout finishes rather than appearing at full strength
    in a single frame. The force sim now runs in chunks across ~10 frames, so
    without this the sky would still *arrive* abruptly even though nothing
    blocks any more — the hitch would be gone and the pop would remain. */
 .brain-field {
-  position: absolute; inset: 0; z-index: 1;
+  /* Grid geometry, in the shell's padding box — which is the containing block
+     for this layer. Written out once here and derived from `.shell`'s own
+     grid-template above: rail 72 + gap 12; strip 44 + gap 12; and gap 12 +
+     lower + gap 12 + foot 30 off the bottom. */
+  --sky-l: 84px;
+  --sky-r: calc(100% - 12px - var(--right-w));
+  --sky-t: 56px;
+  --sky-b: calc(100% - 54px - var(--lower-h));
+  /* Narrower than the smallest margin it has to fall off across: the rail is
+     72px and the strip 44px, so a 90px feather put the start of the dim
+     plateau at -6px and -34px — off the canvas entirely, which meant those two
+     edges were mid-fade rather than dim. 48 leaves a real plateau under both. */
+  --sky-feather: 48px;
+  /* How much sky survives under a panel: enough that drift and a fire still
+     read there, little enough that a star never competes with a due date. This
+     is the number to turn down if any panel proves hard to read — never a
+     background on the panel, which is the one thing `.panel.attn` means. */
+  --sky-dim: 0.16;
+
+  position: absolute; inset: 0; z-index: -1;
   overflow: hidden;
   opacity: 0;
   transition: opacity 900ms ease-out;
-  /* Fade at the edges instead of vignetting to opaque dark: the cell has no
-     border, so a dark ring would draw the box the design spent its whole
-     budget avoiding. This way the sky dissolves into the haze. */
-  -webkit-mask-image: radial-gradient(ellipse 82% 82% at 50% 50%,
-    #000 46%, rgba(0,0,0,0.72) 76%, transparent 100%);
-  mask-image: radial-gradient(ellipse 82% 82% at 50% 50%,
-    #000 46%, rgba(0,0,0,0.72) 76%, transparent 100%);
+
+  /* Two crossed gradients, intersected: full strength over the centre cell,
+     `--sky-dim` everywhere else, with a wide feather so the falloff never
+     draws an edge — a hard rectangle here would be the same mistake as the
+     vignette that used to sit below, drawing the box the layout avoids.
+
+     `intersect, add`, not a bare `intersect`: layers composite bottom-up and
+     the bottom layer has nothing under it, so intersecting *it* against an
+     empty backdrop would mask the whole sky away. */
+  -webkit-mask-image:
+    linear-gradient(to right,
+      rgba(0, 0, 0, var(--sky-dim)) 0,
+      rgba(0, 0, 0, var(--sky-dim)) calc(var(--sky-l) - var(--sky-feather)),
+      #000 var(--sky-l), #000 var(--sky-r),
+      rgba(0, 0, 0, var(--sky-dim)) calc(var(--sky-r) + var(--sky-feather)),
+      rgba(0, 0, 0, var(--sky-dim)) 100%),
+    linear-gradient(to bottom,
+      rgba(0, 0, 0, var(--sky-dim)) 0,
+      rgba(0, 0, 0, var(--sky-dim)) calc(var(--sky-t) - var(--sky-feather)),
+      #000 var(--sky-t), #000 var(--sky-b),
+      rgba(0, 0, 0, var(--sky-dim)) calc(var(--sky-b) + var(--sky-feather)),
+      rgba(0, 0, 0, var(--sky-dim)) 100%);
+  -webkit-mask-composite: source-in, source-over;
+  mask-image:
+    linear-gradient(to right,
+      rgba(0, 0, 0, var(--sky-dim)) 0,
+      rgba(0, 0, 0, var(--sky-dim)) calc(var(--sky-l) - var(--sky-feather)),
+      #000 var(--sky-l), #000 var(--sky-r),
+      rgba(0, 0, 0, var(--sky-dim)) calc(var(--sky-r) + var(--sky-feather)),
+      rgba(0, 0, 0, var(--sky-dim)) 100%),
+    linear-gradient(to bottom,
+      rgba(0, 0, 0, var(--sky-dim)) 0,
+      rgba(0, 0, 0, var(--sky-dim)) calc(var(--sky-t) - var(--sky-feather)),
+      #000 var(--sky-t), #000 var(--sky-b),
+      rgba(0, 0, 0, var(--sky-dim)) calc(var(--sky-b) + var(--sky-feather)),
+      rgba(0, 0, 0, var(--sky-dim)) 100%);
+  mask-composite: intersect, add;
 }
 .brain-field.lit { opacity: 1; }
 .brain-canvas {
@@ -753,6 +802,34 @@ kbd {
 }
 .legend-row b { margin-left: auto; color: var(--ink); font-weight: 500; }
 .brain-hint { margin-top: 16px; font-size: 11px; line-height: 1.7; }
+/* Note names run long — `sigma-os-calendar-plan` is wider than this column. It
+   truncates rather than wrapping, because the row above and below it are one
+   line each and a stat block that reflows as the vault changes is a stat block
+   you stop reading. The full name and the timestamp are in the tooltip. */
+.last-touched b {
+  max-width: 120px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* The column shares the centre cell with the reactor now, instead of appearing
+   only once the panels were out of the way. At a narrow centre — a small
+   window, or simply the right column at full width — the two would fight for
+   the same pixels, so the type tightens rather than anything being dropped:
+   the bucket rows are the sky's only control, and hiding them to save room
+   would take the filters away exactly when the cloud is hardest to read.
+
+   A container query, not a viewport one: what matters is this cell's width,
+   and the dive changes that without the window moving. */
+@container (max-width: 820px) {
+  .brain-stats { left: 14px; width: 142px; }
+  .brain-stats .hero { font-size: 46px; }
+  .brain-stats .hero-label { font-size: 9px; letter-spacing: 0.22em; }
+  .brain-stats .stat-row { font-size: 10.5px; padding: 4px 0; }
+  .brain-stats .last-touched b { max-width: 76px; }
+  .brain-stats .legend { margin-top: 8px; }
+  .brain-stats .legend-row { font-size: 10px; padding: 1.5px 0; }
+  .brain-stats .brain-hint { display: none; }
+}
 
 /* ---------------------------------------------------------------- Phase 4 */
 /* The write layer: the Today checkbox as a real control, the ledger overlay,
@@ -1437,33 +1514,6 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--cyan); }
 .brain-filters button.on { color: var(--cyan); border-color: var(--cyan); }
 .brain-filters button:disabled { opacity: 0.35; cursor: default; }
 .brain-filter-note { margin: 8px 0 0; font-size: 11px; line-height: 1.5; }
-
-/* ------------------------------------------------- the stage's chip row */
-
-/* The legend, flattened into one line along the bottom of the centre cell.
-   Same facts and the same filter as the V.A.U.L.T. aside — this is just the
-   variant that fits when the sky is sharing its cell with a reactor. */
-.vault-chips {
-  position: absolute; left: 0; right: 0; bottom: 0; z-index: 4;
-  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px;
-  padding: 6px 2px 2px;
-}
-.vault-chips .chip {
-  display: inline-flex; align-items: center; gap: 5px;
-  background: none; border: 1px solid transparent; color: var(--ink-2);
-  font: 10.5px var(--mono); padding: 2px 6px; cursor: pointer;
-  pointer-events: auto;          /* the stage above it is click-through */
-  text-shadow: 0 0 8px var(--void);
-}
-.vault-chips .chip i {
-  width: 7px; height: 7px; border-radius: 50%; flex: none;
-}
-.vault-chips .chip b { color: var(--ink); font-weight: 500; }
-.vault-chips .chip:hover { border-color: var(--panel-line-dim); color: var(--ink); }
-.vault-chips .chip.on { border-color: var(--panel-line); color: var(--cyan); }
-.vault-chips .nosync-chip { cursor: default; }
-.vault-chips .nosync-chip:hover { border-color: transparent; color: var(--ink-2); }
-.chip-note { font-size: 10.5px; margin: 0 0 0 4px; text-shadow: 0 0 8px var(--void); }
 
 /* ------------------------------------------------------------- the dive */
 

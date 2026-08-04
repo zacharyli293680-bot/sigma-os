@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./App.css";
 import { API, get } from "./api";
-import type { Agenda, Fleet, Graph, Health, Job, NoSync, Progress, Projects, Proposals, Queue, Tasks, Window_ } from "./api";
+import type { Agenda, Fire, Fleet, Graph, Health, Job, NoSync, Progress, Projects, Proposals, Queue, Tasks, Window_ } from "./api";
 import Brain, { VaultHud } from "./brain";
 import ChatDrawer from "./chat";
 import Ledger from "./ledger";
@@ -146,6 +146,22 @@ export default function App() {
     return () => es.close();
   }, []);
 
+  // The fleet's own tool calls, so an unattended run lights the notes it reads
+  // instead of being represented by four arcs and nothing else. Separate from
+  // the chat drawer's trail on purpose: that one rides the /api/ask stream and
+  // only exists while a question is in flight, and the run that most needs to
+  // be visible is the 09:00 one nobody is sitting in front of.
+  useEffect(() => {
+    const es = new EventSource(`${API}/api/fleet/fire`);
+    es.onmessage = e => {
+      try {
+        const f: Fire = JSON.parse(e.data);
+        if (f.detail) fireRef.current?.(f.detail);
+      } catch { /* torn event — the next one arrives whole */ }
+    };
+    return () => es.close();
+  }, []);
+
   // When a run finishes, the panels are stale the moment the reactor settles —
   // refetch immediately rather than waiting out the minute.
   const prevRunState = useRef<string | null>(null);
@@ -269,6 +285,14 @@ export default function App() {
     <div className={`shell ${diving ? "diving" : ""}`}>
       {/* the same drifting haze the sky sits in — one material, one view */}
       <div className="haze" aria-hidden="true" />
+      {/* The sky is the shell's substrate, not one panel's background: it spans
+          the whole grid and every panel floats on it, so a fire is visible
+          wherever you happen to be looking. A region mask (App.css) holds it
+          back under the text-bearing cells — the alternative was an opaque box
+          behind each panel, and a frame here means one thing only, that
+          something is on you. */}
+      <Brain graph={graph} vault={vault} fireRef={fireRef} filter={brainFilter}
+             onStatic={setStaticSky} mode={diving ? "focus" : "ambient"} />
       <TopStrip health={health} window={window_ ?? null} block={tasks?.block ?? null}
                 clock={clock} onHealthClick={checkHealth} />
       <Rail diving={diving} onBrain={() => setDiving(d => !d)}
@@ -278,22 +302,16 @@ export default function App() {
             buildOpen={buildOpen} onBuild={() => setBuildOpen(o => !o)}
             workOpen={workOpen} onWork={() => setWorkOpen(o => !o)}
             agendaOpen={agendaOpen} onAgenda={() => setAgendaOpen(o => !o)} />
-      {/* The centre stage: one scene, not a panel with a picture in it. The
-          sky fills the cell, the reactor sits at its heart in a pool of
-          darkened sky, and the chips ride the bottom edge. */}
+      {/* The centre stage. The sky is no longer *in* here — it is behind the
+          whole shell — but this is still where it is brightest, so the reactor
+          keeps its pool of darkened sky and the vault's numbers keep the
+          margin they were designed for. */}
       <section className="panel center">
-        <h2>FLEET
-          <span className="vault-line">
-            {graph ? `${graph.notes} notes · ${graph.edges} edges` : "…"}
-          </span>
-        </h2>
-        <Brain graph={graph} vault={vault} fireRef={fireRef} filter={brainFilter}
-               onStatic={setStaticSky}
-               mode={diving ? "focus" : "ambient"} spread={diving ? 1 : 1.35} />
+        <h2>FLEET</h2>
         <div className="core-scrim" aria-hidden="true" />
         <Reactor fleet={fleet ?? null} progress={progress} waitingCount={waitingCount} />
         <VaultHud graph={graph} filter={brainFilter} onFilter={setBrainFilter}
-                  staticSky={staticSky} variant={diving ? "aside" : "chips"} />
+                  staticSky={staticSky} />
       </section>
       <div className="right">
         <WaitingPanel proposals={proposals ?? null} onReview={setReviewing} />

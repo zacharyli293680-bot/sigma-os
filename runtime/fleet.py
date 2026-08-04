@@ -128,6 +128,46 @@ def write_progress(prog: dict):
     write_state(PROGRESS_PATH, prog)
 
 
+# The brain's feed (dashboard-plan section 5): one line per tool call a
+# specialist makes, appended as it happens and tailed by /api/fleet/fire.
+# Gitignored machine-local state, like the progress file beside it.
+#
+# Section 5 promised that watching the auditor run shows a sweep across the
+# academic cluster. Until this existed only the chat drawer could fire the
+# brain, so the one run nobody is watching -- 09:00, unattended -- was the only
+# one that lit nothing at all.
+FIRE_PATH = HERE / "fleet.fire.jsonl"
+
+
+def reset_fires():
+    """Empty the feed at the start of a run.
+
+    Truncating at the run boundary rather than pruning as it grows is what keeps
+    the reader simple: the file only ever shrinks here, which is exactly the
+    moment when losing the previous run's tail is the correct thing to do.
+    """
+    try:
+        FIRE_PATH.write_text("", encoding="utf-8")
+    except OSError as e:
+        log(f"could not reset the fire feed: {e}")
+
+
+def write_fire(specialist: str, tool: str, detail: str):
+    """Append one 'this specialist just touched this' line. Best-effort.
+
+    Same contract as write_progress: a failed write costs an unlit star and
+    never the run. It matters more here, because this is called from inside a
+    PreToolUse hook -- anything it raised would surface as a broken tool call in
+    the middle of an unattended run.
+    """
+    try:
+        with FIRE_PATH.open("a", encoding="utf-8", newline="\n") as fh:
+            fh.write(json.dumps({"specialist": specialist, "tool": tool,
+                                 "detail": detail}, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
 def _hours_since(stamp) -> float | None:
     try:
         return (datetime.datetime.now()
@@ -335,7 +375,13 @@ async def run_one(spec, timeout_s: int = 420, model_override: str | None = None,
                              # refusal reads "interface", and the unattended
                              # runs — the ones nobody watches — are exactly the
                              # ones worth being able to name afterwards.
-                             actor=spec.key)
+                             actor=spec.key,
+                             # Every tool call this specialist makes lights its
+                             # note in the dashboard's brain. Observation only:
+                             # build_options wires it to a PreToolUse matcher of
+                             # its own, beside the guard rather than inside it.
+                             on_tool=lambda tool, detail: write_fire(
+                                 spec.key, tool, detail))
         # include_partial_messages is for the browser; a headless run does not
         # need token deltas and they are pure overhead here.
         opts.include_partial_messages = False
@@ -497,6 +543,10 @@ async def run_fleet(keys=None, force=False, dry_run=False) -> list:
                 "results": {}, "stopped_early": False, "finished": None,
                 "degraded": degraded, "resume_at": None}
         write_progress(prog)
+        # Inside the lock, with the progress write, for the same reason: a feed
+        # left over from the previous run is a sky that lights up for reads that
+        # happened yesterday.
+        reset_fires()
 
         log(f"running {len(queue)} specialist(s): {', '.join(s.key for s in queue)}")
         paused = False

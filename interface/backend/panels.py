@@ -202,6 +202,78 @@ async def api_fleet_progress():
 
 
 # --------------------------------------------------------------------------
+# GET /api/fleet/fire — what the fleet is touching (dashboard-plan section 5)
+# --------------------------------------------------------------------------
+
+_FIRE_PATH = Path(_RUNTIME) / "fleet.fire.jsonl"
+
+
+@router.get("/fleet/fire")
+async def api_fleet_fire():
+    """Tool calls made by the fleet, tailed out of the file it appends to.
+
+    The brain fires on these, so an unattended 09:00 run sweeps the clusters it
+    reads instead of being represented only by four arcs. A file poll rather
+    than any coupling to the fleet process, for the same reason the progress
+    stream above is one: the run that matters is the one this server did not
+    launch.
+
+    It starts at the *end* of the file and never replays it. This view's single
+    promise is that motion means something just happened; a page reload that
+    re-lit this morning's reads would break exactly that. A partial trailing
+    line is held back rather than parsed, so an append caught mid-write is
+    delivered whole on the next poll instead of being dropped.
+    """
+    async def stream():
+        try:
+            pos = _FIRE_PATH.stat().st_size
+        except OSError:
+            pos = 0
+        buf, quiet = "", 0
+        while True:
+            events = []
+            try:
+                size = _FIRE_PATH.stat().st_size
+                if size < pos:
+                    # Truncated: a new run just started. Skip to the end rather
+                    # than re-reading from zero — the lines before this point
+                    # belong to a run that has already finished.
+                    pos, buf = size, ""
+                if size > pos:
+                    with _FIRE_PATH.open("rb") as fh:
+                        fh.seek(pos)
+                        chunk = fh.read()
+                        pos = fh.tell()
+                    parts = (buf + chunk.decode("utf-8", "replace")).split("\n")
+                    buf = parts.pop()
+                    for line in parts:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            events.append(json.loads(line))
+                        except ValueError:
+                            pass
+            except OSError:
+                pass                        # no file yet: nothing has run
+            if events:
+                quiet = 0
+                for e in events:
+                    yield (f"data: {json.dumps(e, ensure_ascii=False, separators=(',', ':'))}"
+                           f"\n\n")
+            else:
+                quiet += 1
+                if quiet >= 30:             # ~15s — keeps the connection alive
+                    quiet = 0
+                    yield ": ping\n\n"
+            await asyncio.sleep(0.5)
+
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
+
+
+# --------------------------------------------------------------------------
 # GET /api/tasks
 # --------------------------------------------------------------------------
 

@@ -291,6 +291,12 @@ export type ProgressResult = {
   ok: boolean; seconds: number; proposals: number; error: string | null;
   applied?: number; held?: number;
 };
+
+/** One tool call a fleet specialist made, tailed out of fleet.fire.jsonl by
+ *  /api/fleet/fire. The brain fires on `detail`, which for a Read is the
+ *  vault-relative path of the note — the same string the chat drawer's trail
+ *  carries, produced by the same `describe()`. */
+export type Fire = { specialist: string; tool: string; detail: string };
 export type Progress = {
   state: "running" | "done" | "paused";
   note: string | null;

@@ -25,7 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from agent import VAULT, build_options
+from agent import VAULT, build_options, describe
 
 # Module scope, not per-request: the old in-handler insert ran on a threadpool
 # and could double-insert under concurrent calls.
@@ -59,30 +59,6 @@ class Ask(BaseModel):
 
 def sse(event: dict) -> str:
     return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-
-
-def describe(tool: str, args: dict) -> str:
-    """One short line naming what the agent is doing, for the activity trail."""
-    if tool == "Read":
-        # Vault-relative, not basename: the brain fires the node this names,
-        # and two notes can share a basename (three do). The trail reads
-        # better with the path anyway.
-        fp = str(args.get("file_path", ""))
-        try:
-            p = Path(fp)
-            p = (p if p.is_absolute() else VAULT / p).resolve()
-            return p.relative_to(VAULT).as_posix()
-        except Exception:
-            return Path(fp).name
-    if tool == "Grep":
-        return f"/{args.get('pattern', '')}/"
-    if tool == "Glob":
-        return str(args.get("pattern", ""))
-    if tool.endswith("propose_change"):
-        # The one call that changes something on disk deserves to be legible in
-        # the trail rather than showing up as a bare tool name.
-        return str(args.get("title") or "").strip()
-    return ""
 
 
 async def as_stream(text: str):
