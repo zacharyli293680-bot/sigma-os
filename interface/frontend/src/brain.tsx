@@ -17,11 +17,20 @@
  * that flashes white-cyan and the only thing that sends light down an edge. If
  * you see something travel, it happened.
  *
- * §11's render-budget risk is handled directly: if the average frame runs
- * long, the loop degrades to a static render that repaints only on
- * interaction. prefers-reduced-motion gets the static sky from the start.
- * Glows are pre-rendered sprites rather than ctx.shadowBlur — same look at a
- * fraction of the cost, which is what buys the bloom inside the budget.
+ * There is one visual tier and one frame rate. There used to be two of each —
+ * a capped "ambient" for the dashboard and an uncapped "focus" for the expanded
+ * view, plus a quality ladder that shed dust, then glow reach, then the far
+ * filaments, then motion itself, whenever the rolling median frame ran long.
+ * Both are gone with the expand: the dashboard *is* the view, so the state it
+ * is in all day cannot be the degraded one. What is left is the cheap end of
+ * that work, which was never conditional — pre-rendered glow sprites instead of
+ * ctx.shadowBlur, edges batched into one path per colour bucket, the layout run
+ * once and frozen, and a governor that stops painting entirely when the tab is
+ * hidden. The budget is held by not spending, not by cutting back under load.
+ *
+ * The cost of that: nothing recovers automatically from a slow frame any more.
+ * prefers-reduced-motion still gets a static sky, because that is a request
+ * rather than a measurement.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { obsidianHref } from "./api";
@@ -46,36 +55,25 @@ const NOSYNC_COLOR = "#C77D2E";
 /** Fraction of FIRE_MS an axon pulse takes to cross its edge. */
 const AXON = 0.42;
 
-/** Ambient frame rate. The camera makes one revolution per 140 seconds, so at
- *  60fps a star at the cloud's edge moves ~1.4px per frame — fifteen is
- *  visually identical and costs a quarter as much. That is what makes a
- *  permanently-mounted brain affordable to leave on all day. */
-const AMBIENT_FPS = 15;
-/** How long a fire promotes the sky to full rate: the pulse's crossing plus the
- *  tail of the node's own glow. "If it moves, something happened" applied to
- *  the frame budget — the only thing that buys 60fps is something real. */
+/** How long a fire keeps the sky hot. The rate no longer changes — the sky runs
+ *  at the display's rate whether or not anything is firing — but the loop still
+ *  needs to know a pulse is in flight, because that is what keeps it painting
+ *  through a `prefers-reduced-motion` static sky. */
 const HOT_MS = FIRE_MS + 300;
-/** Quality ladder. 0 full · 1 dust off and a shorter glow reach · 2 the far
- *  filaments dropped · 3 static, repainting only on demand. This replaces a
- *  one-way boolean: the old rule condemned the sky permanently once any 45
- *  frames exceeded 26ms, so a single GC pause could do it and nothing could
- *  ever recover. Measured on a rolling median instead, and re-armed whenever
- *  the canvas changes size class.
+/** The centre cell is a letterbox — roughly 2.4:1 — and the cloud is sized on
+ *  its short side, so at 1.0 it sits as a discrete ball in the middle of a wide
+ *  box with dead margins either side. Over-filling runs it off the left and
+ *  right edges instead, where the mask feathers it out, and the sky reads as
+ *  something the panel is a window onto rather than a picture hung in it.
  *
- *  Rung 2 arrived with the full-shell sky. Dust and glow reach are both spent
- *  by rung 1 and neither touches edges — which are the frame's dominant cost —
- *  so the ladder had nothing between "pretty" and "frozen", and one slow moment
- *  dropped it the whole way. */
-const SLOW_MS = 26;
-const WINDOW = 45;
-const STATIC = 3;
-/** Must match the grid transition in App.css (`--dive-ms`). The sky renders at
- *  full rate for this long whenever the stage changes size. */
-const DIVE_MS = 340;
+ *  This was the `spread` prop, which took one value on the dashboard and
+ *  another in the expanded view. There is no expanded view now, so there is
+ *  only one value it can have. */
+const FILL = 1.35;
 /** Backing-store granularity, in device pixels. The canvas box changes on every
- *  frame of the expand, and reallocating a ~10MB buffer twenty times across one
- *  animation is ~200MB of churn — a driver stall right where smoothness matters
- *  most. Rounding up to a step means ~3 reallocations instead of ~20; the buffer
+ *  frame of a window drag, and reallocating a ~10MB buffer twenty times across
+ *  one resize is ~200MB of churn — a driver stall right where smoothness
+ *  matters. Rounding up to a step means ~3 reallocations instead of ~20; the buffer
  *  is then slightly larger than the box and the transform below stretches the
  *  scene to fill it exactly, so the picture is very slightly supersampled rather
  *  than distorted. */
@@ -182,11 +180,6 @@ function bucket(v: number, lo: number, hi: number): number {
   return u <= 0 ? 0 : u >= 1 ? EDGE_STEPS - 1 : (u * EDGE_STEPS) | 0;
 }
 
-/** Quality rung 2 drops ambient filaments behind this depth. Fired and hovered
- *  edges are never thinned: they are the two that carry information, and
- *  keeping those affordable is the entire reason to degrade the rest. */
-const THIN_DEPTH = 1.0;
-
 /** 3D force layout: repulsion, springs, centre gravity. Seeded from note ids,
  *  so the sky looks the same on every visit.
  *
@@ -277,43 +270,25 @@ type World = {
   fires: Map<number, number>;          // node idx -> performance.now() of firing
 };
 
-export default function Brain({ graph, vault, fireRef, filter, onStatic,
-                                mode = "focus" }: {
+export default function Brain({ graph, vault, fireRef, filter }: {
   /** Fetched by App, like every other panel's data. The brain is a renderer. */
   graph: Graph | null;
   vault: string;
   fireRef: React.MutableRefObject<((detail: string) => void) | null>;
-  /** Lifted to App so the HUD can live outside this component — the chips sit
-   *  on the stage in ambient and become the V.A.U.L.T. column when expanded. */
+  /** Lifted to App so the HUD can live outside this component: VaultHud is a
+   *  sibling in the centre cell, not a child of the canvas. */
   filter: string | null;
-  /** Reports the bottom of the quality ladder upward, so the HUD can say
-   *  "static sky — frame budget" while living outside this component. A
-   *  degradation nobody is told about is the kind of silent failure this whole
-   *  OS is built to avoid. */
-  onStatic?: (v: boolean) => void;
-  /** "focus" renders at the display's rate; "ambient" is capped at AMBIENT_FPS.
-   *  That cap is now the *only* difference between them. The dust layer is
-   *  gated on the quality ladder and always was, whatever the old comment here
-   *  claimed; and the camera fill stopped varying when the sky moved out of the
-   *  centre cell to cover the whole shell, where there is no box to over-fill.
-   *  The sky is never unmounted between the two — that is the point of a mode
-   *  rather than a second view. */
-  mode?: "ambient" | "focus";
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [quality, setQuality] = useState(0);
   // `ready` flips when the deferred layout has produced a world to draw. It is
   // state rather than a ref because the draw effect has to re-run when it lands.
   const [ready, setReady] = useState(false);
-  useEffect(() => { onStatic?.(quality >= STATIC); }, [quality, onStatic]);
   // Camera angle accumulates rather than being derived from the frame
   // timestamp: the loop stops while the tab is hidden, and `t * k` would
-  // teleport the sky by however long you were away. A ref, so changing quality
-  // or mode restarts the loop without snapping the camera back to zero.
+  // teleport the sky by however long you were away. A ref, so anything that
+  // restarts the loop does not snap the camera back to zero.
   const driftRef = useRef(0);
   const hotUntil = useRef(0);
-  const modeRef = useRef(mode);
-  modeRef.current = mode;
   // Filters *dim*, they do not remove. The layout is computed once and cached
   // (dashboard-plan §5), so hiding nodes would either relayout — throwing away
   // the picture you had just learned to read — or leave holes. Dimming keeps
@@ -323,24 +298,10 @@ export default function Brain({ graph, vault, fireRef, filter, onStatic,
   const filterRef = useRef<string | null>(null);
   filterRef.current = filter;
   // Set by the draw effect; lets anything outside the loop ask for one repaint
-  // without restarting it. Needed because in the degraded static mode nothing
-  // repaints on its own, so a filter change would simply not show up.
+  // without restarting it. Needed because a reduced-motion sky never repaints
+  // on its own, so a filter change there would simply not show up.
   const redrawRef = useRef<(() => void) | null>(null);
   useEffect(() => { redrawRef.current?.(); }, [filter]);
-  // Re-arm the ladder when the mode changes: a degrade measured against an
-  // ambient cell says nothing about the expanded view, and vice versa. Without
-  // this, one slow moment in a corner of the dashboard would leave the full
-  // view permanently static.
-  //
-  // And run flat out for the length of the expand/collapse. Going *in* was
-  // already smooth because focus means 60fps; coming *out* dropped to the
-  // ambient 15 the instant the class flipped, so the sky stuttered through
-  // roughly five frames of a 340ms animation while the box around it moved
-  // smoothly. The transition is the one moment ambient must not apply.
-  useEffect(() => {
-    setQuality(0);
-    hotUntil.current = performance.now() + DIVE_MS + 120;
-  }, [mode]);
   const world = useRef<World | null>(null);
   const mouse = useRef({ x: 0, y: 0 });
   const hover = useRef<number | null>(null);
@@ -453,11 +414,14 @@ export default function Brain({ graph, vault, fireRef, filter, onStatic,
     if (!ready || !world.current) return;
     const canvas = canvasRef.current!;
     const ctx = canvas.getContext("2d")!;
+    // The one thing that can still stop the sky moving, and it is a stated
+    // preference rather than a measurement. Firing paints through it: a node
+    // that was actually read has to be visible even to someone who asked for
+    // no ambient motion.
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const live = !reduced && quality < STATIC;
-    let raf = 0, prev = 0, lastDraw = 0, dirty = true;
+    const live = !reduced;
+    let raf = 0, prev = 0, dirty = true;
     let awake = !document.hidden;
-    const times: number[] = [];
     /** Scratch for `project` below — one triple for the whole loop. */
     const P3 = new Float32Array(3);
 
@@ -485,7 +449,7 @@ export default function Brain({ graph, vault, fireRef, filter, onStatic,
       const rotX = mouse.current.y * 0.22;
       const cy = Math.cos(rotY), sy = Math.sin(rotY);
       const cx = Math.cos(rotX), sx = Math.sin(rotX);
-      const scale = Math.min(W, H) / 560;
+      const scale = Math.min(W, H) / 560 * FILL;
 
       // Project once into flat arrays; everything below reads these. The result
       // lands in the scratch triple rather than a fresh tuple — this used to
@@ -522,20 +486,19 @@ export default function Brain({ graph, vault, fireRef, filter, onStatic,
       ctx.globalCompositeOperation = "lighter";
 
       /* ---- dust ----------------------------------------------------------
-         First thing dropped when the frame budget slips: 260 motes are pure
-         depth cue, and losing them costs parallax rather than information. */
-      if (quality < 1) {
-        ctx.fillStyle = "rgba(150,185,210,0.30)";
-        for (let i = 0; i < w.motes.length / 3; i++) {
-          project(w.motes, i);
-          const x = P3[0], y = P3[1], p = P3[2];
-          if (p <= 0 || x < 0 || y < 0 || x > W || y > H) continue;
-          ctx.globalAlpha = Math.min(0.5, (p - 0.45) * 0.7);
-          if (ctx.globalAlpha <= 0) continue;
-          ctx.fillRect(x, y, p * 1.4, p * 1.4);
-        }
-        ctx.globalAlpha = 1;
+         260 motes of parallax, so camera drift reads as motion through a
+         volume rather than a flat picture turning. Unconditional now — it used
+         to be the first thing the quality ladder dropped. */
+      ctx.fillStyle = "rgba(150,185,210,0.30)";
+      for (let i = 0; i < w.motes.length / 3; i++) {
+        project(w.motes, i);
+        const x = P3[0], y = P3[1], p = P3[2];
+        if (p <= 0 || x < 0 || y < 0 || x > W || y > H) continue;
+        ctx.globalAlpha = Math.min(0.5, (p - 0.45) * 0.7);
+        if (ctx.globalAlpha <= 0) continue;
+        ctx.fillRect(x, y, p * 1.4, p * 1.4);
       }
+      ctx.globalAlpha = 1;
 
       /* ---- edges ----------------------------------------------------------
          Collected into one path per colour bucket and stroked once each, rather
@@ -561,9 +524,6 @@ export default function Brain({ graph, vault, fireRef, filter, onStatic,
         } else if (lit) {
           path = litPath ?? (litPath = new Path2D());
         } else {
-          // Rung 2: the far filaments go. Never the fired or hovered ones —
-          // those are the two that mean something.
-          if (quality >= 2 && depth < THIN_DEPTH) continue;
           const s = bucket(depth, EDGE_FAR, EDGE_NEAR);
           path = dimPaths[s] ?? (dimPaths[s] = new Path2D());
         }
@@ -622,10 +582,10 @@ export default function Brain({ graph, vault, fireRef, filter, onStatic,
 
         const r = (1.7 + Math.sqrt(node.inlinks) * 1.05) * pp[i] + boost * 6;
         const spr = glow(boost > 0 ? FIRE_COLOR : COLORS[node.bucket] ?? "#8299A6");
-        // A smaller sprite at reduced quality: the blit is fill-rate bound, so
-        // shrinking the reach is the cheapest thing that buys back a frame
-        // without changing what is on screen.
-        const reach = Math.max(r, 1) * ((quality < 1 ? 3.9 : 2.9) + boost * 3.2);
+        // The full reach, always. The ladder used to shrink this to 2.9 to buy
+        // back fill rate, which is the change that made the sky look flat
+        // without ever announcing itself.
+        const reach = Math.max(r, 1) * (3.9 + boost * 3.2);
 
         ctx.globalAlpha = Math.min(1, (0.36 + 0.62 * depth) * swell * dim + boost);
         ctx.drawImage(spr, px[i] - reach, py[i] - reach, reach * 2, reach * 2);
@@ -674,8 +634,14 @@ export default function Brain({ graph, vault, fireRef, filter, onStatic,
     /* The frame governor. The RAF runs continuously — it is nearly free when
        it decides not to draw — and everything about *whether* to paint is
        decided here rather than by starting and stopping the loop. That is what
-       lets a fire animate even in the static mode, where nothing else would
-       ever repaint. */
+       lets a fire animate through a reduced-motion sky, where nothing else
+       would ever repaint.
+
+       There is no rate cap and no frame-time sampling left: while it is
+       animating it paints every frame the display offers. The two things that
+       still stop it are a hidden tab and prefers-reduced-motion, and both are
+       statements that nobody is watching rather than guesses that it is too
+       expensive to continue. */
     const loop = (t: number) => {
       raf = requestAnimationFrame(loop);
       if (!awake) return;                       // hidden tab: cost nothing
@@ -686,25 +652,9 @@ export default function Brain({ graph, vault, fireRef, filter, onStatic,
       const animating = live || hot;
       if (!animating && !dirty) return;         // static and nothing changed
 
-      // Ambient is capped; focus and anything hot run at the display's rate.
-      const interval = (modeRef.current === "focus" || hot) ? 0 : 1000 / AMBIENT_FPS;
-      if (animating && !dirty && t - lastDraw < interval) return;
-      lastDraw = t;
       dirty = false;
       if (animating) driftRef.current += dt * 0.000045;
-
-      const t0 = performance.now();
       draw(t, animating);
-      const ms = performance.now() - t0;
-
-      // Median of a window, not "any frame over budget, counted". One GC pause
-      // must not be able to condemn the sky, and the old rule let it.
-      if (!animating || quality >= STATIC) return;
-      times.push(ms);
-      if (times.length < WINDOW) return;
-      const median = [...times].sort((a, b) => a - b)[times.length >> 1];
-      times.length = 0;
-      if (median > SLOW_MS) setQuality(q => Math.min(STATIC, q + 1));
     };
     raf = requestAnimationFrame(loop);
 
@@ -724,7 +674,8 @@ export default function Brain({ graph, vault, fireRef, filter, onStatic,
     document.addEventListener("visibilitychange", onVisibility);
 
     // The per-frame clientWidth read only adapts while the loop is drawing, so
-    // a resize in static mode left a stretched picture until the mouse moved.
+    // a resize under reduced motion would leave a stretched picture until the
+    // mouse moved.
     const ro = new ResizeObserver(() => { dirty = true; });
     ro.observe(canvas);
 
@@ -779,13 +730,13 @@ export default function Brain({ graph, vault, fireRef, filter, onStatic,
       canvas.removeEventListener("mouseleave", onLeave);
       canvas.removeEventListener("click", onClick);
     };
-  }, [ready, quality, vault]);
+  }, [ready, vault]);
 
-  // Just the sky. The numbers and the filters are VaultHud, below, because in
-  // the ambient state they live on the stage's edges rather than over the
-  // canvas — and the two need to be positioned independently.
+  // Just the sky. The numbers and the filters are VaultHud, below: they sit on
+  // the stage's left edge rather than over the canvas, and the two need to be
+  // positioned independently.
   return (
-    <div className={`brain-field ${mode} ${ready ? "lit" : ""}`}>
+    <div className={`brain-field ${ready ? "lit" : ""}`}>
       <div className="brain-nebula" aria-hidden="true" />
       <canvas ref={canvasRef} className="brain-canvas" />
     </div>
@@ -797,17 +748,15 @@ export default function Brain({ graph, vault, fireRef, filter, onStatic,
 /** The vault's numbers and the bucket filters — the V.A.U.L.T. column.
  *
  *  One arrangement, always on. There used to be two variants showing exactly
- *  the same facts and driving exactly the same filter: a `chips` row for when
- *  the sky shared its cell, and this column for when it had the whole shell.
- *  The sky has the whole shell at all times now, so the row it was fitting
- *  around no longer exists and keeping both would mean maintaining two
- *  renderings of one set of numbers.
+ *  the same facts and driving exactly the same filter: a `chips` row along the
+ *  bottom for the dashboard, and this column for the expanded view. There is
+ *  one state now, so there is one arrangement — and it shares the centre cell
+ *  with the reactor rather than waiting for the panels to get out of the way.
  */
-export function VaultHud({ graph, filter, onFilter, staticSky = false }: {
+export function VaultHud({ graph, filter, onFilter }: {
   graph: Graph | null;
   filter: string | null;
   onFilter: (f: string | null) => void;
-  staticSky?: boolean;
 }) {
   // Memoised: App re-renders on every fleet-progress SSE message, and these
   // walked all 200 nodes three times on each of them.
@@ -877,8 +826,7 @@ export function VaultHud({ graph, filter, onFilter, staticSky = false }: {
         </p>
       )}
       <p className="dim brain-hint">
-        click a star to open the note · <kbd>Esc</kbd> back
-        {staticSky && <><br />static sky — frame budget</>}
+        click a star to open the note · <kbd>Esc</kbd> clears the filter
       </p>
     </aside>
   );

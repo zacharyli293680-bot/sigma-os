@@ -70,9 +70,11 @@ export function TopStrip({ health, window: win, block, clock, onHealthClick }: {
 
 // ---------------------------------------------------------------- left rail
 
+// BR is gone. It named an expand that no longer exists — the sky is bounded by
+// the centre cell and stays that size — and a rail slot for a state you cannot
+// enter is worse than no slot, because it advertises a room that was demolished.
 const RAIL: [string, string, boolean][] = [
   ["OV", "Overview — the dashboard around it", true],
-  ["BR", "Brain — expand the sky (Ctrl+G)", true],
   ["AG", "Agents — Phase 1", false],
   ["CA", "Calendar — week, month and the 14-day list (Ctrl+')", true],
   ["WK", "Work — the four priority queues", true],
@@ -82,12 +84,11 @@ const RAIL: [string, string, boolean][] = [
   ["SY", "System — Phase 6", false],
 ];
 
-/** OV and BR are no longer two rooms. The brain is always on the centre stage;
- *  these name how much of the shell it gets, which is why BR reads "expand". */
-export function Rail({ diving, onBrain, noSyncOpen, onNoSync, noSyncCount,
+/** OV is the dashboard itself, so it is active whenever nothing is over it —
+ *  and it is never a destination, because you are already there. */
+export function Rail({ noSyncOpen, onNoSync, noSyncCount,
                       studyOpen, onStudy, buildOpen, onBuild,
                       workOpen, onWork, agendaOpen, onAgenda }: {
-  diving: boolean; onBrain: () => void;
   noSyncOpen: boolean; onNoSync: () => void; noSyncCount: number | null;
   studyOpen: boolean; onStudy: () => void;
   buildOpen: boolean; onBuild: () => void;
@@ -97,13 +98,12 @@ export function Rail({ diving, onBrain, noSyncOpen, onNoSync, noSyncCount,
   return (
     <nav className="rail">
       {RAIL.map(([k, title, live]) => {
-        const active = k === "BR" ? diving : k === "ST" ? studyOpen
+        const active = k === "ST" ? studyOpen
           : k === "BD" ? buildOpen : k === "WK" ? workOpen : k === "CA" ? agendaOpen
-          : k === "OV" ? !diving && !studyOpen && !buildOpen && !workOpen && !agendaOpen
+          : k === "OV" ? !studyOpen && !buildOpen && !workOpen && !agendaOpen
           : false;
-        const go = k === "BR" ? onBrain : k === "ST" ? onStudy : k === "BD" ? onBuild
-          : k === "WK" ? onWork : k === "CA" ? onAgenda
-          : k === "OV" && diving ? onBrain : undefined;
+        const go = k === "ST" ? onStudy : k === "BD" ? onBuild
+          : k === "WK" ? onWork : k === "CA" ? onAgenda : undefined;
         return (
           <button key={k} className={active ? "active" : ""} disabled={!live}
                   title={title} onClick={go}>
@@ -292,22 +292,21 @@ export function ProjectsPanel({ projects, vault }: { projects: Project[] | null;
 
 // ---------------------------------------------------------------- foot
 
-export function Foot({ activity, onChat, onBrain, onPalette, onLedger, onNoSync,
+export function Foot({ activity, onChat, onPalette, onLedger, onNoSync,
                       onCapture, onWork, onAgenda }: {
   activity: { text: string; live: boolean };
-  onChat: () => void; onBrain: () => void; onPalette: () => void;
+  onChat: () => void; onPalette: () => void;
   onLedger: () => void; onNoSync: () => void; onCapture: () => void;
   onWork: () => void; onAgenda: () => void;
 }) {
-  // The hints are also the buttons — Chrome sometimes eats Ctrl+G/Ctrl+K, so
-  // every keystroke has a clickable twin. The dock is a door too: clicking
+  // The hints are also the buttons — Chrome sometimes eats Ctrl+K, so every
+  // keystroke has a clickable twin. The dock is a door too: clicking
   // what-is-happening opens the full ledger of what happened.
   return (
     <footer className="foot">
       <span className="foot-keys">
         <button onClick={onPalette}><kbd>Ctrl</kbd>+<kbd>K</kbd> palette</button> ·{" "}
         <button onClick={onChat}><kbd>Ctrl</kbd>+<kbd>/</kbd> chat</button> ·{" "}
-        <button onClick={onBrain}><kbd>Ctrl</kbd>+<kbd>G</kbd> brain</button> ·{" "}
         <button onClick={onLedger}><kbd>Ctrl</kbd>+<kbd>J</kbd> ledger</button> ·{" "}
         <button onClick={onNoSync}><kbd>Ctrl</kbd>+<kbd>.</kbd> no-sync</button> ·{" "}
         <button onClick={onCapture}><kbd>Ctrl</kbd>+<kbd>N</kbd> capture</button> ·{" "}

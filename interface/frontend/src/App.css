@@ -64,27 +64,21 @@ body {
   .haze { animation: none; }
 }
 
-/* The two tracks that collapse when the sky expands, as *registered* custom
-   properties so they interpolate.
+/* The right column's width and the lower row's height. Plain custom properties:
+   they were @property-registered `<length>`s so the grid could *interpolate*
+   them when the expand collapsed both to 0px, and with no expand there is
+   nothing to interpolate — a registration whose only purpose was an animation
+   that no longer exists is ceremony that reads as a live feature.
 
-   This is the whole reason the expand used to snap. The row was
-   `minmax(180px, auto)` and `auto` is not an animatable value — so
-   `grid-template-rows` fell back to a discrete jump while
-   `grid-template-columns` (360px → 0) animated beside it. Half the layout slid
-   and half of it teleported, which reads as broken rather than fast.
-   A `<length>` in both states animates properly, and @property is what makes a
-   custom property a length rather than a string. */
-/* They inherit, so the sky's region mask can read the same two numbers the
-   grid is animating and open its bright window in step with the tracks —
-   rather than keeping a second copy of the layout, which would drift from this
-   one the first time a track changed. */
-@property --right-w {
-  syntax: "<length>"; inherits: true; initial-value: 360px;
+   --dive-ms / --dive-ease outlive the dive under their old names: they are the
+   shell's motion tempo, and the queue's promote/settle animations further down
+   are timed against them so the whole dashboard moves at one speed. */
+:root {
+  --right-w: 360px;
+  --lower-h: 210px;
+  --dive-ms: 340ms;
+  --dive-ease: cubic-bezier(0.32, 0.72, 0, 1);
 }
-@property --lower-h {
-  syntax: "<length>"; inherits: true; initial-value: 210px;
-}
-:root { --dive-ms: 340ms; --dive-ease: cubic-bezier(0.32, 0.72, 0, 1); }
 
 .shell {
   position: relative;
@@ -92,9 +86,9 @@ body {
   height: 100%;
   min-width: 920px;
   grid-template-columns: 72px minmax(0, 1fr) var(--right-w);
-  /* The lower row loses `auto` sizing to gain the animation. It is a strip by
-     design — a 14-day calendar line plus the project rows, 200px of content
-     today — and `.lower` scrolls if it ever needs more. */
+  /* The lower row is a fixed strip by design — a 14-day calendar line plus the
+     project rows, 200px of content today — and `.lower` scrolls if it ever
+     needs more. */
   grid-template-rows: 44px minmax(220px, 1fr) var(--lower-h) 30px;
   grid-template-areas:
     "strip strip strip"
@@ -103,8 +97,6 @@ body {
     "foot  foot   foot";
   gap: 12px;
   padding: 12px 14px;
-  transition: --right-w var(--dive-ms) var(--dive-ease),
-              --lower-h var(--dive-ms) var(--dive-ease);
 }
 
 /* ---------------------------------------------------------------- panels */
@@ -231,11 +223,12 @@ code { font-family: var(--mono); font-size: 0.92em; }
 /* ---------------------------------------------------------------- centre: the reactor */
 
 /* The centre is a stage, not a panel with a picture in it: the sky fills it,
-   the reactor sits at its heart, the chips ride the bottom edge. `isolation`
-   keeps that z-ladder local so the global one (chat-fab 10, drawer 20,
-   palette 30) is untouched; `container-type` lets the reactor size off the
-   cell rather than the viewport, which is what keeps it from reading as a
-   dartboard against the star cloud. */
+   the reactor sits at its heart, the vault's numbers run down the left margin.
+   `isolation` keeps that z-ladder local (sky 1 · scrim 2 · reactor 3 · HUD 4 ·
+   heading 5) so the global one (chat-fab 10, drawer 20, palette 30) is
+   untouched; `container-type` lets the reactor size off the cell rather than
+   the viewport, which is what keeps it from reading as a dartboard against the
+   star cloud. */
 .center {
   grid-area: center;
   position: relative;
@@ -657,75 +650,32 @@ kbd {
 
 /* ---------------------------------------------------------------- the brain */
 
-/* The sky is the shell's substrate, not a layer of one cell. It spans the whole
-   grid behind every panel, so a firing node is visible wherever you are
-   looking rather than only if you happen to be watching the centre.
+/* The sky is a layer of the centre stage: it fills this cell, behind the
+   reactor, and goes no further. It briefly spanned the whole shell behind every
+   panel, held back under the text by a region mask built from the grid's own
+   tracks — which worked, and cost the thing the picture is actually about. The
+   vault fires *around* the reactor; spread across the shell there is no centre
+   for it to fire around, and the reactor ends up sitting on a starfield rather
+   than inside one.
 
    It fades in when the layout finishes rather than appearing at full strength
-   in a single frame. The force sim now runs in chunks across ~10 frames, so
-   without this the sky would still *arrive* abruptly even though nothing
-   blocks any more — the hitch would be gone and the pop would remain. */
+   in a single frame. The force sim runs in chunks across ~10 frames, so without
+   this the sky would still *arrive* abruptly even though nothing blocks any
+   more — the hitch would be gone and the pop would remain. */
 .brain-field {
-  /* Grid geometry, in the shell's padding box — which is the containing block
-     for this layer. Written out once here and derived from `.shell`'s own
-     grid-template above: rail 72 + gap 12; strip 44 + gap 12; and gap 12 +
-     lower + gap 12 + foot 30 off the bottom. */
-  --sky-l: 84px;
-  --sky-r: calc(100% - 12px - var(--right-w));
-  --sky-t: 56px;
-  --sky-b: calc(100% - 54px - var(--lower-h));
-  /* Narrower than the smallest margin it has to fall off across: the rail is
-     72px and the strip 44px, so a 90px feather put the start of the dim
-     plateau at -6px and -34px — off the canvas entirely, which meant those two
-     edges were mid-fade rather than dim. 48 leaves a real plateau under both. */
-  --sky-feather: 48px;
-  /* How much sky survives under a panel: enough that drift and a fire still
-     read there, little enough that a star never competes with a due date. This
-     is the number to turn down if any panel proves hard to read — never a
-     background on the panel, which is the one thing `.panel.attn` means. */
-  --sky-dim: 0.16;
-
-  position: absolute; inset: 0; z-index: -1;
+  position: absolute; inset: 0; z-index: 1;
   overflow: hidden;
   opacity: 0;
   transition: opacity 900ms ease-out;
-
-  /* Two crossed gradients, intersected: full strength over the centre cell,
-     `--sky-dim` everywhere else, with a wide feather so the falloff never
-     draws an edge — a hard rectangle here would be the same mistake as the
-     vignette that used to sit below, drawing the box the layout avoids.
-
-     `intersect, add`, not a bare `intersect`: layers composite bottom-up and
-     the bottom layer has nothing under it, so intersecting *it* against an
-     empty backdrop would mask the whole sky away. */
-  -webkit-mask-image:
-    linear-gradient(to right,
-      rgba(0, 0, 0, var(--sky-dim)) 0,
-      rgba(0, 0, 0, var(--sky-dim)) calc(var(--sky-l) - var(--sky-feather)),
-      #000 var(--sky-l), #000 var(--sky-r),
-      rgba(0, 0, 0, var(--sky-dim)) calc(var(--sky-r) + var(--sky-feather)),
-      rgba(0, 0, 0, var(--sky-dim)) 100%),
-    linear-gradient(to bottom,
-      rgba(0, 0, 0, var(--sky-dim)) 0,
-      rgba(0, 0, 0, var(--sky-dim)) calc(var(--sky-t) - var(--sky-feather)),
-      #000 var(--sky-t), #000 var(--sky-b),
-      rgba(0, 0, 0, var(--sky-dim)) calc(var(--sky-b) + var(--sky-feather)),
-      rgba(0, 0, 0, var(--sky-dim)) 100%);
-  -webkit-mask-composite: source-in, source-over;
-  mask-image:
-    linear-gradient(to right,
-      rgba(0, 0, 0, var(--sky-dim)) 0,
-      rgba(0, 0, 0, var(--sky-dim)) calc(var(--sky-l) - var(--sky-feather)),
-      #000 var(--sky-l), #000 var(--sky-r),
-      rgba(0, 0, 0, var(--sky-dim)) calc(var(--sky-r) + var(--sky-feather)),
-      rgba(0, 0, 0, var(--sky-dim)) 100%),
-    linear-gradient(to bottom,
-      rgba(0, 0, 0, var(--sky-dim)) 0,
-      rgba(0, 0, 0, var(--sky-dim)) calc(var(--sky-t) - var(--sky-feather)),
-      #000 var(--sky-t), #000 var(--sky-b),
-      rgba(0, 0, 0, var(--sky-dim)) calc(var(--sky-b) + var(--sky-feather)),
-      rgba(0, 0, 0, var(--sky-dim)) 100%);
-  mask-composite: intersect, add;
+  /* Fade at the edges instead of vignetting to opaque dark: the cell has no
+     border, so a dark ring would draw the box the design spent its whole
+     budget avoiding. This way the sky dissolves into the haze. The cloud is
+     over-filled past this ellipse on purpose (brain.tsx `FILL`), so what the
+     mask feathers out is more sky rather than empty margin. */
+  -webkit-mask-image: radial-gradient(ellipse 82% 82% at 50% 50%,
+    #000 46%, rgba(0,0,0,0.72) 76%, transparent 100%);
+  mask-image: radial-gradient(ellipse 82% 82% at 50% 50%,
+    #000 46%, rgba(0,0,0,0.72) 76%, transparent 100%);
 }
 .brain-field.lit { opacity: 1; }
 .brain-canvas {
@@ -735,11 +685,16 @@ kbd {
 
 /* Deep tissue behind the stars. Pure CSS on purpose — it costs the canvas
    nothing, which is the whole reason the frame budget in §11 can afford the
-   bloom that sits on top of it. */
+   bloom that sits on top of it.
+
+   0.80 is what the expanded view used to get, and the dashboard got 0.68. There
+   is one state now and it is the one you look at all day, so it gets the
+   stronger of the two — the dimmer value only ever existed to leave headroom
+   for a "real" view that no longer exists. */
 .brain-nebula {
   position: absolute; inset: -20%; z-index: 0;
   pointer-events: none;
-  opacity: 0.68;
+  opacity: 0.80;
   filter: blur(38px);
   background:
     radial-gradient(38% 44% at 26% 30%, rgba(0, 229, 255, 0.24), transparent 68%),
@@ -811,15 +766,16 @@ kbd {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-/* The column shares the centre cell with the reactor now, instead of appearing
-   only once the panels were out of the way. At a narrow centre — a small
-   window, or simply the right column at full width — the two would fight for
-   the same pixels, so the type tightens rather than anything being dropped:
-   the bucket rows are the sky's only control, and hiding them to save room
-   would take the filters away exactly when the cloud is hardest to read.
+/* The column shares the centre cell with the reactor permanently, instead of
+   appearing only once the panels were out of the way. The cell is never wider
+   than the window minus the rail and the right column now, so on a smaller
+   screen the two would fight for the same pixels — the type tightens rather
+   than anything being dropped: the bucket rows are the sky's only control, and
+   hiding them to save room would take the filters away exactly when the cloud
+   is hardest to read.
 
-   A container query, not a viewport one: what matters is this cell's width,
-   and the dive changes that without the window moving. */
+   A container query, not a viewport one: what matters is this cell's width, and
+   `.center` is what actually owns it. */
 @container (max-width: 820px) {
   .brain-stats { left: 14px; width: 142px; }
   .brain-stats .hero { font-size: 46px; }
@@ -1515,51 +1471,19 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--cyan); }
 .brain-filters button:disabled { opacity: 0.35; cursor: default; }
 .brain-filter-note { margin: 8px 0 0; font-size: 11px; line-height: 1.5; }
 
-/* ------------------------------------------------------------- the dive */
+/* The dive is gone. `.shell.diving` collapsed --right-w and --lower-h to 0px
+   and slid the right column and lower row out on a staggered schedule, so the
+   centre stage could take the whole shell. It was the last thing that made the
+   brain feel like a place you went to rather than the dashboard you are on, and
+   with it went two frame rates, two nebula opacities and two scrim sizes. What
+   it was hiding — the sky at full strength — is now simply what you get.
 
-/* Ctrl+G is a zoom, not a switch. The right column and lower row collapse to
-   nothing and the centre stage takes the space — in flow, so the global
-   z-index ladder is untouched and the chat drawer still opens over it. The
-   reactor rides along at the heart the whole way. */
-.shell.diving { --right-w: 0px; --lower-h: 0px; }
+   Its two better values were kept as the permanent ones: the nebula's 0.80 (see
+   `.brain-nebula`) and, deliberately, NOT the wider 58cqmin scrim — that one
+   existed because an expanded cell put more cloud behind the instrument, and
+   the bounded cell does not. */
 
-/* Staggered, not simultaneous. Going in, the panels clear out fast and ahead of
-   the tracks, so the stage grows into space that already looks empty rather
-   than shoving content aside. Coming back they wait until the tracks have most
-   of the way opened, so nothing appears squashed on its way in. The asymmetry
-   is what makes it read as deliberate instead of mushy. */
-.right, .lower {
-  transform: none;
-  /* Returning: wait until the tracks are most of the way open, so nothing
-     appears squashed on its way in. */
-  transition: opacity 190ms ease calc(var(--dive-ms) - 170ms),
-              transform 240ms var(--dive-ease) calc(var(--dive-ms) - 210ms);
-}
 .lower { overflow-y: auto; }
-.shell.diving .right,
-.shell.diving .lower {
-  opacity: 0;
-  pointer-events: none;
-  overflow: hidden;              /* nothing may spill mid-collapse */
-  /* Leaving: clear out fast and ahead of the tracks, so the stage grows into
-     space that already looks empty rather than shoving content aside. */
-  transition: opacity 130ms ease, transform 180ms var(--dive-ease);
-}
-/* Compositor-only movement carrying the fade — a few pixels in the direction
-   each panel is leaving. */
-.shell.diving .right { transform: translateX(14px); }
-.shell.diving .lower { transform: translateY(14px); }
-/* Expanded, the stage has room for the full V.A.U.L.T. column again, and the
-   scrim shrinks relative to the sky because the cloud is no longer crowding
-   the instrument. Same cqmin basis as above, for the same reason. */
-.shell.diving .core-scrim { width: min(58cqmin, 620px); }
-.shell.diving .brain-nebula { opacity: 0.8; }
-
-@media (prefers-reduced-motion: reduce) {
-  .shell, .right, .lower,
-  .shell.diving .right, .shell.diving .lower { transition: none; }
-  .shell.diving .right, .shell.diving .lower { transform: none; }
-}
 
 /* ------------------------------------------------------ work — the queues */
 

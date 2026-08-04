@@ -71,12 +71,10 @@ export default function App() {
   const [window_, setWindow] = useState<Window_ | null | undefined>(undefined);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
-  // The brain is never absent now — it is the centre stage's background, with
-  // the reactor at its heart. `diving` only decides how much room it gets.
+  // The brain is the centre stage's background, with the reactor at its heart.
+  // There is no second state and no expand: one stage, always the same size.
   const [graph, setGraph] = useState<Graph | null>(null);
-  const [diving, setDiving] = useState(false);
   const [brainFilter, setBrainFilter] = useState<string | null>(null);
-  const [staticSky, setStaticSky] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [ledgerOpen, setLedgerOpen] = useState(false);
   const [noSyncOpen, setNoSyncOpen] = useState(false);
@@ -178,11 +176,6 @@ export default function App() {
       else if (e.ctrlKey && (e.key === "k" || e.key === "K")) {
         e.preventDefault();
         setPaletteOpen(o => !o);
-      } else if (e.ctrlKey && (e.key === "g" || e.key === "G")) {
-        e.preventDefault();
-        // Not a view switch any more: the brain is always on the centre stage,
-        // and this decides whether it gets the whole shell.
-        setDiving(d => !d);
       } else if (e.ctrlKey && (e.key === "j" || e.key === "J")) {
         e.preventDefault();
         setLedgerOpen(o => !o);
@@ -203,15 +196,15 @@ export default function App() {
         // The full agenda. `'` sits next to `;` (work) and `.` (no-sync), so
         // the three "what is on my plate" surfaces are three neighbouring keys.
         // Verified reaching the page in Chrome before the view was built —
-        // Ctrl+K and Ctrl+G are both eaten at the browser level here, and
-        // finding that out after the fact would have meant rebuilding for it.
+        // Ctrl+K is eaten at the browser level here, and finding that out
+        // after the fact would have meant rebuilding for it.
         e.preventDefault();
         setAgendaOpen(o => !o);
       } else if (e.key === "Escape") {
         // Esc peels one layer: review, palette, no-sync, ledger, drawer, then
-        // the dive, then an active filter. That last rung is new — a filter had
-        // no keyboard escape at all before, because Esc's job used to be
-        // closing a view that took the filter with it.
+        // an active filter. That last rung is what is left of the brain's own
+        // Esc — the view it used to close no longer exists, but a filter still
+        // needs a keyboard way out.
         if (captureOpen) setCaptureOpen(false);
         else if (reviewing) setReviewing(null);
         else if (workOpen) setWorkOpen(false);
@@ -224,7 +217,6 @@ export default function App() {
         else if (noSyncOpen) setNoSyncOpen(false);
         else if (ledgerOpen) setLedgerOpen(false);
         else if (chatOpen) setChatOpen(false);
-        else if (diving) setDiving(false);
         else if (brainFilter) setBrainFilter(null);
       }
     };
@@ -236,7 +228,7 @@ export default function App() {
     // opens and closes on Ctrl+' while Esc silently skips its rung. `agendaOpen`
     // was missing exactly that way and it took driving the view to notice.
   }, [paletteOpen, ledgerOpen, chatOpen, noSyncOpen, reviewing, studyOpen,
-      buildOpen, workOpen, agendaOpen, captureOpen, diving, brainFilter]);
+      buildOpen, workOpen, agendaOpen, captureOpen, brainFilter]);
 
   // Palette jobs stream here and take over the dock while they run; when one
   // finishes, the panels it may have changed refetch immediately.
@@ -282,36 +274,29 @@ export default function App() {
     : activityLine(fleet ?? null, progress, dockElapsed);
 
   return (
-    <div className={`shell ${diving ? "diving" : ""}`}>
+    <div className="shell">
       {/* the same drifting haze the sky sits in — one material, one view */}
       <div className="haze" aria-hidden="true" />
-      {/* The sky is the shell's substrate, not one panel's background: it spans
-          the whole grid and every panel floats on it, so a fire is visible
-          wherever you happen to be looking. A region mask (App.css) holds it
-          back under the text-bearing cells — the alternative was an opaque box
-          behind each panel, and a frame here means one thing only, that
-          something is on you. */}
-      <Brain graph={graph} vault={vault} fireRef={fireRef} filter={brainFilter}
-             onStatic={setStaticSky} mode={diving ? "focus" : "ambient"} />
       <TopStrip health={health} window={window_ ?? null} block={tasks?.block ?? null}
                 clock={clock} onHealthClick={checkHealth} />
-      <Rail diving={diving} onBrain={() => setDiving(d => !d)}
-            noSyncOpen={noSyncOpen} onNoSync={() => setNoSyncOpen(o => !o)}
+      <Rail noSyncOpen={noSyncOpen} onNoSync={() => setNoSyncOpen(o => !o)}
             noSyncCount={noSync?.ok ? noSync.total : null}
             studyOpen={studyOpen} onStudy={() => setStudyOpen(o => !o)}
             buildOpen={buildOpen} onBuild={() => setBuildOpen(o => !o)}
             workOpen={workOpen} onWork={() => setWorkOpen(o => !o)}
             agendaOpen={agendaOpen} onAgenda={() => setAgendaOpen(o => !o)} />
-      {/* The centre stage. The sky is no longer *in* here — it is behind the
-          whole shell — but this is still where it is brightest, so the reactor
-          keeps its pool of darkened sky and the vault's numbers keep the
-          margin they were designed for. */}
+      {/* The centre stage: one scene, not a panel with a picture in it. The sky
+          fills this cell and nothing else — it briefly spanned the whole shell
+          behind every panel, and what that cost was the alignment, because the
+          reactor is the thing the vault is supposed to be firing *around*. The
+          sky is bounded here, the reactor sits at its heart in a pool of
+          darkened sky, and the vault's numbers run down the left margin. */}
       <section className="panel center">
         <h2>FLEET</h2>
+        <Brain graph={graph} vault={vault} fireRef={fireRef} filter={brainFilter} />
         <div className="core-scrim" aria-hidden="true" />
         <Reactor fleet={fleet ?? null} progress={progress} waitingCount={waitingCount} />
-        <VaultHud graph={graph} filter={brainFilter} onFilter={setBrainFilter}
-                  staticSky={staticSky} />
+        <VaultHud graph={graph} filter={brainFilter} onFilter={setBrainFilter} />
       </section>
       <div className="right">
         <WaitingPanel proposals={proposals ?? null} onReview={setReviewing} />
@@ -325,7 +310,6 @@ export default function App() {
       </div>
       <Foot activity={dock}
             onChat={() => setChatOpen(o => !o)}
-            onBrain={() => setDiving(d => !d)}
             onPalette={() => setPaletteOpen(o => !o)}
             onLedger={() => setLedgerOpen(o => !o)}
             onNoSync={() => setNoSyncOpen(o => !o)}
