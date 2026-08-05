@@ -501,6 +501,25 @@ class EventEdit(BaseModel):
     cancelled: str | None = None   # "" clears it, a date sets it
 
 
+class RuleException(BaseModel):
+    """One occurrence of a recurrence rule, skipped or moved (agenda P6).
+
+    `to_date` is what separates the two: absent, the occurrence is simply
+    skipped and the rule row is the only file touched. Present, the same skip
+    happens *and* an override event row is written for the new day — two files,
+    one commit, because an undo that restored only one of them would leave the
+    occurrence in neither place or in both.
+    """
+    file: str                      # schedule.md — the only file a rule lives in
+    line: int
+    raw: str                       # the exact rule row the client saw
+    date: str                      # the occurrence being excepted
+    to_date: str | None = None     # set to also write the override event
+    title: str | None = None       # override title; defaults to the rule's own
+    start: str | None = None
+    end: str | None = None
+
+
 def _month_rel(date: str) -> str:
     return f"{ag.CALENDAR_DIR}/{date[:7]}.md"
 
@@ -524,6 +543,37 @@ def _compose_checked(**kw) -> tuple:
                                   kw.get("end_date") if kw.get("end_date") != kw["date"] else None,
                                   kw.get("cancelled")):
         return None, "the composed line does not read back as what was asked for"
+    return line, None
+
+
+def _except_checked(raw: str, date: str) -> tuple:
+    """Add `date` to a rule's `except::` and prove the row still reads back the
+    same rule. Returns (line, error).
+
+    The round-trip is stricter than the event one, because this write edits a
+    line it did not compose: everything except the exception list has to come
+    back byte-identical in meaning. A serialiser bug that dropped `until::` or
+    flattened `[[CSE-311]]` would otherwise write a rule that still parses —
+    and quietly runs forever, or forever plus a broken link.
+    """
+    was = ag.parse_rule(raw)
+    if not was:
+        return None, "that line is not a recurrence rule"
+    line, why = ag.except_rule(raw, date)
+    if why:
+        return None, why
+    if "\n" in line or "\r" in line:
+        return None, "a line may not span more than one line"
+    got = ag.parse_rule(line)
+    if not got:
+        return None, "the edited line does not parse as a recurrence rule"
+    if date not in got["except"]:
+        return None, "the edited line does not carry the exception it was asked for"
+    unchanged = ("weekdays", "start", "end", "title", "from", "until", "rule_id")
+    if [got[k] for k in unchanged] != [was[k] for k in unchanged]:
+        return None, "the edit changed more of the rule than its exception list"
+    if set(got["except"]) != set(was["except"]) | {date}:
+        return None, "the edit changed exceptions other than the one asked for"
     return line, None
 
 
@@ -695,6 +745,136 @@ def api_agenda_edit(req: EventEdit):
     panels.drop_task_caches()
     return {"ok": True, "file": dst, "raw": line, "sha": res["sha"],
             "moved": moving, "note": res["note"]}
+
+
+@router.post("/agenda/except")
+def api_agenda_except(req: RuleException):
+    """Skip or move ONE occurrence of a recurrence rule (agenda P6).
+
+    Not a new write path: the same `vault_write` mutex, pull, sealed check and
+    ledger row every other calendar write uses. What is new is that the rule row
+    and the override event are written in **one commit**, the rule
+    `/api/agenda/edit` already follows for a cross-month move.
+
+    Deliberately not here: *this and all future*, which would split the rule
+    into two rows with `until::` and `from::`. That is a different operation on
+    a different number of lines, and the plan scopes P6 to single occurrences —
+    it is refused by name rather than approximated.
+    """
+    src = _vault_rel(req.file)
+    if src is None:
+        return _err(400, "bad path")
+    # A rule lives in exactly one file. Anything else reaching here is a UI bug
+    # or a hand-rolled request, and excepting a "rule" in a month note would
+    # write a field the event grammar has no meaning for.
+    if src != ag.SCHEDULE_REL:
+        return _err(400, "not the schedule",
+                    detail=f"recurrence rules live in {ag.SCHEDULE_REL}")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", req.date or ""):
+        return _err(400, "bad date", detail="expected YYYY-MM-DD")
+
+    was = ag.parse_rule(req.raw or "")
+    if not was:
+        return _err(400, "not a rule", detail="that line is not a recurrence rule")
+
+    # Order matters here. An already-excepted day is *also* a day `expand` no
+    # longer produces, so checking occurrence first would answer "this rule does
+    # not occur on 2026-09-14" for a lecture that does occur and that you have
+    # already skipped — true of the expansion, misleading about the rule.
+    if req.date in was["except"]:
+        return _err(400, "already excepted",
+                    detail=f"{req.date} is already an exception on this rule")
+
+    # The rule has to actually produce the day being excepted. Excepting a
+    # Tuesday from an MWF lecture parses, commits, and changes nothing anyone
+    # can see — a write whose only effect is a ledger row saying it happened.
+    if req.date not in ag.expand(was, req.date, req.date):
+        return _err(400, "no such occurrence",
+                    detail=f"this rule does not occur on {req.date}")
+
+    rule_line, why = _except_checked(req.raw, req.date)
+    if why:
+        return _err(400, "bad rule edit", detail=why)
+
+    moving = bool(req.to_date)
+    dst = event_line = None
+    if moving:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", req.to_date or ""):
+            return _err(400, "bad date", detail="expected YYYY-MM-DD")
+        title = " ".join((req.title or was["title"]).split())
+        if not title:
+            return _err(400, "empty")
+        if len(title) > 300:
+            return _err(400, "too long")
+        # The override is an ordinary event row with its own block ID and no
+        # back-reference to the rule (decided 2026-08-04). Naming its parent
+        # would be new line grammar, and grammar is a contract change.
+        event_line, why = _compose_checked(
+            date=req.to_date, title=title,
+            start=req.start if req.start is not None else was["start"],
+            end=req.end if req.end is not None else was["end"],
+            block_id=ag.new_block_id(req.to_date, title, req.date))
+        if why:
+            return _err(400, "bad event", detail=why)
+        dst = _month_rel(req.to_date)
+        if _vault_rel(dst) != dst:
+            return _err(400, "bad path")
+
+    src_p = VAULT / src
+    try:
+        with gitops.vault_write(VAULT) as w:
+            for rel in ([src, dst] if moving else [src]):
+                sealed = _sealed_inside_mutex(rel)
+                if sealed:
+                    return _err(403, "sealed path", detail=sealed)
+            try:
+                body = src_p.read_text(encoding="utf-8")
+            except OSError:
+                return _err(409, "stale", detail="the schedule is gone or unreadable")
+            before = len(_CHECKBOX.findall(body))
+
+            out = td.replace_line(body, req.line, req.raw, rule_line)
+            if out is None:
+                return _err(409, "stale", detail="the line changed underneath you")
+            after = len(_CHECKBOX.findall(out))
+            touched = [src]
+
+            dst_body = spliced = None
+            existed = True
+            if moving:
+                dst_p = VAULT / dst
+                existed = dst_p.exists()
+                dst_body = (dst_p.read_text(encoding="utf-8", errors="replace")
+                            if existed else ag.MONTH_NOTE.format(month=req.to_date[:7]))
+                spliced = td.splice(dst_body, ag.EVENTS_HEADING, event_line)
+                before += len(_CHECKBOX.findall(dst_body))
+                after += len(_CHECKBOX.findall(spliced))
+            if after != before:
+                return _err(400, "checkbox",
+                            detail="a calendar write may not change a checkbox")
+
+            write_note(src_p, out)
+            if moving:
+                dst_p.parent.mkdir(parents=True, exist_ok=True)
+                write_note(dst_p, spliced)
+                touched.append(dst)
+
+            verb = "move" if moving else "skip"
+            res = w.commit(touched, f"zach (dashboard): {verb} one occurrence in {src}")
+    except gitops.GitBusy as e:
+        return _err(409, "busy", detail=f"another Sigma write is in progress ({e})")
+    except OSError as e:
+        return _err(500, "write failed", detail=str(e))
+
+    said = ("moved one occurrence: {t} from {d} to {n}" if moving else
+            "skipped one occurrence: {t} on {d}").format(
+        t=ag.display_title(was["title"])[:60], d=req.date, n=req.to_date)
+    ledger.record("zach", "update", src, res["sha"], said)
+    # The graph only changes when a month note was created — a new node.
+    panels.drop_task_caches(*(("graph",) if not existed else ()))
+    return {"ok": True, "file": src, "raw": rule_line, "sha": res["sha"],
+            "moved": moving, "event": event_line, "event_file": dst,
+            "note": res["note"]}
 
 
 @router.get("/activity")

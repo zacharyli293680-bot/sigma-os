@@ -123,6 +123,7 @@ LOOKS_LIKE_RULE_RE = re.compile(r"^\s*[-*]\s+(?:[MTWRFSU]+\s|.*\^sg-rule-)")
 
 _RULE_FIELD_RE = re.compile(
     rf"\b(from|until|except)::\s*({_DATE}(?:\s*,\s*{_DATE})*)")
+_EXCEPT_FIELD_RE = re.compile(rf"\bexcept::\s*{_DATE}(?:\s*,\s*{_DATE})*")
 
 # M T W R F S U — Thursday is R and Sunday is U, the US course-catalogue
 # convention, so "MWF" and "TR" read the way a schedule of classes reads.
@@ -294,12 +295,48 @@ def parse_rule(line: str) -> dict | None:
             "rule_id": rule_id}
 
 
-def expand(rule: dict, frm: str, to: str) -> list:
-    """The dates a rule occurs on, within [frm, to] inclusive.
+def except_rule(raw: str, date: str) -> tuple:
+    """`raw` with `date` added to its `except::` list → (line, None) | (None, why).
 
-    Never materialised into a note: the rule row is the only record, and this is
-    recomputed on every read. One swappable function, per the brief — the
-    grammar and this expander are a pair, and neither is used anywhere else.
+    Edits the literal row rather than re-serialising from `parse_rule`, so the
+    title's wikilinks, the field order and the spacing survive byte-for-byte —
+    the same reason `parse_rule` keeps the literal title while the occurrence
+    carries the reduced one. Composing a rule row from scratch would rewrite
+    `[[CSE-311]]` into its display form and quietly break the link that keeps
+    the row attached to its course.
+
+    Refuses a date already excepted rather than writing it twice: a second entry
+    parses to the same set, so the write would produce no visible change and
+    still cost a commit and a ledger row.
+    """
+    ru = parse_rule(raw)
+    if not ru:
+        return None, "that line is not a recurrence rule"
+    if not _valid_date(date):
+        return None, "expected YYYY-MM-DD"
+    if date in ru["except"]:
+        return None, f"{date} is already an exception on this rule"
+
+    body, trail = raw.rstrip(), ""
+    hit = RULE_RID_RE.search(body)
+    if hit:
+        body, trail = body[:hit.start()], body[hit.start():]
+    joined = ",".join(sorted(set(ru["except"]) | {date}))
+    m = _EXCEPT_FIELD_RE.search(body)
+    if m:
+        body = f"{body[:m.start()]}except::{joined}{body[m.end():]}"
+    else:
+        body = f"{body.rstrip()} except::{joined}"
+    return body + trail, None
+
+
+def _walk(rule: dict, frm: str, to: str) -> list:
+    """Every date in [frm, to] the rule's weekdays and window produce, each
+    paired with whether an `except::` entry removed it.
+
+    `expand` and `skipped` are both one line over this, so the weekday maths and
+    the from/until clamping have exactly one implementation. The pair the brief
+    calls swappable is this function and `parse_rule`.
     """
     lo, hi = _valid_date(frm), _valid_date(to)
     if not lo or not hi:
@@ -313,10 +350,31 @@ def expand(rule: dict, frm: str, to: str) -> list:
     days, out = set(rule["weekdays"]), []
     while day <= last:
         iso = day.isoformat()
-        if day.weekday() in days and iso not in skip:
-            out.append(iso)
+        if day.weekday() in days:
+            out.append((iso, iso in skip))
         day += datetime.timedelta(days=1)
     return out
+
+
+def expand(rule: dict, frm: str, to: str) -> list:
+    """The dates a rule occurs on, within [frm, to] inclusive.
+
+    Never materialised into a note: the rule row is the only record, and this is
+    recomputed on every read.
+    """
+    return [d for d, was_skipped in _walk(rule, frm, to) if not was_skipped]
+
+
+def skipped(rule: dict, frm: str, to: str) -> list:
+    """The dates the rule would have produced but `except::` removed.
+
+    These are still emitted, struck through — a lecture that silently vanishes
+    from a Monday is indistinguishable from one that was never scheduled, which
+    is the same reason a cancelled event keeps its line (CLAUDE.md §Calendar
+    events). Decided 2026-08-04, before anything in the vault used `except::`,
+    so no existing row changed meaning.
+    """
+    return [d for d, was_skipped in _walk(rule, frm, to) if was_skipped]
 
 
 # --------------------------------------------------------------------------
@@ -449,7 +507,7 @@ def collect_cached(vault, split=None, ttl: float = CACHE_TTL) -> dict:
 # occurrences — one shape, provenance on every one
 # --------------------------------------------------------------------------
 
-def _display(text: str) -> str:
+def display_title(text: str) -> str:
     """A title as a human reads it: wikilinks reduced to their label.
 
     `[[CSE-311]] lecture` is right in `schedule.md` — the link is what keeps the
@@ -468,7 +526,7 @@ def _display(text: str) -> str:
 def _occ(kind, oid, date, title, *, path, line=None, block_id=None,
          rule_id=None, field=None, start=None, end=None, span=None,
          no_sync=False, owner="sigma", section=None, parent=None,
-         raw=None, priority=None, cancelled=None) -> dict:
+         raw=None, priority=None, cancelled=None, skipped=False) -> dict:
     if section is None:
         section, parent = td.section_of(path)
     return {
@@ -486,6 +544,13 @@ def _occ(kind, oid, date, title, *, path, line=None, block_id=None,
         # deleted, and this vault does not delete. The UI dims it; capacity
         # ignores it.
         "cancelled": cancelled,
+        # One occurrence of a recurrence rule, removed by `except::`. Its own
+        # field rather than a value in `cancelled`: an event's `cancelled` is
+        # *the day you called it off*, and `except::` only ever records the day
+        # the thing would have happened. Writing the occurrence date into a key
+        # that means something else would read fine and be quietly wrong. Both
+        # render struck and neither counts toward committed hours.
+        "skipped": skipped,
         # Provenance is not optional and not conditional. Every occurrence can
         # answer "which file, which line" — that is what the [?] affordance
         # renders, and asserting it as an invariant is cheaper than trusting
@@ -519,7 +584,7 @@ def _event_occurrences(ev: dict, lo: str, hi: str) -> list:
             continue
         multi = total > 1
         out.append(_occ(
-            "event", f"{base}@{day}" if multi else base, day, _display(ev["title"]),
+            "event", f"{base}@{day}" if multi else base, day, display_title(ev["title"]),
             path=ev["file"], line=ev["line"], block_id=ev["block_id"],
             start=ev["start"] if (n == 0 or not multi) else None,
             end=ev["end"] if (n == total - 1 or not multi) else None,
@@ -615,7 +680,7 @@ def resolve(vault, frm: str, to: str, split=None, ttl: float = CACHE_TTL) -> dic
     # ask for next week; detecting it only when both sides fall inside the range
     # makes the warning blink in and out as you page through months, which is a
     # worse failure than not having it, because it teaches you to distrust it.
-    dated = [_occ("note", n["file"], n["date"], _display(n["title"]),
+    dated = [_occ("note", n["file"], n["date"], display_title(n["title"]),
                   path=n["file"], field=n["field"], no_sync=n["no_sync"])
              for n in src["notes"]]
     dated += _task_occurrences(src["tasks"])
@@ -627,12 +692,13 @@ def resolve(vault, frm: str, to: str, split=None, ttl: float = CACHE_TTL) -> dic
         out.extend(_event_occurrences(ev, lo, hi))
 
     for ru in src["rules"]:
-        for day in expand(ru, lo, hi):
-            rid = ru["rule_id"] or f"sg-rule-{td.task_id(ru['file'], ru['title'])}"
-            out.append(_occ("rule", f"{rid}@{day}", day, _display(ru["title"]),
+        rid = ru["rule_id"] or f"sg-rule-{td.task_id(ru['file'], ru['title'])}"
+        for day, was_skipped in _walk(ru, lo, hi):
+            out.append(_occ("rule", f"{rid}@{day}", day, display_title(ru["title"]),
                             path=ru["file"], line=ru["line"], rule_id=rid,
                             start=ru["start"], end=ru["end"],
-                            no_sync=ru["no_sync"], raw=ru["raw"]))
+                            no_sync=ru["no_sync"], raw=ru["raw"],
+                            skipped=was_skipped))
 
     out.sort(key=lambda o: (o["date"], o["start"] or "", o["kind"], o["title"]))
     # How many occurrences *in this window* disagree with another source. Both
@@ -654,8 +720,8 @@ def committed_hours(occurrences: list) -> dict:
     """
     hours: dict = {}
     for o in occurrences:
-        if not o["start"] or not o["end"] or o.get("cancelled"):
-            continue                     # a cancelled hour is not a spent one
+        if not o["start"] or not o["end"] or o.get("cancelled") or o.get("skipped"):
+            continue    # a cancelled or skipped hour is not a spent one
         sh, sm = (int(x) for x in o["start"].split(":"))
         eh, em = (int(x) for x in o["end"].split(":"))
         mins = (eh * 60 + em) - (sh * 60 + sm)

@@ -59,6 +59,11 @@ export type Occurrence = {
    *  keeps being emitted — it renders struck and stops counting toward
    *  committed hours. Nothing here deletes a record of something once true. */
   cancelled: string | null;
+  /** One occurrence of a recurrence rule, removed by `except::` (agenda P6).
+   *  Its own field rather than a value in `cancelled`: an event's `cancelled`
+   *  is *the day you called it off*, and `except::` only records the day the
+   *  thing would have happened. Both render struck; neither counts hours. */
+  skipped: boolean;
   /** Client-only: an optimistic move is in flight for this occurrence. Never
    *  sent by the server; set by the view so a moved row can render as unsettled
    *  until its commit lands. */

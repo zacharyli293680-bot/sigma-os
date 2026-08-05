@@ -93,9 +93,16 @@ function Marks({ o }: { o: Occurrence }) {
       {o.no_sync && <span className="ag-seal" title="never leaves this machine">⊘</span>}
       {o.conflict && <span className="ag-conflict" title={o.conflict.why}>⚠</span>}
       {o.cancelled && <span className="ag-cancelled" title={`cancelled ${o.cancelled}`}>⊗</span>}
+      {o.skipped && <span className="ag-cancelled"
+                          title="skipped this week — the rule still runs">⊘̶</span>}
     </>
   );
 }
+
+/** Struck and dimmed, for the two different reasons a thing can be off: an
+ *  event you cancelled, and one occurrence of a rule you skipped. The rule row
+ *  keeps running either way — see CLAUDE.md §Calendar events. */
+const isOff = (o: Occurrence) => Boolean(o.cancelled || o.skipped);
 
 /** Quick-add. Nothing here calls a model and nothing here guesses: an event
  *  lands the instant it is typed, in the month note its date names. */
@@ -184,14 +191,18 @@ export default function AgendaView({ open, vault, onClose }: {
       .catch(() => { if (alive.current) setD(null); });
   }, [fromISO, toISO]);
 
-  /** Only an event row can be moved from here. A task's date belongs to
-   *  `/api/queue/edit`, which already rewrites task lines with its own holds
-   *  and ledger row — a second way to move a task's date is exactly the second
-   *  write path this subsystem is not allowed to grow. Notes and rules are
-   *  refused with a reason rather than silently ignored. */
+  /** Only an event row and a rule occurrence can be moved from here. A task's
+   *  date belongs to `/api/queue/edit`, which already rewrites task lines with
+   *  its own holds and ledger row — a second way to move a task's date is
+   *  exactly the second write path this subsystem is not allowed to grow. Notes
+   *  are refused with a reason rather than silently ignored.
+   *
+   *  A rule occurrence became draggable in P6: the drop excepts the original
+   *  day and writes an override event on the new one, in one commit. An already
+   *  skipped occurrence is refused, since there is nothing left to move. */
   const why = (o: Occurrence): string | null =>
     o.kind === "task" ? "a task's date moves in the work view (Ctrl+;), which owns task lines"
-      : o.kind === "rule" ? "this is a recurrence rule — moving one occurrence of it is P6"
+      : o.kind === "rule" && o.skipped ? "this occurrence is already skipped"
       : o.kind === "note" ? "a dated note's date lives in its frontmatter, which this view does not write"
       // A span occupies several days and is one line. Dragging the day you
       // happened to grab would rewrite it as a single-day event and lose the
@@ -218,6 +229,29 @@ export default function AgendaView({ open, vault, onClose }: {
     }
   }, [reload]);
 
+  /** Skip or move ONE occurrence of a recurrence rule (P6).
+   *
+   *  No optimistic update and no settle delay, unlike a drag: this rewrites the
+   *  rule row every other week also reads from, and the honest thing when the
+   *  write is the interesting part is to wait for it and show what happened. */
+  const exceptOnce = useCallback(async (o: Occurrence, toDate?: string) => {
+    try {
+      await post<AgendaWrite>("agenda/except", {
+        file: o.source.path, line: o.source.line, raw: o.raw, date: o.date,
+        to_date: toDate ?? null, title: null, start: o.start, end: o.end,
+      });
+      if (alive.current) reload();
+    } catch (e) {
+      if (!alive.current) return;
+      setMoving(({ [o.id]: _drop, ...rest }) => rest);   // snap back
+      const msg = e instanceof ApiError
+        ? (e.code === "stale" ? "the schedule changed underneath — reloaded" : e.detail || e.code)
+        : "backend unreachable";
+      setErrs(p => ({ ...p, [o.id]: msg }));
+      if (e instanceof ApiError && e.code === "stale") reload();
+    }
+  }, [reload]);
+
   const reschedule = useCallback((o: Occurrence, date: string) => {
     const refuse = why(o);
     if (refuse) { setErrs(p => ({ ...p, [o.id]: refuse })); return; }
@@ -225,8 +259,11 @@ export default function AgendaView({ open, vault, onClose }: {
     setErrs(({ [o.id]: _drop, ...rest }) => rest);
     setMoving(p => ({ ...p, [o.id]: date }));
     clearTimeout(timers.current[o.id]);
-    timers.current[o.id] = setTimeout(() => commit(o, date), SETTLE_MS);
-  }, [commit]);
+    // A rule occurrence goes to the P6 endpoint — the drop is an exception plus
+    // an override, not a rewrite of the row every other week reads.
+    timers.current[o.id] = setTimeout(
+      () => (o.kind === "rule" ? exceptOnce(o, date) : commit(o, date)), SETTLE_MS);
+  }, [commit, exceptOnce]);
 
   const shown = useMemo(
     () => (d?.occurrences ?? [])
@@ -343,6 +380,22 @@ export default function AgendaView({ open, vault, onClose }: {
                       UN-CANCEL
                     </button>
                   )}
+                  {/* P6. One occurrence, never the rule: skipping edits
+                      `except::` on the row, which keeps running every other
+                      week. Changing the rule itself stays an Obsidian edit —
+                      "this and all future" is a different operation. */}
+                  {probe.kind === "rule" && !probe.skipped && (
+                    <button className="agview-cancel"
+                            title="skip just this one — the rule keeps running"
+                            onClick={() => { exceptOnce(probe); setProbe(null); }}>
+                      SKIP THIS ONE
+                    </button>
+                  )}
+                  {probe.kind === "rule" && probe.skipped && (
+                    <span className="dim" title={`except:: on ${probe.source.rule_id}`}>
+                      skipped — edit {probe.source.path} to put it back
+                    </span>
+                  )}
                   <button className="ghost" onClick={() => setProbe(null)}>✕</button>
                 </>
               ) : (
@@ -394,7 +447,7 @@ function Row({ o, vault, onProbe, showTime = true }: {
   o: Occurrence; vault: string; onProbe: (o: Occurrence) => void; showTime?: boolean;
 }) {
   return (
-    <li className={`agrow k-${o.kind} ${o.cancelled ? "off" : ""} ${o.pending ? "pending" : ""}`}
+    <li className={`agrow k-${o.kind} ${isOff(o) ? "off" : ""} ${o.pending ? "pending" : ""}`}
         {...dragProps(o)}>
       <button className="agrow-why" onClick={() => onProbe(o)}
               title="where does this come from?">[?]</button>
@@ -467,7 +520,7 @@ function Week({ occ, from, today, vault, onProbe, onDrop }: {
                 const e = o.end ? minutes(o.end) : s + 30;
                 return (
                   <button key={o.id} {...dragProps(o)}
-                          className={`agblock k-${o.kind} ${o.cancelled ? "off" : ""} `
+                          className={`agblock k-${o.kind} ${isOff(o) ? "off" : ""} `
                                    + `${o.pending ? "pending" : ""}`}
                           onClick={() => onProbe(o)}
                           title={`${o.start}${o.end ? `–${o.end}` : ""} ${o.title}\n${o.source.path}`}
@@ -515,7 +568,7 @@ function Month({ occ, from, to, anchor, today, onProbe, onDrop }: {
             <ul>
               {items.slice(0, MONTH_CELL_MAX).map(o => (
                 <li key={o.id} className={`agmonth-item k-${o.kind} `
-                                        + `${o.cancelled ? "off" : ""} ${o.pending ? "pending" : ""}`}
+                                        + `${isOff(o) ? "off" : ""} ${o.pending ? "pending" : ""}`}
                     {...dragProps(o)}>
                   <button onClick={() => onProbe(o)}
                           title={`${o.start ?? "all day"} ${o.title}\n${o.source.path}`}>
