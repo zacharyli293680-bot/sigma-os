@@ -18,6 +18,7 @@ RUNTIME = Path(__file__).resolve().parents[1] / "runtime"
 sys.path.insert(0, str(RUNTIME))
 
 import fleet                     # noqa: E402
+import isolation                 # noqa: E402
 import specialists as sp         # noqa: E402
 from sigma import spend          # noqa: E402
 
@@ -32,6 +33,10 @@ def _result(spec, model_override, ok=True, error=None):
 
 class TestWindowPolicy(unittest.TestCase):
     def setUp(self):
+        # First: run() truncates FIRE_PATH, which the four lines below did not
+        # cover — so every pass of this suite erased the last real fleet run's
+        # feed out of runtime/.
+        isolation.sandbox(self)
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
         self._saved = (fleet.STATE_PATH, fleet.PROGRESS_PATH, fleet.LOCK_PATH,

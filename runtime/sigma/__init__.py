@@ -213,11 +213,26 @@ def write_note(path, text: str, default: str = "\n") -> None:
 
 def make_logger(log_path: Path, prefix: str, stream=None):
     """An append-only failure log. A detached worker's stdout goes to DEVNULL and
-    a scheduled task has nowhere to complain, so without this a failure is silent."""
+    a scheduled task has nowhere to complain, so without this a failure is silent.
+
+    SIGMA_STATE_DIR redirects the file by name, and exists for the test suite
+    (see tests/isolation.py). Without it a test run appends to the *production*
+    log, which is not a cosmetic problem: the review suite's own fixture raises
+    RuntimeError("claude is not on PATH") to prove the 06:00 review still
+    scores without a model, and every run wrote that line into review.log --
+    where it eventually read as a live failure of a job that had not failed.
+
+    Resolved per write rather than at import, because these loggers are bound
+    at module scope: a test that sets the variable after importing the module
+    would otherwise still write to the real file."""
     def log(msg: str):
         stamp = datetime.datetime.now().isoformat(timespec="seconds")
+        path = Path(log_path)
+        redirect = os.environ.get("SIGMA_STATE_DIR")
+        if redirect:
+            path = Path(redirect) / path.name
         try:
-            with Path(log_path).open("a", encoding="utf-8") as f:
+            with path.open("a", encoding="utf-8") as f:
                 f.write(f"{stamp}  {msg}\n")
         except OSError:
             pass

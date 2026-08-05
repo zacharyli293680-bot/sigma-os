@@ -1665,10 +1665,29 @@ There is no `sigma` verb for the tests, on purpose.
 to git against throwaway repos, which is the point: the write path is tested against real git rather
 than a mock of it. Do not add a timeout that assumes it is fast.
 
-The suites: `test_applier`, `test_devlog`, `test_doctor_backup`, `test_fleet_due`, `test_fleet_window`,
-`test_intake`, `test_inventory`, `test_mapper`, `test_nosync`, `test_proposal_content`, `test_queue`,
-`test_queue_api`, `test_review_api`, `test_review_score`, `test_scaffold`, `test_sigma_core`,
-`test_study_api`, `test_tool_gate`, `test_writes_api`.
+**A test run must not write into `runtime/`.** It did for months, and the cost was not disk: the
+review suite's fixture raises `RuntimeError("claude is not on PATH")` to prove the 06:00 score
+survives a dead model, every run appended that line to the production `review.log`, and it was
+eventually read there as a live failure of a job that had never failed. `test_intake` appended to
+`intake.log` the same way, and `test_fleet_window` **truncated** `fleet.fire.jsonl` on every pass —
+erasing the last real run's feed, which is destruction rather than noise.
+
+`tests/isolation.py` is the fix, in two halves matching the two kinds of path. **Logs** resolve
+`SIGMA_STATE_DIR` inside `make_logger` at *write* time (they are closures bound at import, so a
+per-test patch of the constant would not have moved them); importing `isolation` sets that variable,
+and because discovery imports every test module before running any of them, **one import anywhere
+redirects the whole run's logs** — including suites that never opt in. **State files** are module
+constants read at use time, so `isolation.sandbox(self)` patches them per case and restores them on
+cleanup. Its `_STATE` list is the only such list in the repo, on purpose: the hand-maintained
+per-suite tuple it replaces is what drifted, and `FIRE_PATH` is the entry it was missing.
+`test_isolation` checks the real files' bytes rather than the redirect's presence, and carries the
+control case — with the variable cleared, the same logger writes to the path it was bound to.
+
+The suites: `test_agenda`, `test_agenda_api`, `test_agenda_except`, `test_agenda_writes`,
+`test_applier`, `test_devlog`, `test_doctor_backup`, `test_fleet_due`, `test_fleet_window`,
+`test_intake`, `test_inventory`, `test_isolation`, `test_mapper`, `test_nosync`,
+`test_proposal_content`, `test_queue`, `test_queue_api`, `test_review_api`, `test_review_score`,
+`test_scaffold`, `test_sigma_core`, `test_study_api`, `test_tool_gate`, `test_writes_api`.
 
 ### Add something
 

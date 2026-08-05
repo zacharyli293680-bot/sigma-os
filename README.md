@@ -113,6 +113,13 @@ Both halves of that are load-bearing. The backend venv supplies `fastapi`/`httpx
 suites import; `-t tests` is required because `tests/` deliberately has no `__init__.py`, and a bare
 `discover` fails with *"Start directory is not importable"* rather than anything that names the cause.
 
+**A test run must not write into `runtime/`**, and for a long time it did — see `tests/isolation.py`.
+Logs are handled for you: importing that module sets `SIGMA_STATE_DIR`, and since discovery imports
+every test module before running any of them, one import anywhere redirects the whole run. A suite
+that touches a *state* file (`fleet.state.json`, `todo.state.json`, `spend.jsonl`, …) calls
+`isolation.sandbox(self)` in `setUp`. Prefer that to hand-listing the paths: the per-suite tuple is
+exactly what drifted, and the one path it missed truncated the real fleet feed on every pass.
+
 ## Design rules
 
 Non-negotiable, and mechanical rather than promised wherever possible:
