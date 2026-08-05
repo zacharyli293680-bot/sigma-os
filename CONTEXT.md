@@ -926,6 +926,7 @@ this disk, and inherits a *machine* login — so the machine is the natural boun
 | `POST` | `/api/queue/meta` | snooze / pin / archive / move — index-only, never destructive |
 | `POST` | `/api/agenda/add` | one typed event becomes a line in a month note |
 | `POST` | `/api/agenda/edit` | retitle, retime, reschedule or cancel one event line |
+| `POST` | `/api/agenda/except` | skip or move ONE occurrence of a recurrence rule (P6) |
 | `POST` | `/api/capture` | quick capture → one note in `00-Inbox`, as its own revertible commit |
 | `POST` | `/api/activity/revert` | `git revert` of exactly one ledger commit |
 | `POST` | `/api/proposals/{name}/decide` | approve · reject · apply · merge |
@@ -1489,13 +1490,28 @@ Honest list. Nothing here is hidden behind a "coming soon".
 From the vision note, in rough order of how ready each is. The first entry is not from the vision note,
 and is further along than anything below it:
 
-- **The agenda subsystem, P6 onward.** P0–P5 have shipped (§7.15, §8, §9, §11): the contract, the
-  resolver, the read endpoint, the today rail, the full view, and the write path with its holds
-  table. What is left is **P6** rule
-  exceptions; **P7** committed hours feeding queue windowing and the 06:00 retrospective — the actual
-  reason the subsystem exists, since the queue still has no idea what a day already costs; **P8** Google
-  Calendar. The brief is `03-Projects/sigma-os/sigma-os-calendar-plan.md` in the vault, and its nine open
-  questions were answered on 2026-08-02.
+- **The agenda subsystem, P7 onward.** P0–P6 have shipped (§7.15, §8, §9, §11): the contract, the
+  resolver, the read endpoint, the today rail, the full view, the write path with its holds table, and
+  rule exceptions. What is left is **P7** committed hours feeding queue windowing and the 06:00
+  retrospective — the actual reason the subsystem exists, since the queue still has no idea what a day
+  already costs; **P8** Google Calendar. The brief is
+  `03-Projects/sigma-os/sigma-os-calendar-plan.md` in the vault, and its nine open questions were
+  answered on 2026-08-02.
+
+  **P6's browser drive is outstanding**, and the phase is not done until it happens (§11's third
+  done-when). Everything else passed: 469 tests including 30 for P6 and two mutation tests, and a
+  real skip driven over HTTP against the real vault — commit, ledger row, undo, file restored
+  exactly. What was not exercised is a human clicking `SKIP THIS ONE` in the provenance strip or
+  dragging a rule occurrence between days. The Chrome automation harness wedged partway through on
+  2026-08-04 (JS evaluation timing out, the page reporting the backend unreachable while `curl` got
+  200 from the same origin, the extension hinting at a pending permission prompt), which is a worse
+  instance of the flakiness already recorded against P4's keybind testing. Two UI paths therefore
+  rest on unit tests alone: the skip button and the rule drag.
+
+  **P6 also left `this and all future` unbuilt, deliberately and by name.** Moving every remaining
+  occurrence means splitting the rule into two rows — the old one gains `until::`, a new one gains
+  `from::` — which is a different operation on a different number of lines, and the plan scopes P6
+  to single occurrences. The endpoint refuses it with a reason rather than approximating it.
 
   Two of those answers were settled by this repo rather than by preference, and both still bind: tasks
   stay **date-only**, because the Tasks plugin has no concept of a time and the calendar would become
