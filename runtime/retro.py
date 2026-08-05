@@ -25,7 +25,9 @@ week. The code here never reads a number back out of the model's answer.
                     14-day median, so the scale calibrates to your workload
                     instead of to a constant someone invented
     A  adherence    deadlines met / deadlines that came due
-    M  momentum     active courses whose timeline frontier advanced
+    M  momentum     active courses with a task completed — the standing goal is
+                    one from every course, every day, so this is a straight
+                    touched/active fraction
 
     score = round(0.40·T + 0.35·A + 0.25·M)
 
@@ -126,18 +128,28 @@ def day_facts(date: str, vault=None, index_path=None, split=None) -> dict:
         else:
             missed.append(f["text"])
 
-    # Momentum: an active course with a timeline, whose timeline moved.
+    # Momentum: one task from each active course, every day — Zach's stated
+    # policy (2026-08-04), and the denominator is *every* active course rather
+    # than only those carrying a timeline.md. The old rule scored the frontier
+    # advancing, which is the better idea and the wrong measure here: three of
+    # the five active courses have no timeline, so no amount of work on them
+    # could move the score at all. A component two thirds of your courses
+    # cannot reach is not measuring momentum, it is measuring which folders
+    # happen to hold a timeline.
     courses = td.active_courses(vault)
-    timelines = {c for c in courses
-                 if (vault / "02-Areas" / "Academics" / c / "timeline.md").exists()}
-    advanced = set()
+    advanced, frontier = set(), set()
     for tid, e in tasks.items():
         if e.get("completed_at") != date:
             continue
         parts = (e.get("file") or "").split("/")
-        if len(parts) >= 4 and parts[1] == "Academics" and td.is_chain_file(e["file"]):
-            if parts[2] in timelines:
-                advanced.add(parts[2])
+        if len(parts) >= 4 and parts[1] == "Academics" and parts[2] in courses:
+            advanced.add(parts[2])
+            # The frontier distinction survives, in the narrative rather than in
+            # the arithmetic: "emailed the TA" and "finished the next timeline
+            # block" both count as showing up, and the review should still be
+            # able to say which one it was.
+            if td.is_chain_file(e["file"]):
+                frontier.add(parts[2])
 
     # Starvation: eligible, never suppressed, and sitting still.
     q = td.build(vault=vault, index_path=index_path, today=date, split=split,
@@ -154,8 +166,9 @@ def day_facts(date: str, vault=None, index_path=None, split=None) -> dict:
             "adopted": adopted, "covered": covered,
             "done": done, "by_section": by_section, "weighted": weighted,
             "deadlines_due": due, "deadlines_met": met, "missed": missed,
-            "courses_with_timelines": sorted(timelines),
+            "active_courses": sorted(courses),
             "advanced": sorted(advanced),
+            "frontier": sorted(frontier),
             "starved": starved[:5],
             "visible": q["counts"]["visible"], "queued": q["counts"]["queued"]}
 
@@ -208,7 +221,7 @@ def components(facts: dict, past: list) -> dict:
     if facts["deadlines_due"] > 0:
         out["A"] = 5.0 * facts["deadlines_met"] / facts["deadlines_due"]
 
-    n = len(facts["courses_with_timelines"])
+    n = len(facts["active_courses"])
     if n:
         out["M"] = 5.0 * len(facts["advanced"]) / n
 
@@ -248,7 +261,10 @@ project or task, and prefer the thing that has been still the longest.
 Date: {date}
 Completed yesterday, by queue: {by_section}
 Deadlines that came due: {due} · met: {met}{missed}
-Active courses with a timeline: {courses} · advanced yesterday: {advanced}
+Active courses: {courses} · touched yesterday: {advanced} · of those, the
+timeline itself moved for: {frontier}
+The standing goal is one task from every active course, every day — name the
+courses that went untouched.
 Sitting still 14+ days: {starved}
 Queue right now: {visible} visible, {queued} waiting"""
 
@@ -262,8 +278,9 @@ def narrative(facts: dict, model: str = MODEL, timeout: int = 60) -> str:
                    or "nothing",
         due=facts["deadlines_due"], met=facts["deadlines_met"],
         missed=(" · missed: " + "; ".join(m[:60] for m in missed[:3])) if missed else "",
-        courses=", ".join(facts["courses_with_timelines"]) or "none",
+        courses=", ".join(facts["active_courses"]) or "none",
         advanced=", ".join(facts["advanced"]) or "none",
+        frontier=", ".join(facts["frontier"]) or "none",
         starved="; ".join(f"{s['text'][:50]} ({s['days']}d)" for s in facts["starved"])
                 or "nothing",
         visible=facts["visible"], queued=facts["queued"])
@@ -299,7 +316,7 @@ def note_text(facts: dict, parts: dict, score, said: str) -> str:
         f"# Review — {facts['date']}\n\n"
         f"> {stars(score)}  ·  {facts['weighted']} weighted  ·  "
         f"{facts['deadlines_met']}/{facts['deadlines_due']} deadlines  ·  "
-        f"{len(facts['advanced'])}/{len(facts['courses_with_timelines'])} courses moved\n\n"
+        f"{len(facts['advanced'])}/{len(facts['active_courses'])} courses touched\n\n"
         + (f"{said}\n\n" if said else "")
         + ("" if facts.get("covered", True) else
            f"> ⚠ This day predates the task queue, which started recording on "
@@ -308,7 +325,7 @@ def note_text(facts: dict, parts: dict, score, said: str) -> str:
         + ("| | component | 0–5 |\n|---|---|---|\n" + "\n".join(rows) + "\n\n"
            if rows else
            "*Nothing measurable yet — the components need a few days of recorded "
-           "work, a deadline that came due, or an active course timeline.*\n\n")
+           "work, a deadline that came due, or an active course.*\n\n")
         + f"## Completed\n\n{done}\n\n"
         + (f"## Sitting still\n\n{starved}\n\n" if starved else "")
         + f"## Queue\n\n{facts['visible']} visible · {facts['queued']} waiting\n\n"
@@ -323,7 +340,8 @@ def row_of(facts: dict, parts: dict, score) -> dict:
             "deadlines_due": facts["deadlines_due"],
             "deadlines_met": facts["deadlines_met"],
             "advanced": len(facts["advanced"]),
-            "courses": len(facts["courses_with_timelines"]),
+            "frontier": len(facts["frontier"]),
+            "courses": len(facts["active_courses"]),
             "visible": facts["visible"], "queued": facts["queued"]}
 
 

@@ -43,7 +43,7 @@ def facts(**kw):
             "done": [], "weighted": 0.0,
             "by_section": {k: 0 for k in todo.SECTIONS},
             "deadlines_due": 0, "deadlines_met": 0, "missed": [],
-            "courses_with_timelines": [], "advanced": [], "starved": [],
+            "active_courses": [], "advanced": [], "frontier": [], "starved": [],
             "visible": 0, "queued": 0}
     base.update(kw)
     return base
@@ -77,7 +77,7 @@ class TestComponents(unittest.TestCase):
         be a confident claim about a day nobody was measuring — and the first
         week of reviews would all be about days that predate the index."""
         f = facts(covered=False, adopted="2026-08-01",
-                  courses_with_timelines=["AA-210"], advanced=[])
+                  active_courses=["AA-210"], advanced=[])
         p = rv.components(f, [3.1, 3.1, 3.1])
         self.assertNotIn("T", p)
         self.assertNotIn("M", p)
@@ -91,9 +91,11 @@ class TestComponents(unittest.TestCase):
         self.assertIn("predates the task queue", text)
         self.assertIn("2026-08-01", text)
 
-    def test_momentum_is_omitted_when_no_course_has_a_timeline(self):
+    def test_momentum_is_omitted_when_no_course_is_active(self):
+        """Between terms there is no cadence to keep, and 0/5 would say there
+        was one and you missed it."""
         self.assertNotIn("M", rv.components(facts(), []))
-        p = rv.components(facts(courses_with_timelines=["AA-210", "MATH-208"],
+        p = rv.components(facts(active_courses=["AA-210", "MATH-208"],
                                 advanced=["AA-210"]), [])
         self.assertEqual(p["M"], 2.5)
 
@@ -103,7 +105,7 @@ class TestScore(unittest.TestCase):
         """4 done (1 PC, 2 course, 1 misc) = 4.4 weighted, median 3.1, 1/1
         deadline, 1 of 2 frontiers: 0.40(5) + 0.35(5) + 0.25(2.5) = 4.375."""
         p = rv.components(facts(weighted=4.4, deadlines_due=1, deadlines_met=1,
-                                courses_with_timelines=["AA-210", "MATH-208"],
+                                active_courses=["AA-210", "MATH-208"],
                                 advanced=["AA-210"]), [3.1, 3.1, 3.1])
         self.assertEqual((p["T"], p["A"], p["M"]), (5.0, 5.0, 2.5))
         self.assertEqual(rv.score_of(p), 4)
@@ -227,26 +229,47 @@ class TestDayFacts(ReviewBase):
         self.assertEqual((f["deadlines_due"], f["deadlines_met"]), (1, 0))
         self.assertEqual(f["missed"], ["ship it"])
 
-    def test_momentum_counts_only_the_timeline_moving(self):
+    def test_any_task_from_a_course_counts_as_touching_it(self):
+        """The goal is one task from every course every day, so an ad-hoc task
+        counts. Until 2026-08-04 only a timeline.md line did, which meant the
+        three active courses without one could not move the score at all."""
         self.note("02-Areas/Academics/AA-210/aa-210.md",
                   "---\ntype: course-index\nstatus: active\n---\n")
         tl = self.note("02-Areas/Academics/AA-210/timeline.md", "- [ ] day 2\n- [ ] day 3\n")
         tasks = self.note("02-Areas/Academics/AA-210/tasks.md", "- [ ] email the TA\n")
         self.adopt()
 
-        # An ad-hoc course task is work, but it is not the frontier advancing.
         tasks.write_text("- [x] email the TA\n", encoding="utf-8")
         self.adopt()
-        self.assertEqual(self.facts()["advanced"], [])
+        f = self.facts()
+        self.assertEqual(f["advanced"], ["AA-210"])
+        # ...but the review can still say it was not the frontier that moved.
+        self.assertEqual(f["frontier"], [])
 
         tl.write_text("- [x] day 2\n- [ ] day 3\n", encoding="utf-8")
         self.adopt()
-        self.assertEqual(self.facts()["advanced"], ["AA-210"])
+        self.assertEqual(self.facts()["frontier"], ["AA-210"])
 
-    def test_a_course_without_a_timeline_is_not_counted_against_momentum(self):
+    def test_a_course_without_a_timeline_still_counts_in_the_denominator(self):
+        """The reason this changed: a component two thirds of the active
+        courses cannot reach is not measuring momentum."""
         self.note("02-Areas/Academics/CSE-351/cse-351.md",
                   "---\ntype: course-index\nstatus: active\n---\n")
-        self.assertEqual(self.facts()["courses_with_timelines"], [])
+        self.assertEqual(self.facts()["active_courses"], ["CSE-351"])
+
+    def test_an_untouched_course_holds_the_score_down(self):
+        """Two active courses, one touched: momentum is 2.5, not 5."""
+        for c in ("AA-210", "CSE-351"):
+            self.note(f"02-Areas/Academics/{c}/{c.lower()}.md",
+                      "---\ntype: course-index\nstatus: active\n---\n")
+        t = self.note("02-Areas/Academics/AA-210/tasks.md", "- [ ] read ch 3\n")
+        self.adopt()
+        t.write_text("- [x] read ch 3\n", encoding="utf-8")
+        self.adopt()
+        f = self.facts()
+        self.assertEqual((f["advanced"], f["active_courses"]),
+                         (["AA-210"], ["AA-210", "CSE-351"]))
+        self.assertEqual(rv.components(f, [])["M"], 2.5)
 
     def test_long_ignored_work_is_surfaced(self):
         self.note("02-Areas/ProCertus/Todo.md",

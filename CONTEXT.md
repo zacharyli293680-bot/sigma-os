@@ -1287,12 +1287,23 @@ priority order nobody can interrogate is one nobody trusts.
 ```
 T  throughput   yesterday's weighted completions vs your own trailing 14-day median
 A  adherence    deadlines met / deadlines that came due
-M  momentum     active courses whose timeline frontier advanced
+M  momentum     active courses with a task completed, over all active courses
 
 score = round(0.40·T + 0.35·A + 0.25·M)
 
 completion weights: procertus 1.5 · courses 1.2 · projects 1.0 · misc 0.5
 ```
+
+**Momentum is a straight touched/active fraction as of 2026-08-04**, encoding Zach's standing goal of
+one task from every active course every day. It previously scored the *frontier* — a completion in a
+course's `timeline.md` — over only those courses that had one. That is the better idea and was the
+wrong measure: three of the five active courses have no `timeline.md`, so no amount of work on
+CSE-311, CSE-351 or CSE-391 could move the score at all, and a component two thirds of your courses
+cannot reach measures which folders hold a timeline rather than momentum. The frontier distinction
+survives in `facts["frontier"]`, which the narrative prompt still receives, so a review can say
+whether the timeline moved or the work was ad-hoc — it just no longer gates the arithmetic. The
+practical effect is a harsher and more honest number: 2026-08-03 scored M 1.0 (1 of 5) where the old
+rule gave 2.5 (1 of 2).
 
 **A component with nothing to measure is omitted and the weights renormalise**, rather than counted as
 zero — a day with no deadlines due did not fail to meet any, and scoring that as 0/5 adherence would
