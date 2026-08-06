@@ -37,10 +37,20 @@ type Mode = "week" | "month" | "agenda";
  *  landed in between, the `raw` the client still holds is still current. */
 const SETTLE_MS = 1400;
 
-/** Weeks start Monday: the academic grammar this vault is full of is MWF and
- *  TR, and a Monday start keeps the weekend together instead of splitting it
- *  across both edges. One constant. */
-const WEEK_START = 1;
+/** Weeks start Sunday (Zach's call, 2026-08-05), in both the week grid and the
+ *  month grid.
+ *
+ *  P4 shipped this as Monday, reasoning that the academic grammar in this vault
+ *  is MWF and TR and that a Monday start keeps the weekend together rather than
+ *  splitting it across both edges. That is still true and was still the wrong
+ *  default: every other calendar he reads starts Sunday, and a grid whose
+ *  columns sit one day off from the one in your other tab is misread faster
+ *  than it is reasoned about.
+ *
+ *  Still one constant. Every day label is derived from a real date through
+ *  `toLocaleDateString`, so the column headers follow this rather than
+ *  restating it — which is why the change is a single digit and not a list. */
+const WEEK_START = 0;
 /** The hour grid's default bounds. Anything outside them widens the grid rather
  *  than being clipped — an event at 06:00 must not simply vanish. */
 const GRID_FROM = 8;
