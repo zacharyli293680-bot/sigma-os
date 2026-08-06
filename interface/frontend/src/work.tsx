@@ -360,19 +360,53 @@ function Row({ t, s, sections, vault, rows, errs, fresh, onTick, onMeta, onMove 
  *  `shown` marks the rows that are already in the window above. The expanded
  *  list is the whole queue in score order, so those appear here too — leaving
  *  them indistinguishable made the top of the list read as duplication rather
- *  than as "these are the ones you can see". */
-function MoreRow({ t, n, glyph, note, shown, action }: {
-  t: QueueTask; n?: number; glyph?: string; note?: string; shown?: boolean;
+ *  than as "these are the ones you can see". Both copies are the same object,
+ *  so `rows[t.id]` drives them together: ticking the frontier slides both out
+ *  at once, which reads as one task leaving one queue drawn at two sizes.
+ *
+ *  `off` marks a row that is not next in its sequence. It is a *marking*, not a
+ *  lock — the checkbox works. Markdown is the truth and doing Day 5 before Day 4
+ *  is a thing people actually do; `_chain` re-derives the frontier as the
+ *  earliest still-open task on every build, so ticking here moves nothing else
+ *  and opens no second frontier. The row already says "waiting on the one above"
+ *  in words, so the amber tick only sharpens what is written — status is never
+ *  colour alone.
+ *
+ *  The ⋯ menu is omitted for snoozed and archived rows: they carry `wake` and
+ *  `restore` instead, and "snooze a snoozed task" is not an action. */
+function MoreRow({ t, n, glyph, note, shown, off, action, vault, sections,
+                  rows, errs, onTick, onMeta, onMove }: {
+  t: QueueTask; n?: number; glyph?: string; note?: string;
+  shown?: boolean; off?: boolean;
   action?: { label: string; onClick: () => void };
+  vault: string; sections?: Record<string, QueueSection>;
+  rows: RowState; errs: Record<string, string>;
+  onTick: (t: QueueTask) => void;
+  onMeta?: (t: QueueTask, body: Record<string, unknown>) => void;
+  onMove?: (t: QueueTask, section: string, parent: string | null) => void;
 }) {
+  const [menu, setMenu] = useState<DOMRect | null>(null);
+  const st = rows[t.id];
   return (
-    <li className={`q-more-row ${shown ? "shown" : ""}`}>
+    <li className={`q-more-row ${shown ? "shown" : ""} ${off ? "off" : ""} ${st ?? ""}`}>
+      <button className={`q-more-box ${off ? "off" : ""} ${st ?? ""}`} disabled={!!st}
+              onClick={() => onTick(t)}
+              aria-label={off ? `tick "${t.text}" out of sequence` : `tick "${t.text}"`}
+              title={off
+                ? "not next in this sequence — ticking writes to the note anyway "
+                  + "and the frontier does not move. One commit of its own, "
+                  + "revertible in the ledger (Ctrl+J)"
+                : "tick it — writes to the note as its own revertible commit"}>
+        {st === "leaving" ? "☑" : st === "busy" ? "◌" : "☐"}
+      </button>
       <span className="q-more-mark">{glyph ?? (n !== undefined ? `${n}.` : "·")}</span>
       <span className="q-more-body">
-        <span className="q-more-text">
+        <a className="q-more-text" href={obsidianHref(vault, t.file.replace(/\.md$/, ""))}
+           title={`${t.file}:${t.line}`}>
           {t.no_sync && <NoSyncMark />}{t.text}
-        </span>
+        </a>
         <span className="q-more-why">{note ?? breakdown(t)}</span>
+        {errs[t.id] && <span className="row-err">{errs[t.id]}</span>}
       </span>
       <span className="q-chips">
         {chipsFor(t).slice(0, 2).map(c => (
@@ -381,6 +415,19 @@ function MoreRow({ t, n, glyph, note, shown, action }: {
       </span>
       {action && (
         <button className="q-more-act" onClick={action.onClick}>{action.label}</button>
+      )}
+      {sections && onMeta && onMove && (
+        <span className="q-menu-wrap">
+          <button className="q-dots" aria-haspopup="menu" aria-expanded={!!menu}
+                  onClick={e => setMenu(m =>
+                    m ? null : (e.currentTarget as HTMLElement).getBoundingClientRect())}
+                  title="snooze, pin, archive, move">⋯</button>
+          {menu && (
+            <RowMenu t={t} at={menu} sections={sections} onClose={() => setMenu(null)}
+                     onMeta={body => { setMenu(null); onMeta(t, body); }}
+                     onMove={(sec, par) => { setMenu(null); onMove(t, sec, par); }} />
+          )}
+        </span>
       )}
     </li>
   );
@@ -393,8 +440,22 @@ function MoreRow({ t, n, glyph, note, shown, action }: {
  * whatever it scores — so this shows the frontier, the rest of the block it sits
  * in, and then the blocks still ahead as a trail. That answers "where am I and
  * what is left", which is the question a timeline is for.
+ *
+ * `show all` opens the trail into real rows. The summary alone was right while
+ * the list was something you read; it stopped being enough the moment every row
+ * grew a checkbox, because a task with no DOM node cannot be ticked — and on
+ * this vault that was ~95 of the 100 blocked course tasks. The bounded scroller
+ * and the sticky headings are what make the long form usable, which is why this
+ * arrived with them rather than before them.
  */
-function ChainView({ chain }: { chain: QueueTask[] }) {
+function ChainView({ chain, vault, sections, rows, errs, onTick, onMeta, onMove }: {
+  chain: QueueTask[]; vault: string; sections: Record<string, QueueSection>;
+  rows: RowState; errs: Record<string, string>;
+  onTick: (t: QueueTask) => void;
+  onMeta: (t: QueueTask, body: Record<string, unknown>) => void;
+  onMove: (t: QueueTask, section: string, parent: string | null) => void;
+}) {
+  const [all, setAll] = useState(false);
   const blocks: { heading: string; items: QueueTask[] }[] = [];
   for (const t of chain) {
     const h = t.heading ?? "—";
@@ -405,48 +466,96 @@ function ChainView({ chain }: { chain: QueueTask[] }) {
   }
   if (!blocks.length) return null;
   const [here, ...ahead] = blocks;
+  const rowProps = { vault, sections, rows, errs, onTick, onMeta, onMove };
   return (
     <>
-      <p className="q-more-head">{here.heading}</p>
-      <ul className="q-more-rows">
-        {here.items.map((t, i) => (
-          <MoreRow key={t.id} t={t} glyph={i === 0 ? "▸" : "·"} shown={i === 0}
-                   note={i === 0 ? breakdown(t) : "waiting on the one above"} />
-        ))}
-      </ul>
-      {ahead.length > 0 && (
+      {/* Each block is its own element so its heading has its own stick region.
+          As plain siblings under the group, every heading shared one — all six
+          of AA-210's pinned to the same 26px and the last one in the DOM
+          painted on top, so scrolling through Block 3 showed "Block 6". */}
+      <div className="q-more-block">
+        <p className="q-more-head">{here.heading}</p>
+        <ul className="q-more-rows">
+          {here.items.map((t, i) => (
+            <MoreRow key={t.id} t={t} glyph={i === 0 ? "▸" : "·"} shown={i === 0}
+                     off={i > 0}
+                     note={i === 0 ? breakdown(t) : "waiting on the one above"}
+                     {...rowProps} />
+          ))}
+        </ul>
+      </div>
+      {ahead.length > 0 && !all && (
         <p className="q-more-ahead">
           then {ahead.slice(0, 3).map(b => `${b.heading.split("—")[0].trim()} (${b.items.length})`).join(" · ")}
           {ahead.length > 3 && ` · +${ahead.length - 3} more blocks`}
+          <button className="q-more-all" onClick={() => setAll(true)}
+                  title="open the blocks ahead as rows, so they can be ticked">
+            show all
+          </button>
         </p>
+      )}
+      {ahead.length > 0 && all && (
+        <>
+          {ahead.map((b, bi) => (
+            <div key={`${b.heading}-${bi}`} className="q-more-block">
+              <p className="q-more-head">{b.heading}</p>
+              <ul className="q-more-rows">
+                {b.items.map(t => (
+                  <MoreRow key={t.id} t={t} glyph="·" off
+                           note="waiting on the one above" {...rowProps} />
+                ))}
+              </ul>
+            </div>
+          ))}
+          <p className="q-more-ahead">
+            <button className="q-more-all" onClick={() => setAll(false)}>
+              hide the blocks ahead
+            </button>
+          </p>
+        </>
       )}
     </>
   );
 }
 
-function Expanded({ s, onMeta }: {
-  s: QueueSection; onMeta: (t: QueueTask, body: Record<string, unknown>) => void;
+function Expanded({ s, sections, vault, rows, errs, onTick, onMeta, onMove }: {
+  s: QueueSection; sections: Record<string, QueueSection>; vault: string;
+  rows: RowState; errs: Record<string, string>;
+  onTick: (t: QueueTask) => void;
+  onMeta: (t: QueueTask, body: Record<string, unknown>) => void;
+  onMove: (t: QueueTask, section: string, parent: string | null) => void;
 }) {
   const groups: Record<string, QueueTask[]> = {};
   for (const t of [...s.visible, ...s.queue, ...s.blocked]) {
     (groups[t.parent ?? ""] ||= []).push(t);
   }
+  // Spread rather than nine repeated attributes at seven call sites. MoreRow's
+  // own signature stays flat, matching Row — this is only how it is called.
+  const rowProps = { vault, sections, rows, errs, onTick, onMeta, onMove };
+  // The held-back lists get no ⋯: they carry wake/restore instead.
+  const heldProps = { vault, rows, errs, onTick };
 
   return (
-    <div className="q-more">
+    <div className="q-more" id={`q-more-${s.key}`}>
       {s.kind === "chain" ? (
         Object.entries(groups).map(([parent, items]) => {
-          const seq = items.filter(t => t.chain).sort((a, b) => a.order - b.order);
+          // Sorted by file first, matching todo.py's own `sorted(key=(file,
+          // order))`. ChainView groups blocks by *consecutive* equal heading,
+          // so a parent holding two chain files would otherwise interleave them
+          // and shatter the grouping.
+          const seq = items.filter(t => t.chain)
+            .sort((a, b) => a.file.localeCompare(b.file) || a.order - b.order);
           const flat = items.filter(t => !t.chain).sort((a, b) => b.score - a.score);
           return (
             <div key={parent} className="q-more-group">
               <p className="q-more-parent">{parent || "unfiled"}</p>
-              {seq.length > 0 && <ChainView chain={seq} />}
+              {seq.length > 0 && <ChainView chain={seq} {...rowProps} />}
               {flat.length > 0 && (
                 <ul className="q-more-rows">
                   {flat.map((t, i) => (
                     <MoreRow key={t.id} t={t} n={i + 1}
-                             shown={s.visible.some(v => v.id === t.id)} />
+                             shown={s.visible.some(v => v.id === t.id)}
+                             {...rowProps} />
                   ))}
                 </ul>
               )}
@@ -454,50 +563,96 @@ function Expanded({ s, onMeta }: {
           );
         })
       ) : (
-        <ul className="q-more-rows">
-          {[...s.visible, ...s.queue].map((t, i) => (
-            <MoreRow key={t.id} t={t} n={i + 1} shown={i < s.visible.length} />
-          ))}
-        </ul>
+        <>
+          <ul className="q-more-rows">
+            {[...s.visible, ...s.queue].map((t, i) => (
+              <MoreRow key={t.id} t={t} n={i + 1}
+                       shown={s.visible.some(v => v.id === t.id)} {...rowProps} />
+            ))}
+          </ul>
+          {/* Unreachable today — only chain files set blocked_by, and _chain
+              runs for the two per-parent sections only — but the chevron's
+              `depth` counts these, so a flat section holding nothing but
+              blocked work would open an empty list. No rank numbers on them: a
+              number claims a position in an order they are not in. */}
+          {s.blocked.length > 0 && (
+            <div className="q-more-group">
+              <p className="q-more-head">blocked</p>
+              <ul className="q-more-rows">
+                {s.blocked.map(t => (
+                  <MoreRow key={t.id} t={t} glyph="·" off
+                           note={t.blocked_by ? `waiting on "${t.blocked_by}"` : "blocked"}
+                           {...rowProps} />
+                ))}
+              </ul>
+            </div>
+          )}
+        </>
       )}
 
       {/* Suppression is never a one-way door: everything held back carries the
-          control that releases it, right where you find it. */}
+          control that releases it, right where you find it. Each list is its own
+          group so its sticky heading is bounded by it — two sticky headings
+          sharing the scroller would pile up at the top of it. */}
       {s.snoozed.length > 0 && (
-        <>
+        <div className="q-more-group">
           <p className="q-more-head">snoozed</p>
           <ul className="q-more-rows">
             {s.snoozed.map(t => (
               <MoreRow key={t.id} t={t} glyph="💤"
                        note={`hidden until ${t.snoozed_until}`}
-                       action={{ label: "wake", onClick: () => onMeta(t, { snooze: "" }) }} />
+                       action={{ label: "wake", onClick: () => onMeta(t, { snooze: "" }) }}
+                       {...heldProps} />
             ))}
           </ul>
-        </>
+        </div>
       )}
       {s.archived.length > 0 && (
-        <>
+        <div className="q-more-group">
           <p className="q-more-head">archived</p>
           <ul className="q-more-rows">
             {s.archived.map(t => (
               <MoreRow key={t.id} t={t} glyph="··" note={t.file}
-                       action={{ label: "restore", onClick: () => onMeta(t, { archive: false }) }} />
+                       action={{ label: "restore", onClick: () => onMeta(t, { archive: false }) }}
+                       {...heldProps} />
             ))}
           </ul>
-        </>
+        </div>
       )}
     </div>
   );
 }
 
-function Card({ s, sections, vault, rows, errs, fresh, onTick, onMeta, onMove }: {
+function Card({ s, sections, vault, rows, errs, fresh, onTick, onMeta, onMove,
+                open, onToggle, gridRef }: {
   s: QueueSection; sections: Record<string, QueueSection>; vault: string;
   rows: RowState; errs: Record<string, string>; fresh: Set<string>;
   onTick: (t: QueueTask) => void;
   onMeta: (t: QueueTask, body: Record<string, unknown>) => void;
   onMove: (t: QueueTask, section: string, parent: string | null) => void;
+  /** Which card is expanded lives in WorkView now — one at a time. An open card
+   *  spans the whole grid, so two of them cannot coexist anyway. */
+  open: boolean; onToggle: () => void;
+  gridRef: React.RefObject<HTMLDivElement | null>;
 }) {
-  const [open, setOpen] = useState(false);
+  const cardRef = useRef<HTMLElement | null>(null);
+  // Bring the card you just opened to the top of the grid — otherwise opening
+  // PROJECTS leaves you looking at COURSES. Rect deltas rather than offsetTop:
+  // `.work-grid` is position:static, so both elements' offsetParent is the
+  // backdrop and offsetTop would not account for the grid's own scroll. Same
+  // reason RowMenu measures rather than computes. scrollTo on the grid
+  // specifically, so nothing else on the page moves.
+  useEffect(() => {
+    const card = cardRef.current, grid = gridRef.current;
+    if (!open || !card || !grid) return;
+    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    grid.scrollTo({
+      top: grid.scrollTop + card.getBoundingClientRect().top
+           - grid.getBoundingClientRect().top - 12,   // .work-grid's padding-top
+      behavior: still ? "auto" : "smooth",
+    });
+  }, [open, gridRef]);
+
   const tail: string[] = [];
   if (s.queue.length) tail.push(`${s.queue.length} queued`);
   if (s.blocked.length) tail.push(`${s.blocked.length} blocked`);
@@ -514,12 +669,12 @@ function Card({ s, sections, vault, rows, errs, fresh, onTick, onMeta, onMove }:
     + s.archived.length;
 
   return (
-    <section className="panel q-card">
+    <section ref={cardRef} className={`panel q-card ${open ? "open" : ""}`}>
       <h2>
         ◇ {s.title.toUpperCase()}
         <span className="q-head">{[head, ...tail].join(" · ")}</span>
-        <button className="q-chev" onClick={() => setOpen(o => !o)} disabled={!depth}
-                aria-expanded={open}
+        <button className="q-chev" onClick={onToggle} disabled={!depth}
+                aria-expanded={open} aria-controls={`q-more-${s.key}`}
                 title={depth ? "the whole queue, and why it is in this order"
                              : "nothing behind the window"}>
           {open ? "▾" : "▸"}
@@ -539,7 +694,10 @@ function Card({ s, sections, vault, rows, errs, fresh, onTick, onMeta, onMove }:
           ))}
         </ul>
       )}
-      {open && <Expanded s={s} onMeta={onMeta} />}
+      {open && (
+        <Expanded s={s} sections={sections} vault={vault} rows={rows} errs={errs}
+                  onTick={onTick} onMeta={onMeta} onMove={onMove} />
+      )}
     </section>
   );
 }
@@ -591,12 +749,21 @@ export default function WorkView({ open, vault, onClose, onMutate }: {
   const [q, setQ] = useState<Queue | null | undefined>(undefined);
   const [rev, setRev] = useState<ReviewRow | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  // One card expanded at a time. Lifted out of Card: an open card spans the
+  // whole grid, and four cards each growing their own grid row without bound
+  // was the crowding this replaces.
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  const gridRef = useRef<HTMLDivElement | null>(null);
 
   const pull = () => get<Queue>("queue").then(setQ).catch(() => setQ(null));
 
   useEffect(() => {
     if (!open) return;
     setQ(undefined);
+    // Collapse on every open. The expansion now outlives Card's unmount, and
+    // reopening WK onto a 600px expanded card fights the reason the caret goes
+    // to the quick-add below — this view is almost always entered to add.
+    setOpenKey(null);
     pull();
     get<ReviewResp>("review").then(r => setRev(r.latest)).catch(() => setRev(null));
     // Opening this view is almost always about adding something — Ctrl+; is
@@ -669,11 +836,13 @@ export default function WorkView({ open, vault, onClose, onMutate }: {
         {oops && <p className="err pad">{oops}</p>}
 
         {q && (
-          <div className="work-grid">
+          <div className="work-grid" ref={gridRef}>
             {QUEUE_ORDER.map(k => (
               <Card key={k} s={q.sections[k]} sections={q.sections} vault={vault}
                     rows={rows} errs={errs} fresh={fresh} onTick={tick}
-                    onMeta={meta} onMove={move} />
+                    onMeta={meta} onMove={move}
+                    open={openKey === k} gridRef={gridRef}
+                    onToggle={() => setOpenKey(o => (o === k ? null : k))} />
             ))}
           </div>
         )}

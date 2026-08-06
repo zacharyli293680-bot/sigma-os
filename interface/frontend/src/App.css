@@ -1661,7 +1661,59 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
   gap: 4px 22px;
   padding: 12px 14px 16px;
 }
-.q-card { padding-bottom: 10px; overflow: visible; }
+/* `min-height: auto` undoes .panel's `min-height: 0`, restoring a grid item's
+   automatic minimum size. Without it a card can be squeezed below its own
+   content, which is invisible until one row of the grid is tall: with an
+   expanded card taking 560px, the three collapsed cards shrank to 16px each and
+   their rows painted over one another. `.panel`'s zero is right for the
+   dashboard's own panels, which live in a grid with fixed tracks; it is wrong
+   for these, whose tracks are sized from them. */
+.q-card { padding-bottom: 10px; overflow: visible; min-height: auto; }
+
+/* The expanded card spans the grid.
+   Collapsed, a card is one of two columns and its height is its content's —
+   which was fine until the chevron opened a hundred rows inside it. An expanded
+   card in a two-column grid grows its grid *row*: the card beside it is
+   stranded at the top of a very tall row and the two below are pushed a screen
+   and a half down. Taking the full width removes the stranded sibling and hands
+   the rows ~1050px instead of ~500px, which is what pays for the breakdown
+   staying on the same line as its task (see .q-more-body).
+
+   It leaves an empty cell beside an even-indexed collapsed card. Accepted: in a
+   gap-separated borderless layout that reads as whitespace. `order: -1` would
+   close it by hoisting the open card to the first row, at the cost of the card
+   you clicked teleporting past three others and tab order no longer matching
+   what you see. */
+/* An open card is a fixed reading pane: full width, one at a time, and a
+   definite height with the list scrolling inside it.
+
+   The height has to be *definite* — `max-height` does not work here, and the
+   failure is invisible until you measure. `.work-grid` sizes an auto row from
+   its item's content contribution, and `.q-more` is a scroll container, which
+   contributes almost nothing: with `max-height` the row came out ~200px shorter
+   than the card's own content, so the list rendered at full height and painted
+   straight over the cards below it. A definite height is respected by track
+   sizing (measured: row 560px, card 560px, nothing spilling) and gives the flex
+   column a real remainder to hand to `.q-more`.
+
+   The cost is a short queue getting some empty space under it, which is the
+   right side of the trade: one open card at a time means a stable pane is
+   worth more than a snug one, and the alternative silently overlapped. */
+.q-card.open {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /* 84vh is .work's own max-height; the subtrahend is its chrome —
+     .work-head ~38 + .q-add ~48 + .q-review ~36 + .work-grid's 28 of vertical
+     padding, plus slack. The 560 ceiling keeps the three collapsed cards a
+     short scroll away rather than a screen away on a tall monitor. */
+  height: min(calc(84vh - 172px), 560px);
+}
+.q-card.open > h2,
+.q-card.open > .q-rows,
+.q-card.open > .q-empty { flex: none; }
+.q-card.open .q-more { flex: 1 1 auto; min-height: 0; }
 /* The count line rides the h2's gradient rule rather than sitting under it —
    the rule is flex:1 and pushes this to the right edge automatically. */
 .q-head {
@@ -1850,20 +1902,74 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
 .q-chev:disabled { color: var(--muted); opacity: 0.45; cursor: default; }
 
 .q-more {
-  margin: 6px 0 2px; padding: 8px 0 2px;
+  /* No top padding: the headings below are sticky, and a sticky element must
+     sit flush against its scroll box or rows slide through the gap above it —
+     the same reason .q-menu has none. The margin and the rule stay, because
+     they are outside the scroll box. */
+  margin: 6px 0 2px; padding: 0 0 2px;
   border-top: 1px solid var(--panel-line-dim);
   animation: q-promote 200ms var(--dive-ease) both;
+
+  /* The list scrolls itself instead of growing the card without bound — which
+     is what buried the other three queues under ~1200px of course timeline.
+     The height comes from the flex remainder of `.q-card.open` above; see the
+     note there for why that card's height is definite rather than capped.
+
+     `hidden auto`, never `overflow-y: auto` — that computes overflow-x to auto,
+     and .q-more-row.leaving translates 20px right, so every tick in here would
+     flash a horizontal scrollbar. */
+  overflow: hidden auto;
+  /* Reaching the end of this list should stop, not start scrolling the grid
+     underneath — same as the row menu. */
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--panel-line-dim) transparent;
+
+  /* Where the block heading parks, measured against .q-more-parent's real
+     height — the two are a pair, so change them together. */
+  --q-parent-h: 26px;
 }
+/* DO NOT add container-type, contain or transform to this element. Any of them
+   makes it a containing block for `position: fixed` descendants, and RowMenu —
+   which now opens from rows inside here — positions itself in viewport
+   coordinates measured off its own button. It would land somewhere else
+   entirely. This is also why .q-more-body below responds with flex-wrap rather
+   than with a container query. */
+.q-more::-webkit-scrollbar { width: 10px; }
+.q-more::-webkit-scrollbar-track { background: transparent; }
+.q-more::-webkit-scrollbar-thumb {
+  background: var(--panel-line);
+  border: 3px solid var(--void);      /* inset, so the thumb reads as a hairline */
+  border-radius: 5px;
+}
+.q-more::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
 .q-more-group + .q-more-group { margin-top: 10px; }
+/* Both headings stick, on two levels: the course code at the top of the
+   scroller, its block title just under it. Padding rather than margin — a
+   sticky element's margin is not part of what sticks (see .q-menu-head). The
+   z-order lets the block title tuck a hair under the course code, which is what
+   kills the sub-pixel gap rows would otherwise show through. */
 .q-more-parent {
-  margin: 0 0 3px;
+  position: sticky; top: 0; z-index: 2;
+  background: var(--void);
+  margin: 0; padding: 7px 0 3px;
   font: 500 10.5px/1.6 var(--mono); letter-spacing: 0.06em; color: var(--ink-2);
 }
 .q-more-head {
-  margin: 8px 0 2px;
+  position: sticky; top: 0; z-index: 1;
+  background: var(--void);
+  margin: 0; padding: 6px 0 2px;
   font: 400 10px/1.6 var(--sans); letter-spacing: 0.14em;
   text-transform: uppercase; color: var(--muted);
 }
+/* Only a block title inside a chain group sits below a course code. The
+   snoozed/archived/blocked headings have no .q-more-parent before them and stay
+   at 0. A sticky element sticks for as long as its *parent* is in view, so each
+   block heading is wrapped in its own .q-more-block — without that they all
+   share the group and pin to the same 26px on top of one another. */
+.q-more-parent ~ .q-more-block .q-more-head { top: var(--q-parent-h); }
+
 .q-more-rows { list-style: none; margin: 0; padding: 0; }
 .q-more-row {
   display: flex; align-items: baseline; gap: 7px;
@@ -1873,25 +1979,92 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
   flex: none; min-width: 17px;
   font: 400 11px/1.5 var(--mono); color: var(--muted); text-align: right;
 }
-.q-more-body { flex: 1 1 auto; min-width: 0; }
-/* Queued work is muted, not hidden: it is real, it is just not now. */
-.q-more-text {
-  display: block; color: var(--ink-2); font-size: 12.5px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+/* Task on the left, arithmetic pinned right, on one line where there is room.
+   No breakpoint: the wrap decides per *row*, so a long title next to a long
+   breakdown stacks even in the wide layout — where a media query would have
+   crammed them — and every row stacks in the one-column layout. That is what
+   lets the breakdown stay permanently visible while halving the row's height,
+   rather than trading one for the other. */
+.q-more-body {
+  flex: 1 1 auto; min-width: 0;
+  display: flex; flex-wrap: wrap; align-items: baseline;
+  justify-content: space-between; column-gap: 14px;
 }
+/* Queued work is muted, not hidden: it is real, it is just not now.
+   It wraps rather than truncating, matching .q-text in the window above: the
+   same task must not read differently in the two lists, and an ellipsis was the
+   loudest way it did. */
+.q-more-text {
+  flex: 1 1 320px; min-width: 0;
+  color: var(--ink-2); font-size: 12.5px; text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.q-more-text:hover { color: var(--ink); }
 /* The arithmetic, permanently visible here. This is the view you open when you
    are arguing with the order, so the answer should not need a hover. */
 .q-more-why {
-  display: block;
+  flex: 0 0 auto; white-space: nowrap;
   font: 400 10px/1.5 var(--mono); color: var(--muted);
 }
+.q-more-row .row-err { flex: 1 0 100%; max-width: none; }
 .q-more-ahead {
   margin: 3px 0 0 21px;
   font: 400 10.5px/1.5 var(--mono); color: var(--muted);
 }
 
+/* Opens the blocks ahead into real rows. Same treatment as .q-more-act, which
+   is the same kind of control: a release valve on a list being held back. */
+.q-more-all {
+  background: none; border: 1px solid var(--panel-line-dim);
+  color: var(--ink-2); font: inherit; font-size: 10px;
+  margin-left: 8px; padding: 0 6px; cursor: pointer;
+}
+.q-more-all:hover { color: var(--accent); border-color: var(--accent); }
+
+/* The checkbox, on every row of the expanded list.
+   Before this, only the front of each queue could be ticked — finishing
+   anything out of order meant opening the note by hand, which on this vault was
+   a hundred blocked course tasks. The write is the same one the window above
+   makes: POST /api/tasks/toggle carries (file, line, raw), so it never needed
+   the row to be at the front of anything. */
+.q-more-box {
+  background: none; border: 1px solid transparent;
+  color: var(--muted); font: inherit; cursor: pointer;
+  padding: 1px 3px; flex: none;
+  transition: color 200ms linear;
+}
+.q-more-box:hover:not(:disabled) { color: var(--accent); }
+.q-more-box.busy { color: var(--amber); }
+.q-more-box.leaving { color: var(--accent); }
+.q-more-box:disabled { cursor: default; }
+/* Out of sequence: amber, the token that means *held* everywhere else in this
+   file. Never colour alone — the row beside it already reads "waiting on the
+   one above", and this only sharpens what is written. */
+.q-more-box.off:hover:not(:disabled),
+.q-more-box.off.busy,
+.q-more-box.off.leaving { color: var(--amber); }
+
+/* The same leave animation as a visible row, at the same timings — deliberately
+   byte-identical, because a task in the window above is *also* drawn here and
+   both copies animate off one id. Two different transitions would turn that
+   from "one task leaving" into a glitch.
+   No `promoted` counterpart: useFreshIds is fed the visible ids only, and this
+   list is not a promotion surface — wiring it here would make a hundred rows
+   twitch on every 60s poll, which is the failure that hook exists to prevent. */
+.q-more-row {
+  transition: opacity 130ms linear, transform 200ms var(--dive-ease);
+}
+.q-more-row.busy { opacity: 0.6; }
+.q-more-row.leaving {
+  opacity: 0;
+  transform: translateX(20px);
+  pointer-events: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .q-more { animation: none; }
+  .q-more-row, .q-more-box { transition: none; }
+  .q-more-row.leaving { transform: none; }
 }
 /* Already in the window above. Ink rather than ink-2, so the top of the
    expanded list reads as "these are the ones you can see" rather than as the
@@ -1910,7 +2083,9 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
 }
 /* Revealed on hover or focus, never on neither: keyboard users must be able to
    reach it, and a permanent ⋯ on every row is chrome competing with the task. */
-.q-row:hover .q-dots, .q-dots:focus-visible { opacity: 1; }
+.q-row:hover .q-dots,
+.q-more-row:hover .q-dots,
+.q-dots:focus-visible { opacity: 1; }
 .q-dots:hover { color: var(--accent); border-color: var(--panel-line-dim); }
 
 /* Click-anywhere-to-close, and it also stops a click landing on the row under

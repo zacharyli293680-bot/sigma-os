@@ -1094,6 +1094,30 @@ exclusive lives there — every file it names also appears in Today, Projects or
 same bronze `⊘` mark. What the view adds is **the number**, which no inline marker can show and which
 is exactly the list the one-disk backup problem needs.
 
+**Expanding a queue** (the chevron on a card) opens the rest of it *inside the card* — what is behind
+the window is the same queue, and moving it to a drawer would make it a different list. One card is
+open at a time, and the open one **spans the grid** and becomes a fixed-height pane whose list scrolls
+inside it. Before that it grew its own grid row without bound: an expanded COURSES pushed the other
+three queues a screen and a half down, and two cards open at once compounded it. Course codes and
+block titles are sticky on two levels, each block in its own stick region.
+
+Three things there are load-bearing and easy to undo by accident. The open card's height must be
+**definite**, not a `max-height` — `.work-grid` sizes an auto row from its item's content
+contribution and a scroll container contributes almost nothing, so a capped card had its list render
+~200px past its own box and paint over the cards below. `.q-card` must re-declare `min-height: auto`
+against `.panel`'s `min-height: 0`, or the collapsed cards squash to 16px beside a tall one. And
+`.q-more` must never gain `container-type`/`contain`/`transform`: each makes it a containing block for
+`position: fixed`, and the row menu positions itself in viewport coordinates.
+
+**Every row in the expanded list can be ticked**, including mid-chain ones, along with the note link
+and the ⋯ menu. `POST /api/tasks/toggle` carries `(file, line, raw)` and never cared whether a task
+was at the front of anything, so this needed no backend change. Out-of-sequence rows are *marked, not
+blocked* — the row already reads "waiting on the one above" and the tick flashes amber rather than
+accent — because markdown is the truth and `_chain` re-derives the frontier as the earliest still-open
+task on every build, so completing Day 9 early moves nothing and opens no second frontier. A chain's
+blocks ahead were previously a one-line summary; `show all` opens them into real rows, because a task
+with no DOM node cannot be ticked and that was ~95 of this vault's 100 blocked course tasks.
+
 **Other views.** `work.tsx` (the four queues, with score breakdowns, snooze/pin/archive/move, quick-add
 and AI reword) · `study.tsx` (exam mode: what an exam covers and which sources no note embeds — the
 "what did you get wrong last time" third is **deliberately absent and says so**, because nothing in the
