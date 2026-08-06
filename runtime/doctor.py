@@ -476,7 +476,13 @@ def check_fleet(out):
                                f"{fired}) - nothing ran", "tail fleet.log; python fleet.py"))
 
     if not (broken or stale):
-        n = len(specs)
+        # Count the *registry* against itself, not the state file against the
+        # registry. State is append-only history and nothing prunes a retired
+        # specialist's record — the planner's survived its 2026-08-01 removal —
+        # so `len(specs)` printed "4/3 specialist(s) reporting", a count over
+        # its own denominator. A record for something that no longer runs is
+        # not a specialist reporting; it is a specialist that used to.
+        n = sum(1 for s in sp.FLEET if s.key in specs)
         out.append((OK, f"fleet healthy ({n}/{len(sp.FLEET)} specialist(s) "
                         f"reporting, last run {state.get('last_run')})", None))
 
