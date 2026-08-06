@@ -25,6 +25,8 @@ import AgendaView from "./agenda";
 import Capture from "./capture";
 import { Foot, Panel, ProjectsPanel, QueuePanel, Rail, TopStrip, WaitingPanel } from "./panels";
 import Reactor, { activityLine, useElapsed } from "./reactor";
+import ThemeView from "./theme-view";
+import { useTheme } from "./theme";
 
 const REFRESH_MS = 60_000;
 
@@ -84,6 +86,10 @@ export default function App() {
   const [workOpen, setWorkOpen] = useState(false);
   const [agendaOpen, setAgendaOpen] = useState(false);
   const [captureOpen, setCaptureOpen] = useState(false);
+  const [themeOpen, setThemeOpen] = useState(false);
+  // Only for the strip's readout — the palette itself is applied to :root by
+  // theme.ts, so nothing here re-renders to change a colour.
+  const theme = useTheme();
   // Fetched once for the rail's count badge; the view refetches on open.
   const [noSync, setNoSync] = useState<NoSync | null>(null);
   const [job, setJob] = useState<Job | null>(null);
@@ -192,6 +198,12 @@ export default function App() {
         // means "I want to type a task", not "close this".
         e.preventDefault();
         setWorkOpen(true);
+      } else if (e.ctrlKey && e.key === ",") {
+        // The palette picker. `,` is the settings key everywhere else and is
+        // unclaimed by Chrome here; it is also the only one of these that
+        // changes how the dashboard looks rather than what it says.
+        e.preventDefault();
+        setThemeOpen(o => !o);
       } else if (e.ctrlKey && e.key === "'") {
         // The full agenda. `'` sits next to `;` (work) and `.` (no-sync), so
         // the three "what is on my plate" surfaces are three neighbouring keys.
@@ -205,6 +217,9 @@ export default function App() {
         // an active filter. That last rung is what is left of the brain's own
         // Esc — the view it used to close no longer exists, but a filter still
         // needs a keyboard way out.
+        // The theme picker is absent from this ladder on purpose: Esc there
+        // has to *revert* the live preview before it closes, so theme-view.tsx
+        // handles its own in the capture phase and stops the event here.
         if (captureOpen) setCaptureOpen(false);
         else if (reviewing) setReviewing(null);
         else if (workOpen) setWorkOpen(false);
@@ -278,7 +293,8 @@ export default function App() {
       {/* the same drifting haze the sky sits in — one material, one view */}
       <div className="haze" aria-hidden="true" />
       <TopStrip health={health} window={window_ ?? null} block={tasks?.block ?? null}
-                clock={clock} onHealthClick={checkHealth} />
+                clock={clock} onHealthClick={checkHealth}
+                theme={theme.name} onTheme={() => setThemeOpen(o => !o)} />
       <Rail noSyncOpen={noSyncOpen} onNoSync={() => setNoSyncOpen(o => !o)}
             noSyncCount={noSync?.ok ? noSync.total : null}
             studyOpen={studyOpen} onStudy={() => setStudyOpen(o => !o)}
@@ -329,6 +345,7 @@ export default function App() {
       <Capture open={captureOpen} onClose={() => setCaptureOpen(false)} onDone={refresh} />
       <Palette open={paletteOpen} onClose={() => setPaletteOpen(false)}
                onLaunched={() => {}} />
+      <ThemeView open={themeOpen} onClose={() => setThemeOpen(false)} />
       <ChatDrawer open={chatOpen} vault={vault} onClose={() => setChatOpen(false)}
                   onTool={d => fireRef.current?.(d)} />
       {!chatOpen && (

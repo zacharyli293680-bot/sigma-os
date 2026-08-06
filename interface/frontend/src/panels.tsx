@@ -22,9 +22,11 @@ export function Panel({ label, children, className = "" }: {
 
 // ---------------------------------------------------------------- top strip
 
-export function TopStrip({ health, window: win, block, clock, onHealthClick }: {
+export function TopStrip({ health, window: win, block, clock, onHealthClick,
+                          theme, onTheme }: {
   health: Health | null | undefined; window: Window_ | null; block: string | null;
   clock: string; onHealthClick: () => void;
+  theme: string; onTheme: () => void;
 }) {
   // undefined = the doctor is still running (it can take ~30s when the auth
   // probe fires); null = the fetch actually failed. Different words for
@@ -63,6 +65,13 @@ export function TopStrip({ health, window: win, block, clock, onHealthClick }: {
       <span className="block" title="from today's daily note">
         {block ?? "no daily note yet"}
       </span>
+      {/* Beside the clock rather than down in the key hints: this is a display
+          control, and it doubles as the readout of which palette is on. The
+          keystroke lives in the tooltip, the same way SEAL carries Ctrl+. */}
+      <button className="health theme-btn" onClick={onTheme}
+              title="switch the palette (Ctrl+,)">
+        <span className="glyph">◐</span> {theme}
+      </button>
       <span className="clock">{clock}</span>
     </header>
   );

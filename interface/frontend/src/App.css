@@ -1,23 +1,95 @@
 /*
- * The dashboard's visual language (dashboard-plan §2): a dark instrument, not a
- * dark-mode webapp. Void background, cyan structure, bordered-not-filled panels
- * with notched corners, mono numbers. One deliberate mode — no light theme.
+ * The dashboard's visual language (dashboard-plan §2): an instrument, not a
+ * webapp with a dark mode. Void background, accent structure, bordered-not-
+ * filled panels with notched corners, mono numbers.
  *
  * Ink rules (per the dataviz method): text wears ink tokens, never accent
  * colours; status pairs a glyph/word with its colour, never colour alone;
  * --muted is decorative chrome only, not reading text.
+ *
+ * §2 said "one deliberate mode — no light theme", and that held while there was
+ * one palette. There are six now (see theme.ts) and the rule that replaced it is
+ * stricter, not looser: **no rule may name a colour.** Every hue in this file
+ * arrives through a token below, so a theme is a value swap and never a
+ * stylesheet fork. The token named --accent is the one that used to be --cyan;
+ * it is orange in EMBER and slate-blue in MERIDIAN, and a token that lies about
+ * its own value is how a palette silently becomes two palettes.
+ *
+ * Composited colours take the -rgb channel triples: `rgb(var(--accent-rgb) /
+ * 0.28)` rather than a fourth hardcoded rgba(), which is what made the old file
+ * un-themeable — 35 of the 64 literals in it were the accent at a different
+ * alpha.
+ *
+ * The values here are VOID, the original. theme.ts writes the selected theme's
+ * values onto :root at boot, so this block is both the default and the list of
+ * everything a theme must define.
  */
 :root {
-  --void: #05070A;
-  --panel-line: rgba(34, 211, 238, 0.28);
-  --panel-line-dim: rgba(34, 211, 238, 0.14);
-  --cyan: #22D3EE;
-  --amber: #FFB020;
-  --red: #FF4D4D;
-  --bronze: #C77D2E;
+  /* --- surface ------------------------------------------------------------ */
+  --void: #05070A;             /* the page itself */
+  --void-rgb: 5 7 10;
+  --scrim-rgb: 2 3 5;          /* what an overlay darkens the page with */
+  --shadow: rgb(0 0 0 / 0.62); /* one drop-shadow colour, themed: a light page
+                                  must not wear a black bruise under a modal */
+  --grid-rgb: 34 211 238;      /* the circuit-trace substrate on the body */
+  --scheme: dark;              /* native controls (date pickers) follow this */
+
+  /* --- structure ---------------------------------------------------------- */
+  --accent: #22D3EE;
+  --accent-rgb: 34 211 238;
+  --glow-rgb: 0 229 255;       /* the accent's brighter twin, for bloom only */
+  --panel-line: rgb(var(--accent-rgb) / 0.28);
+  --panel-line-dim: rgb(var(--accent-rgb) / 0.14);
+
+  /* --- ink ---------------------------------------------------------------- */
   --ink: #D9E4EB;
   --ink-2: #8299A6;
   --muted: #3A4A55;
+  --muted-rgb: 58 74 85;
+
+  /* --- status. Never colour alone; these only sharpen a glyph or a word. --- */
+  --amber: #FFB020;            /* attention: held, overdue, warning */
+  --amber-rgb: 255 176 32;
+  --red: #FF4D4D;              /* fault */
+  --red-rgb: 255 77 77;
+  --add: #4ADE80;              /* a diff's inserted line */
+  /* Bronze means exactly one thing app-wide — "never leaves this machine" — so
+     every theme keeps it in the copper family and keeps it clear of its own
+     accent. Nothing else may borrow it. */
+  --bronze: #C77D2E;
+  --bronze-rgb: 199 125 46;
+
+  /* --- the haze: four drifting gradients behind the whole page ------------- */
+  --haze-1: 0 229 255;
+  --haze-2: 192 132 252;
+  --haze-3: 45 212 191;
+  --haze-4: 96 165 250;
+
+  /* --- the sky -------------------------------------------------------------
+     The centre stage is its own room. The brain's canvas composites additively
+     (`lighter`), which needs a dark ground to read at all, so in a light theme
+     the sky stays dark and everything drawn over it — reactor, HUD, star labels
+     — needs its own ink. `.center` remaps the base tokens to these, so in the
+     five dark themes, where they are identical to the base set, the remap is a
+     no-op and nothing downstream has to know the difference. */
+  --sky: #05070A;
+  --sky-rgb: 5 7 10;
+  --sky-bg: transparent;       /* a colour only when the page is lighter than it */
+  --sky-ink: #D9E4EB;
+  --sky-ink-2: #8299A6;
+  --sky-muted: #3A4A55;
+  --sky-accent: #22D3EE;
+  --sky-accent-rgb: 34 211 238;
+  --sky-glow-rgb: 0 229 255;
+  --sky-amber: #FFB020;
+  --sky-line: rgb(34 211 238 / 0.28);
+  --sky-line-dim: rgb(34 211 238 / 0.14);
+  /* the nebula: the haze's deeper twin, inside the sky */
+  --neb-1: 0 229 255;
+  --neb-2: 192 132 252;
+  --neb-3: 45 212 191;
+  --neb-4: 96 165 250;
+
   --mono: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
   --sans: "Segoe UI", system-ui, sans-serif;
 }
@@ -28,10 +100,10 @@ body {
   /* §2's "4% circuit-trace texture" over the void — two hairline grids at a
      scale coarse enough to read as substrate, not as a spreadsheet. */
   background:
-    linear-gradient(rgba(34, 211, 238, 0.035) 1px, transparent 1px) 0 0 / 100% 92px,
-    linear-gradient(90deg, rgba(34, 211, 238, 0.035) 1px, transparent 1px) 0 0 / 92px 100%,
-    linear-gradient(rgba(34, 211, 238, 0.018) 1px, transparent 1px) 0 0 / 100% 23px,
-    linear-gradient(90deg, rgba(34, 211, 238, 0.018) 1px, transparent 1px) 0 0 / 23px 100%,
+    linear-gradient(rgb(var(--grid-rgb) / 0.035) 1px, transparent 1px) 0 0 / 100% 92px,
+    linear-gradient(90deg, rgb(var(--grid-rgb) / 0.035) 1px, transparent 1px) 0 0 / 92px 100%,
+    linear-gradient(rgb(var(--grid-rgb) / 0.018) 1px, transparent 1px) 0 0 / 100% 23px,
+    linear-gradient(90deg, rgb(var(--grid-rgb) / 0.018) 1px, transparent 1px) 0 0 / 23px 100%,
     var(--void);
   color: var(--ink);
   font: 14px/1.45 var(--sans);
@@ -49,10 +121,10 @@ body {
   opacity: 0.5;
   filter: blur(46px);
   background:
-    radial-gradient(30% 34% at 46% 44%, rgba(0, 229, 255, 0.20), transparent 66%),
-    radial-gradient(34% 40% at 74% 68%, rgba(192, 132, 252, 0.11), transparent 66%),
-    radial-gradient(30% 36% at 22% 26%, rgba(45, 212, 191, 0.10), transparent 64%),
-    radial-gradient(40% 46% at 62% 16%, rgba(96, 165, 250, 0.09), transparent 70%);
+    radial-gradient(30% 34% at 46% 44%, rgb(var(--haze-1) / 0.20), transparent 66%),
+    radial-gradient(34% 40% at 74% 68%, rgb(var(--haze-2) / 0.11), transparent 66%),
+    radial-gradient(30% 36% at 22% 26%, rgb(var(--haze-3) / 0.10), transparent 64%),
+    radial-gradient(40% 46% at 62% 16%, rgb(var(--haze-4) / 0.09), transparent 70%);
   animation: haze-drift 64s ease-in-out infinite alternate;
 }
 @keyframes haze-drift {
@@ -116,7 +188,7 @@ body {
   align-items: center;
   gap: 10px;
   margin: 0 0 8px;
-  color: var(--cyan);
+  color: var(--accent);
   font: 600 10.5px/1.6 var(--sans);
   letter-spacing: 0.18em;
 }
@@ -133,10 +205,10 @@ body {
   clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px),
                      calc(100% - 12px) 100%, 0 100%, 0 12px);
   padding: 10px 14px 12px;
-  background: rgba(34, 211, 238, 0.03);
+  background: rgb(var(--accent-rgb) / 0.03);
 }
 .panel.attn > h2 { color: var(--amber); }
-.panel.attn > h2::after { background: linear-gradient(90deg, rgba(255, 176, 32, 0.4), transparent); }
+.panel.attn > h2::after { background: linear-gradient(90deg, rgb(var(--amber-rgb) / 0.4), transparent); }
 
 .rows { list-style: none; margin: 4px 0; padding: 0; }
 .rows li { margin: 2px 0; }
@@ -147,12 +219,12 @@ body {
   padding: 3px 6px;
   border: 1px solid transparent;
 }
-.rows a:hover { border-color: var(--panel-line-dim); color: var(--cyan); }
+.rows a:hover { border-color: var(--panel-line-dim); color: var(--accent); }
 
 .dim { color: var(--ink-2); }
 .dim-rows a { color: var(--ink-2); }
 .sub { margin: 10px 0 2px; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; }
-.allclear { color: var(--cyan); }
+.allclear { color: var(--accent); }
 .warn-line { color: var(--amber); }
 code { font-family: var(--mono); font-size: 0.92em; }
 
@@ -170,17 +242,21 @@ code { font-family: var(--mono); font-size: 0.92em; }
   font-size: 12.5px;
   white-space: nowrap;
 }
-.brand { letter-spacing: 0.3em; font-weight: 600; color: var(--cyan); }
+.brand { letter-spacing: 0.3em; font-weight: 600; color: var(--accent); }
 .brand .sigma { font-size: 17px; margin-right: 6px; }
 .health {
   background: none; border: 1px solid transparent; cursor: pointer;
   font: inherit; padding: 3px 8px;
 }
 .health:hover { border-color: var(--panel-line-dim); }
-.health.ok   { color: var(--cyan); }
+.health.ok   { color: var(--accent); }
 .health.warn { color: var(--amber); }
 .health.down { color: var(--ink-2); }
 .health .glyph { margin-right: 4px; }
+/* Borrows .health's shape but not its state colours — it reports a preference,
+   not a condition, so it must not read as a fourth health state. */
+.theme-btn { color: var(--ink-2); letter-spacing: 0.06em; }
+.theme-btn:hover { color: var(--accent); }
 .meter { color: var(--ink-2); display: flex; align-items: center; gap: 8px; }
 .meter-bar {
   width: 90px; height: 8px;
@@ -213,7 +289,7 @@ code { font-family: var(--mono); font-size: 0.92em; }
   text-align: left;
   cursor: pointer;
 }
-.rail button.active { color: var(--cyan); border-color: var(--panel-line); }
+.rail button.active { color: var(--accent); border-color: var(--panel-line); }
 /* Unbuilt phases stay visible as a faint roadmap rather than vanishing —
    the rail keeps its shape, and you can see what is coming. */
 .rail button:disabled { color: var(--muted); cursor: default; opacity: 0.42; }
@@ -235,6 +311,28 @@ code { font-family: var(--mono); font-size: 0.92em; }
   overflow: hidden;              /* .panel sets overflow-y:auto — kill it here */
   isolation: isolate;
   container-type: size;
+
+  /* The stage runs on the sky's palette, not the page's. One block, and every
+     rule inside the centre — reactor arcs, core, HUD, star labels, the FLEET
+     heading — re-tokenises for free, because they all read the base names.
+     In the five dark themes these are the same values, so this costs nothing
+     and changes nothing; in MERIDIAN it is the whole reason a light dashboard
+     can hold a dark instrument window without a second stylesheet.
+
+     Sky first, ink second, and both matter: the canvas composites with
+     `lighter`, so a pale ground turns the graph to white mush, and dark ink on
+     the dark ground it then needs would be invisible. */
+  --void: var(--sky);
+  --void-rgb: var(--sky-rgb);
+  --ink: var(--sky-ink);
+  --ink-2: var(--sky-ink-2);
+  --muted: var(--sky-muted);
+  --accent: var(--sky-accent);
+  --accent-rgb: var(--sky-accent-rgb);
+  --glow-rgb: var(--sky-glow-rgb);
+  --amber: var(--sky-amber);
+  --panel-line: var(--sky-line);
+  --panel-line-dim: var(--sky-line-dim);
 }
 .center > h2 { position: relative; z-index: 5; }
 
@@ -253,7 +351,7 @@ code { font-family: var(--mono); font-size: 0.92em; }
   width: min(84cqmin, 560px); aspect-ratio: 1; z-index: 2;
   pointer-events: none;
   background: radial-gradient(closest-side,
-    rgba(5, 7, 10, 0.92) 30%, rgba(5, 7, 10, 0.55) 56%, transparent 100%);
+    rgb(var(--void-rgb) / 0.92) 30%, rgb(var(--void-rgb) / 0.55) 56%, transparent 100%);
 }
 
 .reactor {
@@ -293,19 +391,19 @@ code { font-family: var(--mono); font-size: 0.92em; }
 }
 
 /* the graduation bezel — machining, deliberately static */
-.tick { stroke: rgba(34, 211, 238, 0.16); stroke-width: 1; }
-.tick.major { stroke: rgba(34, 211, 238, 0.34); stroke-width: 1.4; }
+.tick { stroke: rgb(var(--accent-rgb) / 0.16); stroke-width: 1; }
+.tick.major { stroke: rgb(var(--accent-rgb) / 0.34); stroke-width: 1.4; }
 
 /* data spokes: core to arc, lit only by the specialist that owns them */
 .spoke {
-  stroke: rgba(34, 211, 238, 0.10);
+  stroke: rgb(var(--accent-rgb) / 0.10);
   stroke-width: 1;
   transition: stroke 200ms linear;
 }
-.arc.running .spoke { stroke: rgba(34, 211, 238, 0.75); }
-.arc.held    .spoke { stroke: rgba(255, 176, 32, 0.5); }
-.arc.fault   .spoke { stroke: rgba(255, 77, 77, 0.5); }
-.arc.probed  .spoke { stroke: rgba(34, 211, 238, 0.5); }
+.arc.running .spoke { stroke: rgb(var(--accent-rgb) / 0.75); }
+.arc.held    .spoke { stroke: rgb(var(--amber-rgb) / 0.5); }
+.arc.fault   .spoke { stroke: rgb(var(--red-rgb) / 0.5); }
+.arc.probed  .spoke { stroke: rgb(var(--accent-rgb) / 0.5); }
 
 /* invisible fat band so the whole arc is a hover/focus target */
 /* The one part of the reactor that takes the mouse back — see .reactor above.
@@ -316,8 +414,8 @@ code { font-family: var(--mono); font-size: 0.92em; }
   pointer-events: stroke;
 }
 .arc { outline: none; }
-.arc.probed .arc-base { filter: drop-shadow(0 0 7px rgba(0, 229, 255, 0.5)); }
-.arc:focus-visible .arc-base { stroke: var(--cyan); }
+.arc.probed .arc-base { filter: drop-shadow(0 0 7px rgb(var(--glow-rgb) / 0.5)); }
+.arc:focus-visible .arc-base { stroke: var(--accent); }
 
 .arc-base {
   fill: none;
@@ -326,21 +424,21 @@ code { font-family: var(--mono); font-size: 0.92em; }
   stroke-linecap: round;
   transition: stroke 200ms linear, opacity 200ms linear;
 }
-.arc.idle    .arc-base { stroke: rgba(34, 211, 238, 0.32); }
-.arc.queued  .arc-base { stroke: rgba(34, 211, 238, 0.5); }
-.arc.running .arc-base { stroke: rgba(34, 211, 238, 0.3); }
-.arc.ok      .arc-base { stroke: var(--cyan); }
+.arc.idle    .arc-base { stroke: rgb(var(--accent-rgb) / 0.32); }
+.arc.queued  .arc-base { stroke: rgb(var(--accent-rgb) / 0.5); }
+.arc.running .arc-base { stroke: rgb(var(--accent-rgb) / 0.3); }
+.arc.ok      .arc-base { stroke: var(--accent); }
 .arc.held    .arc-base { stroke: var(--amber); }
 .arc.fault   .arc-base { stroke: var(--red); }
 .arc.degraded .arc-base { stroke-dasharray: 3 5; }   /* hollow — Phase 4 triggers it */
 
 .arc-sweep {
   fill: none;
-  stroke: var(--cyan);
+  stroke: var(--accent);
   stroke-width: 7;
   stroke-linecap: round;
   stroke-dasharray: 26 74;
-  filter: drop-shadow(0 0 8px rgba(0, 229, 255, 0.7));
+  filter: drop-shadow(0 0 8px rgb(var(--glow-rgb) / 0.7));
   animation: sweep 1.6s linear infinite;
 }
 @keyframes sweep {
@@ -354,7 +452,7 @@ code { font-family: var(--mono); font-size: 0.92em; }
   fill: var(--ink-2);
   transition: fill 200ms linear;
 }
-.arc.running .arc-label { fill: var(--cyan); }
+.arc.running .arc-label { fill: var(--accent); }
 .arc.probed  .arc-label { fill: var(--ink); }
 .arc.held    .arc-label { fill: var(--amber); }
 .arc.fault   .arc-label { fill: var(--red); }
@@ -364,7 +462,7 @@ code { font-family: var(--mono); font-size: 0.92em; }
    that reports state, and the core reports no state — it is the machine being
    awake. Linear and slow, so it never reads as activity. */
 .core-plate {
-  fill: rgba(5, 12, 20, 0.55);
+  fill: rgb(var(--void-rgb) / 0.62);
   stroke: var(--panel-line);
   stroke-width: 1.5;
   transition: stroke 200ms linear;
@@ -372,7 +470,7 @@ code { font-family: var(--mono); font-size: 0.92em; }
 .core-gimbal,
 .core-gimbal-in {
   fill: none;
-  stroke: rgba(34, 211, 238, 0.22);
+  stroke: rgb(var(--accent-rgb) / 0.22);
   stroke-width: 1;
   stroke-dasharray: 14 9;
   transform-box: view-box;
@@ -383,11 +481,11 @@ code { font-family: var(--mono); font-size: 0.92em; }
 @keyframes gimbal { to { transform: rotate(360deg); } }
 
 .reactor.running .core-plate {
-  stroke: var(--cyan);
-  filter: drop-shadow(0 0 14px rgba(0, 229, 255, 0.5));
+  stroke: var(--accent);
+  filter: drop-shadow(0 0 14px rgb(var(--glow-rgb) / 0.5));
 }
 .reactor.running .core-gimbal,
-.reactor.running .core-gimbal-in { stroke: rgba(34, 211, 238, 0.5); }
+.reactor.running .core-gimbal-in { stroke: rgb(var(--accent-rgb) / 0.5); }
 
 /* Numbers are the hero: large, thin, letter-spaced. */
 .core-word {
@@ -412,7 +510,7 @@ code { font-family: var(--mono); font-size: 0.92em; }
   color: var(--ink-2);
   min-height: 1.4em;                     /* no reflow when a probe swaps in */
 }
-.center-sub.probing b { color: var(--cyan); font-weight: 500; }
+.center-sub.probing b { color: var(--accent); font-weight: 500; }
 .due-tag { color: var(--amber); font-style: normal; }
 .center-note { margin-top: 8px; font-size: 11.5px; }
 
@@ -436,7 +534,7 @@ code { font-family: var(--mono); font-size: 0.92em; }
   margin-right: 6px;
 }
 .badge.pending  { color: var(--amber); }
-.badge.approved { color: var(--cyan); }
+.badge.approved { color: var(--accent); }
 .badge.staged   { color: var(--amber); }
 
 .today .box { color: var(--muted); margin-right: 6px; }
@@ -487,7 +585,7 @@ kbd {
   font-size: 10.5px;
 }
 .dock { font-family: var(--mono); font-size: 11.5px; }
-.dock.live { color: var(--cyan); }
+.dock.live { color: var(--accent); }
 
 /* ---------------------------------------------------------------- chat drawer */
 
@@ -496,9 +594,9 @@ kbd {
   top: 0; right: 0; bottom: 0;
   width: min(40vw, 640px);
   min-width: 420px;
-  background: rgba(5, 7, 10, 0.97);
+  background: rgb(var(--void-rgb) / 0.97);
   border-left: 1px solid var(--panel-line);
-  box-shadow: -18px 0 42px rgba(0, 0, 0, 0.6);
+  box-shadow: -18px 0 42px var(--shadow);
   display: flex;
   flex-direction: column;
   transform: translateX(102%);
@@ -511,7 +609,7 @@ kbd {
   padding: 12px 16px;
   border-bottom: 1px solid var(--panel-line-dim);
 }
-.drawer-head .label { font: 600 11px/1 var(--sans); letter-spacing: 0.18em; color: var(--cyan); }
+.drawer-head .label { font: 600 11px/1 var(--sans); letter-spacing: 0.18em; color: var(--accent); }
 .ghost { background: none; border: none; color: var(--ink-2); cursor: pointer; font-size: 14px; }
 .ghost:hover { color: var(--ink); }
 
@@ -522,18 +620,18 @@ kbd {
   background: none; border: 1px solid var(--panel-line-dim);
   color: var(--ink); text-align: left; padding: 8px 12px; cursor: pointer; font: inherit;
 }
-.suggestions button:hover { border-color: var(--cyan); color: var(--cyan); }
+.suggestions button:hover { border-color: var(--accent); color: var(--accent); }
 
 .drawer-main article { margin-bottom: 22px; }
-.q { color: var(--cyan); font-weight: 600; margin-bottom: 6px; }
+.q { color: var(--accent); font-weight: 600; margin-bottom: 6px; }
 .a p, .a li { margin: 6px 0; }
 .a h3 { font-size: 14px; margin: 12px 0 4px; }
 .thinking { color: var(--ink-2); }
-.wikilink { color: var(--cyan); text-decoration: none; border-bottom: 1px dotted var(--cyan); }
+.wikilink { color: var(--accent); text-decoration: none; border-bottom: 1px dotted var(--accent); }
 .trail { margin: 6px 0; font-size: 12px; color: var(--ink-2); }
 .trail summary { cursor: pointer; }
 .trail .step { padding: 2px 0 2px 14px; font-family: var(--mono); }
-.trail .tool { color: var(--cyan); }
+.trail .tool { color: var(--accent); }
 .blocked { color: var(--bronze); font-size: 12.5px; margin: 4px 0; }
 .error { color: var(--red); font-family: var(--mono); font-size: 12.5px; margin-top: 6px; }
 .stats { color: var(--muted); font-family: var(--mono); font-size: 11px; margin-top: 6px; }
@@ -551,11 +649,11 @@ kbd {
   padding: 9px 12px;
   font: inherit;
 }
-.drawer-form input:focus { outline: none; border-color: var(--cyan); }
+.drawer-form input:focus { outline: none; border-color: var(--accent); }
 .drawer-form button {
   background: none;
-  border: 1px solid var(--cyan);
-  color: var(--cyan);
+  border: 1px solid var(--accent);
+  color: var(--accent);
   padding: 9px 18px;
   font: 600 12px/1 var(--sans);
   letter-spacing: 0.1em;
@@ -563,21 +661,21 @@ kbd {
 }
 .drawer-form button:disabled { border-color: var(--muted); color: var(--muted); cursor: default; }
 
-:focus-visible { outline: 1px solid var(--cyan); outline-offset: 2px; }
+:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 
 .chat-fab {
   position: fixed;
   right: 18px; bottom: 52px;
   background: var(--void);
   border: 1px solid var(--panel-line);
-  color: var(--cyan);
+  color: var(--accent);
   font: 600 12px/1 var(--mono);
   letter-spacing: 0.1em;
   padding: 9px 14px;
   cursor: pointer;
   z-index: 10;
 }
-.chat-fab:hover { box-shadow: 0 0 18px rgba(0, 229, 255, 0.25); }
+.chat-fab:hover { box-shadow: 0 0 18px rgb(var(--glow-rgb) / 0.25); }
 
 .offline {
   position: fixed;
@@ -593,7 +691,7 @@ kbd {
 
 .palette-backdrop {
   position: fixed; inset: 0;
-  background: rgba(2, 3, 5, 0.6);
+  background: rgb(var(--scrim-rgb) / 0.6);
   z-index: 30;
   display: flex; justify-content: center;
 }
@@ -607,7 +705,7 @@ kbd {
   clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px),
                      calc(100% - 12px) 100%, 0 100%, 0 12px);
   display: flex; flex-direction: column;
-  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.7);
+  box-shadow: 0 18px 60px var(--shadow);
 }
 .palette input {
   background: none; border: none;
@@ -616,7 +714,7 @@ kbd {
   font: 15px var(--mono);
   padding: 14px 16px;
 }
-.palette input:focus { outline: none; border-bottom-color: var(--cyan); }
+.palette input:focus { outline: none; border-bottom-color: var(--accent); }
 .palette-notice { color: var(--amber); font: 12px var(--mono); padding: 8px 16px 0; }
 .palette ul { list-style: none; margin: 6px 0; padding: 0; overflow-y: auto; }
 .palette li {
@@ -624,7 +722,7 @@ kbd {
   padding: 9px 16px;
   cursor: pointer;
 }
-.palette li.sel { background: rgba(34, 211, 238, 0.08); box-shadow: inset 2px 0 0 var(--cyan); }
+.palette li.sel { background: rgb(var(--accent-rgb) / 0.08); box-shadow: inset 2px 0 0 var(--accent); }
 .palette li.off { color: var(--muted); cursor: default; }
 .palette li.off .p-title { color: var(--muted); }
 .p-title { color: var(--ink); font-size: 13.5px; }
@@ -637,16 +735,43 @@ kbd {
   border: 1px solid currentColor;
 }
 .p-badge.writes { color: var(--amber); }
-.p-badge.model { color: var(--cyan); }
+.p-badge.model { color: var(--accent); }
 .p-badge.off-badge { color: var(--muted); }
 .palette-foot { padding: 8px 16px 12px; font-size: 11px; border-top: 1px solid var(--panel-line-dim); }
+
+/* ------------------------------------------------- the palette picker (Ctrl+,) */
+
+/* The command palette's shell with rows instead of verbs. Wider, because a row
+   carries a sentence and a swatch strip rather than a verb and two badges. */
+.palette.themes { width: min(680px, 94vw); max-height: 74vh; }
+.themes-head {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 14px;
+  padding: 11px 16px; border-bottom: 1px solid var(--panel-line-dim);
+}
+.themes-head .label {
+  color: var(--accent); font: 600 11px/1 var(--sans); letter-spacing: 0.18em;
+}
+.themes-head .dim { font-size: 11px; }
+.themes li { align-items: center; }
+.th-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.th-note { font-size: 11px; color: var(--ink-2); }
+
+/* Each row wears its own palette rather than the active one — the point of the
+   strip is to be comparable at a glance, so it cannot inherit. Ground, accent
+   and the four status colours; ink comes from the chip itself. */
+.th-swatch {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 9px; border: 1px solid;
+  font: 600 11px/1 var(--mono);
+}
+.th-swatch i { display: block; width: 8px; height: 8px; border-radius: 50%; flex: none; }
 
 .foot-keys button {
   background: none; border: none; padding: 0;
   color: var(--ink-2); font: inherit; cursor: pointer;
 }
-.foot-keys button:hover { color: var(--cyan); }
-.foot-keys button:hover kbd { border-color: var(--cyan); color: var(--cyan); }
+.foot-keys button:hover { color: var(--accent); }
+.foot-keys button:hover kbd { border-color: var(--accent); color: var(--accent); }
 
 /* ---------------------------------------------------------------- the brain */
 
@@ -665,6 +790,19 @@ kbd {
 .brain-field {
   position: absolute; inset: 0; z-index: 1;
   overflow: hidden;
+  /* The sky's ground, and `transparent` in all five dark themes — there the
+     void behind it *is* the sky, and painting over it would hide the haze that
+     ties the stage to the page, so this line costs them nothing.
+
+     It rides the same mask as the cloud rather than getting one of its own,
+     which turns out to be exactly right: that ellipse is still ~86% opaque at
+     the mid-edges and only really falls away in the corners, so the ground
+     covers the whole stage — which it must, since `.center` remaps every token
+     inside it to the sky's ink and any patch this misses is light-on-light.
+     A tighter mask was tried first and the HUD's numbers vanished into the
+     page. Only MERIDIAN ever shows any of this: a light page is what makes an
+     edge an edge. */
+  background: var(--sky-bg);
   opacity: 0;
   transition: opacity 900ms ease-out;
   /* Fade at the edges instead of vignetting to opaque dark: the cell has no
@@ -697,10 +835,10 @@ kbd {
   opacity: 0.80;
   filter: blur(38px);
   background:
-    radial-gradient(38% 44% at 26% 30%, rgba(0, 229, 255, 0.24), transparent 68%),
-    radial-gradient(34% 40% at 74% 66%, rgba(192, 132, 252, 0.22), transparent 66%),
-    radial-gradient(30% 36% at 58% 22%, rgba(45, 212, 191, 0.15), transparent 64%),
-    radial-gradient(42% 48% at 38% 78%, rgba(96, 165, 250, 0.15), transparent 70%);
+    radial-gradient(38% 44% at 26% 30%, rgb(var(--neb-1) / 0.24), transparent 68%),
+    radial-gradient(34% 40% at 74% 66%, rgb(var(--neb-2) / 0.22), transparent 66%),
+    radial-gradient(30% 36% at 58% 22%, rgb(var(--neb-3) / 0.15), transparent 64%),
+    radial-gradient(42% 48% at 38% 78%, rgb(var(--neb-4) / 0.15), transparent 70%);
   animation: brain-drift 52s ease-in-out infinite alternate;
 }
 @keyframes brain-drift {
@@ -730,8 +868,8 @@ kbd {
 }
 .brain-stats .hero {
   font: 200 84px/1 var(--mono);
-  color: var(--cyan);
-  text-shadow: 0 0 30px rgba(0, 229, 255, 0.35);
+  color: var(--accent);
+  text-shadow: 0 0 30px rgb(var(--glow-rgb) / 0.35);
 }
 .brain-stats .hero-label {
   font: 600 11px/2.4 var(--sans);
@@ -802,9 +940,9 @@ button.box {
   padding: 3px 4px; flex: none;
   transition: color 200ms linear;
 }
-button.box:hover { color: var(--cyan); border-color: var(--panel-line-dim); }
+button.box:hover { color: var(--accent); border-color: var(--panel-line-dim); }
 button.box.busy { color: var(--amber); cursor: progress; }
-button.box.done { color: var(--cyan); }
+button.box.done { color: var(--accent); }
 .row-err {
   flex: none; align-self: center;
   font: 400 10.5px/1.4 var(--mono);
@@ -827,7 +965,7 @@ button.dock {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   max-width: 60vw;
 }
-button.dock:hover { color: var(--cyan); }
+button.dock:hover { color: var(--accent); }
 
 /* the ledger overlay — the palette's shell, wider, row-per-commit */
 .ledger {
@@ -837,7 +975,7 @@ button.dock:hover { color: var(--cyan); }
   max-height: 70vh;
   background: var(--void);
   border: 1px solid var(--panel-line);
-  box-shadow: 0 0 40px rgba(0, 229, 255, 0.08);
+  box-shadow: 0 0 40px rgb(var(--glow-rgb) / 0.08);
   display: flex; flex-direction: column;
 }
 .ledger-head {
@@ -858,11 +996,11 @@ button.dock:hover { color: var(--cyan); }
 }
 .led-row:last-child { border-bottom: none; }
 .led-when { flex: none; width: 44px; font-family: var(--mono); font-size: 11px; color: var(--ink-2); }
-.led-actor { flex: none; width: 74px; font-family: var(--mono); font-size: 11px; color: var(--cyan); }
+.led-actor { flex: none; width: 74px; font-family: var(--mono); font-size: 11px; color: var(--accent); }
 .led-glyph { flex: none; color: var(--ink-2); }
 .led-what { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .led-what a { color: var(--ink); text-decoration: none; }
-.led-what a:hover { color: var(--cyan); }
+.led-what a:hover { color: var(--accent); }
 .led-summary { color: var(--ink-2); }
 .led-err { color: var(--amber); font-family: var(--mono); font-size: 11px; }
 .led-undo, .led-undo-slot {
@@ -901,7 +1039,7 @@ button.led-undo:disabled { cursor: progress; opacity: 0.6; }
 /* Beats `.rail button.active`, which would repaint this cyan — the one thing
    bronze must never do is stop meaning "never leaves this machine". */
 .rail .seal:hover,
-.rail button.seal.active { color: var(--bronze); opacity: 1; border-color: rgba(199, 125, 46, 0.5); }
+.rail button.seal.active { color: var(--bronze); opacity: 1; border-color: rgb(var(--bronze-rgb) / 0.5); }
 .seal-n {
   display: block; font-size: 9px; opacity: 0.75; letter-spacing: 0;
   margin-top: 1px;
@@ -919,15 +1057,15 @@ button.led-undo:disabled { cursor: progress; opacity: 0.6; }
   height: fit-content;
   max-height: 74vh;
   background: var(--void);
-  border: 1px solid rgba(199, 125, 46, 0.42);
-  box-shadow: 0 0 40px rgba(199, 125, 46, 0.10);
+  border: 1px solid rgb(var(--bronze-rgb) / 0.42);
+  box-shadow: 0 0 40px rgb(var(--bronze-rgb) / 0.10);
   display: flex; flex-direction: column;
   overflow: hidden;
 }
 .nosync-head {
   display: flex; justify-content: space-between; align-items: center; gap: 12px;
   padding: 10px 14px;
-  border-bottom: 1px solid rgba(199, 125, 46, 0.28);
+  border-bottom: 1px solid rgb(var(--bronze-rgb) / 0.28);
 }
 .nosync-head .label { color: var(--bronze); letter-spacing: 0.16em; font-size: 11px; }
 .nosync .claim {
@@ -970,7 +1108,7 @@ button.waiting-row {
   font-family: var(--mono); font-size: 12.5px; color: var(--ink);
   text-align: left; padding: 3px 6px; width: 100%;
 }
-button.waiting-row:hover { border-color: var(--panel-line-dim); color: var(--cyan); }
+button.waiting-row:hover { border-color: var(--panel-line-dim); color: var(--accent); }
 
 .review {
   margin-top: 7vh;
@@ -978,14 +1116,14 @@ button.waiting-row:hover { border-color: var(--panel-line-dim); color: var(--cya
   max-height: 80vh;
   background: var(--void);
   border: 1px solid var(--panel-line);
-  box-shadow: 0 0 40px rgba(0, 229, 255, 0.08);
+  box-shadow: 0 0 40px rgb(var(--glow-rgb) / 0.08);
   display: flex; flex-direction: column; overflow: hidden;
 }
 .review-head {
   display: flex; justify-content: space-between; align-items: center; gap: 12px;
   padding: 10px 14px; border-bottom: 1px solid var(--panel-line-dim);
 }
-.review-head .label { color: var(--cyan); letter-spacing: 0.14em; font-size: 11px; }
+.review-head .label { color: var(--accent); letter-spacing: 0.14em; font-size: 11px; }
 .review .pad { padding: 14px; }
 .review-meta {
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
@@ -993,7 +1131,7 @@ button.waiting-row:hover { border-color: var(--panel-line-dim); color: var(--cya
   border-bottom: 1px solid var(--panel-line-dim);
 }
 .review-meta a { color: var(--ink-2); text-decoration: none; }
-.review-meta a:hover { color: var(--cyan); }
+.review-meta a:hover { color: var(--accent); }
 /* Says what the buttons will really do, before you press one. */
 .review-note {
   margin: 0; padding: 9px 14px; font-size: 11.5px; line-height: 1.5;
@@ -1006,13 +1144,13 @@ pre.diff {
   font-family: var(--mono); font-size: 11.5px; line-height: 1.5;
   white-space: pre;
 }
-pre.diff .add  { color: #4ADE80; }
+pre.diff .add  { color: var(--add); }
 pre.diff .del  { color: var(--red); }
-pre.diff .hunk { color: var(--cyan); opacity: 0.75; }
+pre.diff .hunk { color: var(--accent); opacity: 0.75; }
 pre.diff .meta { color: var(--muted); }
 
 .review-said {
-  margin: 0; padding: 8px 14px; font-size: 11.5px; color: var(--cyan);
+  margin: 0; padding: 8px 14px; font-size: 11.5px; color: var(--accent);
   border-top: 1px solid var(--panel-line-dim);
 }
 .review-actions {
@@ -1024,11 +1162,11 @@ pre.diff .meta { color: var(--muted); }
   background: none; color: var(--ink);
   border: 1px solid var(--panel-line-dim); padding: 5px 12px;
 }
-.review-actions button:hover:not(:disabled) { border-color: var(--cyan); color: var(--cyan); }
+.review-actions button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .review-actions button:disabled { opacity: 0.35; cursor: default; }
 /* merge overwrites a note — the one place Sigma does. It should not look like
    the other three. */
-.review-actions button.danger { color: var(--amber); border-color: rgba(255, 176, 32, 0.35); }
+.review-actions button.danger { color: var(--amber); border-color: rgb(var(--amber-rgb) / 0.35); }
 .review-actions button.danger:hover:not(:disabled) { border-color: var(--amber); color: var(--amber); }
 
 /* ------------------------------------------------ Phase 6: study / exam mode */
@@ -1036,19 +1174,19 @@ pre.diff .meta { color: var(--muted); }
 .study {
   margin-top: 7vh; width: min(880px, 95vw); max-height: 80vh;
   background: var(--void); border: 1px solid var(--panel-line);
-  box-shadow: 0 0 40px rgba(0, 229, 255, 0.08);
+  box-shadow: 0 0 40px rgb(var(--glow-rgb) / 0.08);
   display: flex; flex-direction: column; overflow: hidden;
 }
 .study-head {
   display: flex; justify-content: space-between; align-items: center;
   padding: 10px 14px; border-bottom: 1px solid var(--panel-line-dim);
 }
-.study-head .label { color: var(--cyan); letter-spacing: 0.14em; font-size: 11px; }
+.study-head .label { color: var(--accent); letter-spacing: 0.14em; font-size: 11px; }
 .study .pad { padding: 14px; }
 .study-body { overflow-y: auto; padding: 12px 14px 16px; }
 .study-body h3 {
   margin: 16px 0 6px; font: 600 10.5px/1.6 var(--sans);
-  letter-spacing: 0.18em; color: var(--cyan); text-transform: uppercase;
+  letter-spacing: 0.18em; color: var(--accent); text-transform: uppercase;
 }
 .study-body h3:first-child { margin-top: 0; }
 .study-note { margin: 0 0 8px; font-size: 11.5px; line-height: 1.5; }
@@ -1059,9 +1197,9 @@ pre.diff .meta { color: var(--muted); }
   padding: 3px 0; font-size: 12.5px;
 }
 .exam-list a { display: flex; gap: 10px; flex: 1; color: var(--ink); text-decoration: none; }
-.exam-list a:hover { color: var(--cyan); }
+.exam-list a:hover { color: var(--accent); }
 .exam-course { font-family: var(--mono); color: var(--ink-2); }
-.exam-id { font-family: var(--mono); color: var(--cyan); }
+.exam-id { font-family: var(--mono); color: var(--accent); }
 .exam-title { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .exam-when { font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); }
 .exam-when.soon { color: var(--amber); }
@@ -1069,9 +1207,9 @@ pre.diff .meta { color: var(--muted); }
 /* Coverage bars are paired with their fraction, never colour alone. */
 .cov-bar {
   display: inline-block; width: 120px; height: 7px; flex: none;
-  border: 1px solid var(--panel-line-dim); background: rgba(34, 211, 238, 0.05);
+  border: 1px solid var(--panel-line-dim); background: rgb(var(--accent-rgb) / 0.05);
 }
-.cov-fill { display: block; height: 100%; background: var(--cyan); opacity: 0.55; }
+.cov-fill { display: block; height: 100%; background: var(--accent); opacity: 0.55; }
 
 .cov-course { margin: 4px 0; }
 .cov-head {
@@ -1096,7 +1234,7 @@ pre.diff .meta { color: var(--muted); }
 .cov-folders b.none { color: var(--amber); }
 .cov-files li { padding: 1px 6px 1px 24px; font-size: 11.5px; }
 .cov-files a { color: var(--ink-2); text-decoration: none; }
-.cov-files a:hover { color: var(--cyan); }
+.cov-files a:hover { color: var(--accent); }
 
 /* ------------------------------------------- Phase 6: build / repo awareness */
 .repo-list, .repo-flags { list-style: none; margin: 0; padding: 0; }
@@ -1112,7 +1250,7 @@ pre.diff .meta { color: var(--muted); }
 .repo-git { min-width: 120px; color: var(--ink-2); }
 .repo-idle { min-width: 80px; }
 .repo-hub a { color: var(--ink-2); text-decoration: none; }
-.repo-hub a:hover { color: var(--cyan); }
+.repo-hub a:hover { color: var(--accent); }
 .repo-flags li { padding: 2px 0; font-size: 12px; color: var(--ink-2); }
 .repo-flags b { color: var(--ink); font-family: var(--mono); }
 
@@ -1129,7 +1267,7 @@ pre.diff .meta { color: var(--muted); }
 .agrail { flex: none; }
 .agrail > h2 {
   display: flex; align-items: center; gap: 10px; margin: 0 0 6px;
-  color: var(--cyan); font: 600 10.5px/1.6 var(--sans); letter-spacing: 0.18em;
+  color: var(--accent); font: 600 10.5px/1.6 var(--sans); letter-spacing: 0.18em;
 }
 .agrail > h2::after {
   content: ""; flex: 1 1 auto; height: 1px;
@@ -1158,11 +1296,11 @@ pre.diff .meta { color: var(--muted); }
 .ag-item a:hover { color: var(--ink); border-bottom-color: var(--panel-line-dim); }
 /* The next thing is the one the strip is actually for. */
 .ag-item.is-next a { color: var(--ink); }
-.ag-item.is-next .ag-when { color: var(--cyan); }
+.ag-item.is-next .ag-when { color: var(--accent); }
 .ag-glyph { flex: none; width: 12px; text-align: center; }
-.ag-glyph.k-event { color: var(--cyan); }
+.ag-glyph.k-event { color: var(--accent); }
 .ag-glyph.k-rule  { color: var(--ink-2); }
-.ag-glyph.k-note  { color: var(--cyan); opacity: 0.7; }
+.ag-glyph.k-note  { color: var(--accent); opacity: 0.7; }
 .ag-glyph.k-task  { color: var(--ink-2); }
 .ag-when { flex: none; width: 88px; letter-spacing: 0.02em; }
 .ag-title {
@@ -1181,7 +1319,7 @@ pre.diff .meta { color: var(--muted); }
   gap: 2px; padding: 2px 10px 2px 0; background: none; border: none;
   border-right: 1px solid var(--panel-line-dim); color: var(--ink); cursor: pointer;
 }
-.ag-free-n { font: 400 22px/1 var(--mono); color: var(--cyan); }
+.ag-free-n { font: 400 22px/1 var(--mono); color: var(--accent); }
 .ag-free-n em { font-style: normal; font-size: 12px; opacity: 0.65; margin-left: 1px; }
 .ag-free-l {
   font: 600 8.5px/1 var(--sans); letter-spacing: 0.16em; color: var(--ink-2);
@@ -1195,17 +1333,17 @@ pre.diff .meta { color: var(--muted); }
 }
 .ag-bar-fill {
   width: 100%; min-height: 1px;
-  background: linear-gradient(180deg, var(--cyan), rgba(34, 211, 238, 0.25));
+  background: linear-gradient(180deg, var(--accent), rgb(var(--accent-rgb) / 0.25));
   opacity: 0.55; transition: opacity 200ms ease;
 }
 .ag-bar:hover .ag-bar-fill { opacity: 0.9; }
-.ag-bar.today { border-bottom-color: var(--cyan); }
+.ag-bar.today { border-bottom-color: var(--accent); }
 .ag-bar.today .ag-bar-fill { opacity: 0.9; }
 .ag-bar-d {
   flex: none; margin-top: 2px;
   font: 400 8.5px/1 var(--mono); color: var(--ink-2);
 }
-.ag-bar.today .ag-bar-d { color: var(--cyan); }
+.ag-bar.today .ag-bar-d { color: var(--accent); }
 
 /* ------------------- Agenda P4: the full view (Ctrl+') */
 
@@ -1213,13 +1351,13 @@ pre.diff .meta { color: var(--muted); }
   width: min(1360px, 94vw); height: min(860px, 92vh);
   display: flex; flex-direction: column;
   background: var(--void); border: 1px solid var(--panel-line);
-  box-shadow: 0 0 60px rgba(0, 229, 255, 0.06);
+  box-shadow: 0 0 60px rgb(var(--glow-rgb) / 0.06);
 }
 .agview-head {
   display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
   padding: 8px 12px; border-bottom: 1px solid var(--panel-line-dim);
 }
-.agview-head .label { color: var(--cyan); letter-spacing: 0.18em; font-size: 10.5px; font-weight: 600; }
+.agview-head .label { color: var(--accent); letter-spacing: 0.18em; font-size: 10.5px; font-weight: 600; }
 .agview-head .ghost { margin-left: auto; }
 .agview-range { font: 400 11px/1 var(--mono); color: var(--ink-2); }
 .agview-modes, .agview-nav, .agview-filter { display: flex; gap: 4px; }
@@ -1230,7 +1368,7 @@ pre.diff .meta { color: var(--muted); }
 .agview-modes button:hover, .agview-nav button:hover, .agview-filter button:hover {
   border-color: var(--panel-line); color: var(--ink);
 }
-.agview-modes button.on, .agview-filter button.on { border-color: var(--cyan); color: var(--cyan); }
+.agview-modes button.on, .agview-filter button.on { border-color: var(--accent); color: var(--accent); }
 .agview-problems {
   margin: 0; padding: 5px 12px; font: 400 11px/1.4 var(--mono);
   color: var(--amber); border-bottom: 1px solid var(--panel-line-dim); cursor: help;
@@ -1242,10 +1380,10 @@ pre.diff .meta { color: var(--muted); }
   padding: 6px 12px; border-top: 1px solid var(--panel-line-dim);
   font: 400 11px/1.4 var(--mono); color: var(--ink-2); min-height: 30px;
 }
-.agview-foot.has { border-top-color: var(--cyan); }
+.agview-foot.has { border-top-color: var(--accent); }
 .agview-foot b { color: var(--ink); font-weight: 400; }
 .agview-foot .ghost { margin-left: auto; }
-.agview-src { color: var(--cyan); text-decoration: none; }
+.agview-src { color: var(--accent); text-decoration: none; }
 .agview-src:hover { text-decoration: underline; }
 .agview-why { color: var(--amber); }
 .agview-foot .warn { color: var(--amber); }
@@ -1256,7 +1394,7 @@ pre.diff .meta { color: var(--muted); }
   flex: none; background: none; border: none; padding: 0; cursor: pointer;
   color: var(--muted); font: 400 9.5px/1 var(--mono);
 }
-.agrow-why:hover { color: var(--cyan); }
+.agrow-why:hover { color: var(--accent); }
 .agrow-when { flex: none; width: 82px; font: 400 11px/1.5 var(--mono); color: var(--ink-2); }
 .agrow-title {
   flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
@@ -1276,12 +1414,12 @@ pre.diff .meta { color: var(--muted); }
   color: var(--muted); align-self: start; padding: 2px 6px 0 0; text-align: right;
 }
 .agweek-allday { min-width: 0; padding: 0 3px; border-left: 1px solid var(--panel-line-dim); }
-.agweek-allday.today { background: rgba(34, 211, 238, 0.04); }
+.agweek-allday.today { background: rgb(var(--accent-rgb) / 0.04); }
 .agweek-dow {
   display: block; font: 400 10px/1.6 var(--mono); color: var(--ink-2);
   letter-spacing: 0.04em;
 }
-.agweek-allday.today .agweek-dow { color: var(--cyan); }
+.agweek-allday.today .agweek-dow { color: var(--accent); }
 .agweek-allday ul { margin: 0; padding: 0; }
 .agweek-allday .agrow-title { font-size: 10.5px; }
 
@@ -1295,10 +1433,10 @@ pre.diff .meta { color: var(--muted); }
   font: 400 9.5px/1 var(--mono); color: var(--muted);
 }
 .agweek-col { position: relative; border-left: 1px solid var(--panel-line-dim); min-width: 0; }
-.agweek-col.today { background: rgba(34, 211, 238, 0.035); }
+.agweek-col.today { background: rgb(var(--accent-rgb) / 0.035); }
 .agweek-line {
   position: absolute; left: 0; right: 0; height: 1px;
-  background: rgba(34, 211, 238, 0.07);
+  background: rgb(var(--accent-rgb) / 0.07);
 }
 .agblock {
   /* A 45-minute block in a 16-hour grid is ~17px, which fits neither the time
@@ -1310,12 +1448,12 @@ pre.diff .meta { color: var(--muted); }
   display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
   padding: 2px 4px; cursor: pointer; text-align: left;
   border: 1px solid var(--panel-line); border-left-width: 2px;
-  background: rgba(34, 211, 238, 0.10); color: var(--ink);
+  background: rgb(var(--accent-rgb) / 0.10); color: var(--ink);
 }
-.agblock:hover { background: rgba(34, 211, 238, 0.18); }
-.agblock.k-rule { border-left-color: var(--muted); background: rgba(58, 74, 85, 0.22); }
+.agblock:hover { background: rgb(var(--accent-rgb) / 0.18); }
+.agblock.k-rule { border-left-color: var(--muted); background: rgb(var(--muted-rgb) / 0.22); }
 .agblock.k-task { border-left-color: var(--ink-2); }
-.agblock-t { font: 400 9px/1 var(--mono); color: var(--cyan); }
+.agblock-t { font: 400 9px/1 var(--mono); color: var(--accent); }
 .agblock-n {
   font: 400 10.5px/1.25 var(--mono); overflow: hidden;
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
@@ -1332,9 +1470,9 @@ pre.diff .meta { color: var(--muted); }
   border: 1px solid var(--panel-line-dim); min-width: 0;
 }
 .agmonth-cell.outside { opacity: 0.42; }
-.agmonth-cell.today { border-color: var(--cyan); background: rgba(34, 211, 238, 0.05); }
+.agmonth-cell.today { border-color: var(--accent); background: rgb(var(--accent-rgb) / 0.05); }
 .agmonth-n { font: 400 11px/1.3 var(--mono); color: var(--ink-2); }
-.agmonth-cell.today .agmonth-n { color: var(--cyan); }
+.agmonth-cell.today .agmonth-n { color: var(--accent); }
 .agmonth-cell ul { margin: 2px 0 0; padding: 0; list-style: none; }
 .agmonth-item button {
   display: flex; align-items: baseline; gap: 3px; width: 100%;
@@ -1351,15 +1489,15 @@ pre.diff .meta { color: var(--muted); }
 /* ---- 14-day list */
 .aglist { display: flex; flex-direction: column; gap: 2px; }
 .aglist section { display: grid; grid-template-columns: 132px 1fr; gap: 10px; padding: 3px 0; }
-.aglist section + section { border-top: 1px solid rgba(34, 211, 238, 0.07); }
+.aglist section + section { border-top: 1px solid rgb(var(--accent-rgb) / 0.07); }
 .aglist h4 {
   margin: 0; font: 400 11px/1.6 var(--mono); color: var(--ink-2);
   letter-spacing: 0.03em; display: flex; gap: 6px; align-items: baseline;
 }
-.aglist section.today h4 { color: var(--cyan); }
+.aglist section.today h4 { color: var(--accent); }
 .aglist h4 em {
   font-style: normal; font: 600 8px/1 var(--sans); letter-spacing: 0.14em;
-  color: var(--cyan);
+  color: var(--accent);
 }
 .aglist ul { margin: 0; padding: 0; }
 .aglist p { margin: 0; font: 400 11px/1.6 var(--mono); }
@@ -1371,13 +1509,13 @@ pre.diff .meta { color: var(--muted); }
   padding: 6px 12px; border-bottom: 1px solid var(--panel-line-dim);
 }
 .agadd input {
-  background: rgba(34, 211, 238, 0.04); border: 1px solid var(--panel-line-dim);
+  background: rgb(var(--accent-rgb) / 0.04); border: 1px solid var(--panel-line-dim);
   color: var(--ink); font: 400 11px/1 var(--mono); padding: 4px 6px;
 }
-.agadd input:focus { outline: none; border-color: var(--cyan); }
+.agadd input:focus { outline: none; border-color: var(--accent); }
 .agadd .agadd-t { flex: 1 1 auto; min-width: 120px; }
 .agadd button {
-  background: none; border: 1px solid var(--panel-line); color: var(--cyan);
+  background: none; border: 1px solid var(--panel-line); color: var(--accent);
   font: 600 9px/1 var(--sans); letter-spacing: 0.14em; padding: 5px 10px; cursor: pointer;
 }
 .agadd button:disabled { color: var(--muted); border-color: var(--panel-line-dim); cursor: default; }
@@ -1396,7 +1534,7 @@ pre.diff .meta { color: var(--muted); }
   background: none; border: 1px solid var(--amber); color: var(--amber);
   font: 600 8.5px/1 var(--sans); letter-spacing: 0.14em; padding: 4px 8px; cursor: pointer;
 }
-.agview-cancel:hover { background: rgba(255, 176, 32, 0.12); }
+.agview-cancel:hover { background: rgb(var(--amber-rgb) / 0.12); }
 
 /* A cancelled occurrence keeps its place and stops asking for attention.
    Struck *and* dimmed *and* glyphed — status is never colour alone. */
@@ -1410,22 +1548,22 @@ pre.diff .meta { color: var(--muted); }
 .agrow.pending, .agmonth-item.pending { opacity: 0.6; }
 .agblock.pending { opacity: 0.6; border-style: dotted; }
 .agrow.pending .agrow-when::after,
-.agmonth-item.pending button::after { content: " ⟳"; color: var(--cyan); }
+.agmonth-item.pending button::after { content: " ⟳"; color: var(--accent); }
 
 [draggable="true"] { cursor: grab; }
-.agmonth-cell.drop-on, .agweek-col.drop-on { background: rgba(34, 211, 238, 0.10); }
+.agmonth-cell.drop-on, .agweek-col.drop-on { background: rgb(var(--accent-rgb) / 0.10); }
 
 .capture {
   margin-top: 16vh; width: min(620px, 94vw);
   background: var(--void); border: 1px solid var(--panel-line);
-  box-shadow: 0 0 40px rgba(0, 229, 255, 0.10);
+  box-shadow: 0 0 40px rgb(var(--glow-rgb) / 0.10);
   display: flex; flex-direction: column;
 }
 .capture-head {
   display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
   padding: 9px 12px; border-bottom: 1px solid var(--panel-line-dim);
 }
-.capture-head .label { color: var(--cyan); letter-spacing: 0.14em; font-size: 11px; }
+.capture-head .label { color: var(--accent); letter-spacing: 0.14em; font-size: 11px; }
 .capture-head .dim { font-size: 10.5px; }
 .capture textarea {
   background: none; border: none; resize: vertical;
@@ -1433,7 +1571,7 @@ pre.diff .meta { color: var(--muted); }
   padding: 11px 12px; outline: none;
 }
 .capture-said {
-  margin: 0; padding: 0 12px 8px; font-size: 11.5px; color: var(--cyan);
+  margin: 0; padding: 0 12px 8px; font-size: 11.5px; color: var(--accent);
 }
 .capture-actions {
   display: flex; justify-content: space-between; align-items: center; gap: 12px;
@@ -1442,7 +1580,7 @@ pre.diff .meta { color: var(--muted); }
 .capture-actions .dim { font-size: 10.5px; }
 .capture-actions button {
   font-family: var(--mono); font-size: 12px; cursor: pointer;
-  background: none; color: var(--cyan);
+  background: none; color: var(--accent);
   border: 1px solid var(--panel-line); padding: 5px 14px;
 }
 .capture-actions button:disabled { opacity: 0.35; cursor: default; color: var(--ink-2); }
@@ -1459,15 +1597,15 @@ button.legend-row {
   pointer-events: auto;
 }
 button.legend-row:hover { border-color: var(--panel-line-dim); }
-button.legend-row.on { border-color: var(--panel-line); color: var(--cyan); }
+button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
 .brain-filters { display: flex; gap: 6px; margin-top: 12px; }
 .brain-filters button {
   background: none; border: 1px solid var(--panel-line-dim); color: var(--ink-2);
   font: 11px var(--mono); padding: 4px 8px; cursor: pointer;
   pointer-events: auto;                /* see button.legend-row above */
 }
-.brain-filters button:hover:not(:disabled) { color: var(--cyan); border-color: var(--panel-line); }
-.brain-filters button.on { color: var(--cyan); border-color: var(--cyan); }
+.brain-filters button:hover:not(:disabled) { color: var(--accent); border-color: var(--panel-line); }
+.brain-filters button.on { color: var(--accent); border-color: var(--accent); }
 .brain-filters button:disabled { opacity: 0.35; cursor: default; }
 .brain-filter-note { margin: 8px 0 0; font-size: 11px; line-height: 1.5; }
 
@@ -1498,14 +1636,14 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--cyan); }
   align-self: flex-start;
   margin-top: 6vh; width: min(1120px, 96vw); max-height: 84vh;
   background: var(--void); border: 1px solid var(--panel-line);
-  box-shadow: 0 0 40px rgba(0, 229, 255, 0.08);
+  box-shadow: 0 0 40px rgb(var(--glow-rgb) / 0.08);
   display: flex; flex-direction: column; overflow: hidden;
 }
 .work-head {
   display: flex; align-items: center; gap: 16px;
   padding: 10px 14px; border-bottom: 1px solid var(--panel-line-dim);
 }
-.work-head .label { color: var(--cyan); letter-spacing: 0.14em; font-size: 11px; }
+.work-head .label { color: var(--accent); letter-spacing: 0.14em; font-size: 11px; }
 .work-head .ghost { margin-left: auto; }
 .work-counts {
   font-family: var(--mono); font-size: 11.5px; color: var(--ink-2);
@@ -1600,9 +1738,9 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--cyan); }
   padding: 3px 4px; flex: none;
   transition: color 200ms linear;
 }
-.q-box:hover:not(:disabled) { color: var(--cyan); }
+.q-box:hover:not(:disabled) { color: var(--accent); }
 .q-box.busy { color: var(--amber); }
-.q-box.leaving { color: var(--cyan); }
+.q-box.leaving { color: var(--accent); }
 .q-box:disabled { cursor: default; }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1621,7 +1759,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--cyan); }
   cursor: pointer; padding: 2px 4px; margin: 0 0 4px; width: 100%;
   text-align: left;
 }
-.q-open:hover { color: var(--cyan); border-color: var(--panel-line-dim); }
+.q-open:hover { color: var(--accent); border-color: var(--panel-line-dim); }
 /* Section names inside the digest: the same small-caps rule as `next up` was,
    but they name a queue rather than a day-bucket. */
 .today .sub { margin: 8px 0 1px; color: var(--ink-2); }
@@ -1642,23 +1780,23 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--cyan); }
   border-bottom: 1px solid var(--panel-line-dim);
 }
 .q-add input, .q-add select {
-  background: rgba(34, 211, 238, 0.04);
+  background: rgb(var(--accent-rgb) / 0.04);
   border: 1px solid var(--panel-line-dim);
   color: var(--ink); font: inherit; padding: 5px 8px;
 }
 .q-add input:focus, .q-add select:focus {
-  outline: none; border-color: var(--cyan);
+  outline: none; border-color: var(--accent);
 }
 .q-add-text { flex: 1 1 320px; min-width: 180px; }
 .q-add-text::placeholder { color: var(--muted); }
-.q-add-date { font-family: var(--mono); font-size: 12px; color-scheme: dark; }
+.q-add-date { font-family: var(--mono); font-size: 12px; color-scheme: var(--scheme); }
 .q-add-sel { font-size: 12px; }
 .q-add-go {
   background: none; border: 1px solid var(--panel-line);
-  color: var(--cyan); font: inherit; padding: 5px 16px; cursor: pointer;
+  color: var(--accent); font: inherit; padding: 5px 16px; cursor: pointer;
   letter-spacing: 0.06em;
 }
-.q-add-go:hover:not(:disabled) { background: rgba(34, 211, 238, 0.08); }
+.q-add-go:hover:not(:disabled) { background: rgb(var(--accent-rgb) / 0.08); }
 .q-add-go:disabled { border-color: var(--muted); color: var(--muted); cursor: default; }
 /* The confirmation names the file, because the section guess can be wrong and
    the fastest fix for a wrong guess is opening the note. */
@@ -1666,7 +1804,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--cyan); }
   flex: 1 0 100%;
   font: 400 11.5px/1.5 var(--mono); color: var(--ink-2);
 }
-.q-add-said a { color: var(--cyan); text-decoration: none; }
+.q-add-said a { color: var(--accent); text-decoration: none; }
 .q-add-said a:hover { text-decoration: underline; }
 .q-add-said.err { color: var(--red); }
 
@@ -1679,20 +1817,20 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--cyan); }
   flex: 1 0 100%;
   display: flex; align-items: baseline; gap: 10px;
   margin-top: 2px; padding: 7px 9px;
-  border: 1px solid rgba(34, 211, 238, 0.22);
-  background: rgba(34, 211, 238, 0.04);
+  border: 1px solid rgb(var(--accent-rgb) / 0.22);
+  background: rgb(var(--accent-rgb) / 0.04);
   animation: q-promote 220ms var(--dive-ease) both;
 }
-.q-sugg-mark { color: var(--cyan); flex: none; }
+.q-sugg-mark { color: var(--accent); flex: none; }
 .q-sugg-body { flex: 1 1 auto; min-width: 0; font-size: 12.5px; }
 .q-sugg-body b { font-weight: 500; }
 .q-sugg-meta { color: var(--ink-2); font-family: var(--mono); font-size: 11px; }
 .q-sugg-go {
   background: none; border: 1px solid var(--panel-line);
-  color: var(--cyan); font: inherit; font-size: 12px;
+  color: var(--accent); font: inherit; font-size: 12px;
   padding: 3px 12px; cursor: pointer; flex: none;
 }
-.q-sugg-go:hover { background: rgba(34, 211, 238, 0.1); }
+.q-sugg-go:hover { background: rgb(var(--accent-rgb) / 0.1); }
 .q-sugg-wait { color: var(--muted); }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1708,7 +1846,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--cyan); }
   background: none; border: 1px solid transparent;
   color: var(--ink-2); font: inherit; cursor: pointer; padding: 0 5px;
 }
-.q-chev:hover:not(:disabled) { color: var(--cyan); border-color: var(--panel-line-dim); }
+.q-chev:hover:not(:disabled) { color: var(--accent); border-color: var(--panel-line-dim); }
 .q-chev:disabled { color: var(--muted); opacity: 0.45; cursor: default; }
 
 .q-more {
@@ -1773,7 +1911,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--cyan); }
 /* Revealed on hover or focus, never on neither: keyboard users must be able to
    reach it, and a permanent ⋯ on every row is chrome competing with the task. */
 .q-row:hover .q-dots, .q-dots:focus-visible { opacity: 1; }
-.q-dots:hover { color: var(--cyan); border-color: var(--panel-line-dim); }
+.q-dots:hover { color: var(--accent); border-color: var(--panel-line-dim); }
 
 /* Click-anywhere-to-close, and it also stops a click landing on the row under
    the menu — which would have opened Obsidian mid-decision. */
@@ -1787,7 +1925,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--cyan); }
      the scroll box, or rows scroll through the gap above it. */
   padding: 0 0 5px;
   background: var(--void); border: 1px solid var(--panel-line);
-  box-shadow: 0 6px 22px rgba(2, 3, 5, 0.7);
+  box-shadow: 0 6px 22px var(--shadow);
   /* `max-height` is set inline — it depends on where the row is on screen.
      Without the overflow, everything past the viewport edge was unreachable:
      the menu has no keyboard path to its own tail and the page behind it does
@@ -1809,7 +1947,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--cyan); }
   border: 3px solid var(--void);      /* inset, so the thumb reads as a hairline */
   border-radius: 5px;
 }
-.q-menu::-webkit-scrollbar-thumb:hover { background: var(--cyan); }
+.q-menu::-webkit-scrollbar-thumb:hover { background: var(--accent); }
 /* Sticky, because a scrolling menu that loses its headings is a list of course
    names with no indication of what choosing one does. Padding rather than
    margin above: a sticky element's margin is not part of what sticks, so the
@@ -1826,7 +1964,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--cyan); }
   background: none; border: none; color: var(--ink);
   font: inherit; font-size: 12.5px; padding: 4px 10px; cursor: pointer;
 }
-.q-menu button:hover, .q-menu-pick:hover { background: rgba(34, 211, 238, 0.09); }
+.q-menu button:hover, .q-menu-pick:hover { background: rgb(var(--accent-rgb) / 0.09); }
 /* Which queue a move target belongs to. The target names a course or project,
    because that is what names a file; the section rides along as a quiet second
    column so the list still reads as grouped without a heading per section. */
@@ -1838,7 +1976,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--cyan); }
 .q-menu-pick input {
   flex: 1 1 auto; min-width: 0;
   background: none; border: 1px solid var(--panel-line-dim);
-  color: var(--ink); font: inherit; font-size: 11px; color-scheme: dark;
+  color: var(--ink); font: inherit; font-size: 11px; color-scheme: var(--scheme);
 }
 /* The release control, beside the thing it releases. */
 .q-more-act {
@@ -1846,7 +1984,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--cyan); }
   color: var(--ink-2); font: inherit; font-size: 10.5px;
   padding: 1px 8px; cursor: pointer;
 }
-.q-more-act:hover { color: var(--cyan); border-color: var(--cyan); }
+.q-more-act:hover { color: var(--accent); border-color: var(--accent); }
 
 /* --- the review strip ---------------------------------------------------- */
 

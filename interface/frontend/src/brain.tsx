@@ -3,9 +3,11 @@
  *
  * Every note is a point of light. Position comes from a small 3D force layout
  * run ONCE when the graph loads, then frozen — ambient motion is camera drift
- * and mouse parallax, never re-simulation. Colour is the note's bucket, using
- * the exact colours from .obsidian/graph.json so this and Obsidian's graph are
- * one picture of one vault. Brightness is inbound links: hubs read as stars.
+ * and mouse parallax, never re-simulation. Colour is the note's bucket, and in
+ * VOID those are the exact colours from .obsidian/graph.json, so the default
+ * palette and Obsidian's own graph are one picture of one vault; the other five
+ * re-tune the nine hues for their ground but keep the same nine groups (see
+ * theme.ts). Brightness is inbound links: hubs read as stars.
  *
  * The firing is the part that has to be true: chat tool events (a Read's
  * basename) light their node and pulse its edges, so you can watch where an
@@ -35,23 +37,23 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { obsidianHref } from "./api";
 import type { Graph } from "./api";
+import { channels, useTheme } from "./theme";
+import type { BrainPalette } from "./theme";
 
-const COLORS: Record<string, string> = {
-  root: "#FF6B6B", inbox: "#FFD166", daily: "#E8EAED",
-  academics: "#4ADE80", areas: "#FB923C", projects: "#60A5FA",
-  system: "#C084FC", archive: "#6B7280", meta: "#2DD4BF",
-};
+/* The colours moved to theme.ts, because a canvas cannot read a CSS token: the
+   palette is handed to this file as values and applies its own alphas. What
+   stays here is the bucket *list*, which is the graph's vocabulary rather than
+   part of any palette.
+
+   The no-sync mark is still a *ring*, never a fill, in every theme: colour in
+   this view belongs to the bucket groups, and repainting a node bronze would
+   make the brain disagree with Obsidian's own graph (dashboard-plan §2). */
 const BUCKETS: [string, string][] = [
   ["root", "root hubs"], ["inbox", "inbox"], ["daily", "daily"],
   ["academics", "academics"], ["areas", "areas"], ["projects", "projects"],
   ["system", "system"], ["archive", "archive"], ["meta", "meta & ref"],
 ];
 const FIRE_MS = 1900;
-const FIRE_COLOR = "#9BEFFC";
-/** Phase 5. A *ring*, never a fill: colour in this view belongs to the eight
- *  bucket groups, and repainting a node bronze would make the brain disagree
- *  with Obsidian's own graph (dashboard-plan §2). */
-const NOSYNC_COLOR = "#C77D2E";
 /** Fraction of FIRE_MS an axon pulse takes to cross its edge. */
 const AXON = 0.42;
 
@@ -165,14 +167,32 @@ const EDGE_STEPS = 8;
  *  1.7. Anything outside is clamped into an end bucket rather than dropped. */
 const EDGE_FAR = 0.5, EDGE_NEAR = 1.8;
 
-const EDGE_DIM: string[] = [];
-const EDGE_FIRE: string[] = [];
-for (let i = 0; i < EDGE_STEPS; i++) {
-  const u = (i + 0.5) / EDGE_STEPS;
-  EDGE_DIM.push(`rgba(120, 150, 170, ${(0.035 * (EDGE_FAR + (EDGE_NEAR - EDGE_FAR) * u)).toFixed(3)})`);
-  EDGE_FIRE.push(`rgba(34, 211, 238, ${(0.06 + 0.5 * u).toFixed(3)})`);
+/** The quantised strokes for one palette. Still hoisted out of the frame —
+ *  which was the whole point — but now keyed by theme rather than by module
+ *  load, and built at most once per palette. Six themes means at most six of
+ *  these ever exist, and switching costs one Map lookup, not a re-quantisation. */
+type EdgeInks = { dim: string[]; fire: string[]; lit: string; dust: string };
+const EDGE_CACHE = new Map<string, EdgeInks>();
+
+function edgeInks(pal: BrainPalette): EdgeInks {
+  const key = `${pal.edgeDim}|${pal.edgeFire}|${pal.edgeLit}|${pal.dust}`;
+  const hit = EDGE_CACHE.get(key);
+  if (hit) return hit;
+  const dimCh = channels(pal.edgeDim), fireCh = channels(pal.edgeFire);
+  const dim: string[] = [], fire: string[] = [];
+  for (let i = 0; i < EDGE_STEPS; i++) {
+    const u = (i + 0.5) / EDGE_STEPS;
+    dim.push(`rgb(${dimCh} / ${(0.035 * (EDGE_FAR + (EDGE_NEAR - EDGE_FAR) * u)).toFixed(3)})`);
+    fire.push(`rgb(${fireCh} / ${(0.06 + 0.5 * u).toFixed(3)})`);
+  }
+  const inks: EdgeInks = {
+    dim, fire,
+    lit: `rgb(${channels(pal.edgeLit)} / 0.34)`,
+    dust: `rgb(${channels(pal.dust)} / 0.30)`,
+  };
+  EDGE_CACHE.set(key, inks);
+  return inks;
 }
-const EDGE_LIT = "rgba(155, 239, 252, 0.34)";
 
 /** value → bucket index, clamped into the end buckets. */
 function bucket(v: number, lo: number, hi: number): number {
@@ -297,11 +317,19 @@ export default function Brain({ graph, vault, fireRef, filter }: {
   // animation, and the loop needs the current value each frame.
   const filterRef = useRef<string | null>(null);
   filterRef.current = filter;
+  // The palette, by the same argument as the filter above and for a stronger
+  // reason: the draw effect keys on [ready, vault], so putting the theme in its
+  // dependencies would tear down the loop and relay the sky on every switch —
+  // the constellation you had learned to read would rearrange itself because
+  // you changed colour. A ref plus a repaint keeps the stars where they are.
+  const theme = useTheme();
+  const palRef = useRef<BrainPalette>(theme.brain);
+  palRef.current = theme.brain;
   // Set by the draw effect; lets anything outside the loop ask for one repaint
   // without restarting it. Needed because a reduced-motion sky never repaints
   // on its own, so a filter change there would simply not show up.
   const redrawRef = useRef<(() => void) | null>(null);
-  useEffect(() => { redrawRef.current?.(); }, [filter]);
+  useEffect(() => { redrawRef.current?.(); }, [filter, theme]);
   const world = useRef<World | null>(null);
   const mouse = useRef({ x: 0, y: 0 });
   const hover = useRef<number | null>(null);
@@ -474,6 +502,12 @@ export default function Brain({ graph, vault, fireRef, filter }: {
         px[i] = P3[0]; py[i] = P3[1]; pp[i] = P3[2];
       }
 
+      // Read once per frame, not per node: a theme switch lands on the next
+      // frame either way, and the alternative is a ref deref inside three
+      // hot loops.
+      const pal = palRef.current;
+      const inks = edgeInks(pal);
+
       const now = performance.now();
       const fireAge = (i: number) => {
         const f = w.fires.get(i);
@@ -489,7 +523,7 @@ export default function Brain({ graph, vault, fireRef, filter }: {
          260 motes of parallax, so camera drift reads as motion through a
          volume rather than a flat picture turning. Unconditional now — it used
          to be the first thing the quality ladder dropped. */
-      ctx.fillStyle = "rgba(150,185,210,0.30)";
+      ctx.fillStyle = inks.dust;
       for (let i = 0; i < w.motes.length / 3; i++) {
         project(w.motes, i);
         const x = P3[0], y = P3[1], p = P3[2];
@@ -532,18 +566,18 @@ export default function Brain({ graph, vault, fireRef, filter }: {
       }
       for (let s = 0; s < EDGE_STEPS; s++) {
         const p = dimPaths[s];
-        if (p) { ctx.strokeStyle = EDGE_DIM[s]; ctx.stroke(p); }
+        if (p) { ctx.strokeStyle = inks.dim[s]; ctx.stroke(p); }
       }
-      if (litPath) { ctx.strokeStyle = EDGE_LIT; ctx.stroke(litPath); }
+      if (litPath) { ctx.strokeStyle = inks.lit; ctx.stroke(litPath); }
       for (let s = 0; s < EDGE_STEPS; s++) {
         const p = firePaths[s];
-        if (p) { ctx.strokeStyle = EDGE_FIRE[s]; ctx.stroke(p); }
+        if (p) { ctx.strokeStyle = inks.fire[s]; ctx.stroke(p); }
       }
 
       /* ---- axon pulses ---------------------------------------------------
          Only fired nodes emit these. Nothing else in the scene travels, so a
          moving light always means a tool actually touched that note.        */
-      const axon = glow(FIRE_COLOR);
+      const axon = glow(pal.fire);
       for (const [idx] of w.fires) {
         const a = fireAge(idx);
         if (a <= 0) continue;
@@ -581,7 +615,7 @@ export default function Brain({ graph, vault, fireRef, filter }: {
           ? 0.30 : 1) * (passes ? 1 : 0.12);
 
         const r = (1.7 + Math.sqrt(node.inlinks) * 1.05) * pp[i] + boost * 6;
-        const spr = glow(boost > 0 ? FIRE_COLOR : COLORS[node.bucket] ?? "#8299A6");
+        const spr = glow(boost > 0 ? pal.fire : pal.buckets[node.bucket] ?? pal.fallback);
         // The full reach, always. The ladder used to shrink this to 2.9 to buy
         // back fill rate, which is the change that made the sky look flat
         // without ever announcing itself.
@@ -597,7 +631,7 @@ export default function Brain({ graph, vault, fireRef, filter }: {
       // rather than adding to its bloom. Same fact as the ▦ in Today and
       // Projects, rendered in the only way this view has room for.
       ctx.lineWidth = 1;
-      ctx.strokeStyle = NOSYNC_COLOR;
+      ctx.strokeStyle = pal.noSync;
       for (let i = 0; i < n; i++) {
         if (!w.g.nodes[i].no_sync) continue;
         const depth = Math.max(0, Math.min(1, (pp[i] - 0.42) / 0.9));
@@ -621,9 +655,9 @@ export default function Brain({ graph, vault, fireRef, filter }: {
       if (hi !== null) {
         ctx.font = "12px 'JetBrains Mono', Consolas, monospace";
         ctx.lineWidth = 3;
-        ctx.strokeStyle = "rgba(6,10,18,0.9)";
+        ctx.strokeStyle = `rgb(${channels(pal.labelHalo)} / 0.9)`;
         ctx.strokeText(w.g.nodes[hi].label, px[hi] + 10, py[hi] - 8);
-        ctx.fillStyle = "#D9E4EB";
+        ctx.fillStyle = pal.labelInk;
         ctx.fillText(w.g.nodes[hi].label, px[hi] + 10, py[hi] - 8);
       }
 
@@ -758,6 +792,9 @@ export function VaultHud({ graph, filter, onFilter }: {
   filter: string | null;
   onFilter: (f: string | null) => void;
 }) {
+  // The legend's keys are the canvas's own colours, so it reads the same
+  // palette the sky does rather than a copy that could drift from it.
+  const pal = useTheme().brain;
   // Memoised: App re-renders on every fleet-progress SSE message, and these
   // walked all 200 nodes three times on each of them.
   const { counts, noSyncCount, weekCount, lastTouched } = useMemo(() => {
@@ -799,7 +836,7 @@ export function VaultHud({ graph, filter, onFilter }: {
                   className={`legend-row ${filter === k ? "on" : ""}`}
                   onClick={() => onFilter(filter === k ? null : k)}
                   title={`show only ${label}`}>
-            <i style={{ background: COLORS[k] }} />
+            <i style={{ background: pal.buckets[k] }} />
             <span>{label}</span><b>{counts[k] ?? 0}</b>
           </button>
         ))}
@@ -809,7 +846,7 @@ export function VaultHud({ graph, filter, onFilter }: {
           // `nosync-key`, not `nosync`: the overlay in nosync.tsx owns the
           // bare class and sizes itself to 760px, which this row inherited.
           <div className="legend-row nosync-key" title="never leaves this machine (Ctrl+.)">
-            <i style={{ background: "transparent", boxShadow: `inset 0 0 0 1px ${NOSYNC_COLOR}` }} />
+            <i style={{ background: "transparent", boxShadow: `inset 0 0 0 1px ${pal.noSync}` }} />
             <span>no-sync</span><b>{noSyncCount}</b>
           </div>
         )}

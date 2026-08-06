@@ -377,7 +377,9 @@ sigma-os/
 │       ├── src/review.tsx        the proposal diff + decide view
 │       ├── src/calendar.tsx      the 14-day calendar strip
 │       ├── src/capture.tsx       Ctrl+N quick capture
-│       ├── src/App.css           the entire visual language, hand-written (~1,630 lines)
+│       ├── src/theme.ts          the six palettes + the store that writes one onto :root
+│       ├── src/theme-view.tsx    Ctrl+, the palette picker (previews live, Esc reverts)
+│       ├── src/App.css           the entire visual language, hand-written (~1,900 lines)
 │       └── (gitignored)          node_modules/, dist/
 │
 ├── tests/                        stdlib unittest, 19 suites (see §19 for the exact command)
@@ -1011,8 +1013,9 @@ the fleet process** — the case that matters is a run the server did not launch
 
 **The brain** is a live-firing nebula on canvas. Every note is a point of light; position comes from a
 seeded 3D force layout run **once** and frozen — drift and parallax are camera motion, never
-re-simulation. Colour is the note's bucket, using the exact colours from `.obsidian/graph.json` so the
-web view and Obsidian's graph are one picture of one vault. Brightness is inbound links, so hubs read
+re-simulation. Colour is the note's bucket; in **VOID** those are the exact colours from
+`.obsidian/graph.json`, so the default palette and Obsidian's graph are one picture of one vault, and
+the other five re-tune the same nine groups for their own ground. Brightness is inbound links, so hubs read
 as bright stars. **The firing is the part that has to be true**: each `Read` an agent makes lights its
 node and pulses the edges it traversed, so you watch where an answer came from. Layout is aesthetic;
 firing is factual. It degrades to a static sky if the frame budget slips, and starts there under
@@ -1031,7 +1034,43 @@ Chrome intermittently eats Ctrl+K and Ctrl+G at the browser level.
 | `Ctrl+N` | quick capture (Ctrl+Enter submits) |
 | `Ctrl+;` | the work view — the four queues, and quick-add |
 | `Ctrl+'` | the full agenda — week, month, and the 14-day list |
+| `Ctrl+,` | the palette picker — six colour schemes, previewed live |
 | `Esc` | peels one layer: capture → review → work → **agenda** → study → build → palette → no-sync → ledger → chat → dive → active brain filter |
+
+The picker is the one overlay **absent from that Esc ladder**, and deliberately: Esc there has to
+*revert* the live preview before it closes, so `theme-view.tsx` handles its own in the capture phase
+and stops the event before the ladder sees it.
+
+**The palettes** (`theme.ts`, `Ctrl+,`). §2 specified one deliberate mode. What that bought was
+coherence and what it cost was that every hue lived inline in `App.css` — 64 literals, 35 of them the
+same cyan at a different alpha, which is *why* a second palette was impossible rather than merely
+undesirable. The rule that replaced it is stricter, not looser: **no rule may name a colour, and a
+theme is a value swap rather than a stylesheet fork.** There is no `.theme-ember .panel` anywhere and
+there must never be one — the moment a rule knows which theme is active, the other five stop being
+maintained. Composited colours take channel triples (`rgb(var(--accent-rgb) / 0.28)`); `theme.ts`
+derives every `-rgb` token from its hex, so a colour and its channels cannot drift apart.
+
+| | |
+|---|---|
+| **VOID** | the original — cyan structure on near-black |
+| **EMBER** | tungsten — red-orange on charred black |
+| **VERDANT** | phosphor — the green terminal |
+| **SYNAPSE** | violet — the brain's nebula colours, brought out to the shell |
+| **MERIDIAN** | daylight — a paper dashboard around a dark instrument window |
+| **GRAPHITE** | neutral — grey structure, so only status and the graph carry hue |
+
+Three constraints survive the swap, and every palette is held to them. **Bronze means one thing**
+("never leaves this machine"), so each theme keeps it in the copper family *and* clear of its own
+accent — EMBER is the hard case, which is why its accent is red-orange and its bronze olive.
+**Status is never colour alone**, so amber/red/green may move for contrast without changing meaning.
+**The graph's nine bucket colours are data**, so they stay a full categorical wheel even in GRAPHITE;
+a monochrome brain would look consistent and say nothing.
+
+MERIDIAN is the one that proves the tokens are real, because it cannot simply invert: the brain's
+canvas composites with `lighter` and needs a dark ground to read at all. So the **sky is its own
+palette** — `.center` remaps the base tokens to `--sky-*` in one block, and every rule inside the
+stage re-tokenises for free. In the five dark themes those values are identical to the base set, so
+the remap is a no-op that costs nothing.
 
 **Rail slots.** `OV` overview · `BR` brain · `AG` agents *(not built)* · `WK` work · `ST` study ·
 `BD` build · `CR` career *(not built)* · `SY` system *(not built)* · `⊘ SEAL` the no-sync lens with a
