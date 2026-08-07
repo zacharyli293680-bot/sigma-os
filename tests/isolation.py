@@ -45,6 +45,7 @@ _STATE = [
     ("fleet", "FIRE_PATH", "fleet.fire.jsonl"),
     ("retro", "ROWS_PATH", "reviews.jsonl"),
     ("todo", "INDEX_PATH", "todo.state.json"),
+    ("leetcode", "CACHE_PATH", "leetcode.state.json"),
     ("doctor", "STATE_PATH", "doctor.state.json"),
     ("reflect", "STATE_PATH", "reflect.state.json"),
     ("sigma.spend", "SPEND_PATH", "spend.jsonl"),

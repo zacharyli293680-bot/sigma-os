@@ -28,8 +28,17 @@ week. The code here never reads a number back out of the model's answer.
     M  momentum     active courses with a task completed — the standing goal is
                     one from every course, every day, so this is a straight
                     touched/active fraction
+    P  practice     did you solve a LeetCode problem — binary, because the habit
+                    being measured is showing up, and a difficulty-weighted
+                    version would score an Easy below full marks
 
-    score = round(0.40·T + 0.35·A + 0.25·M)
+    score = round(0.40·T + 0.35·A + 0.25·M + 0.15·P) / (the weights present)
+
+The weights do not sum to 1 and are not meant to: `score_of` divides by the sum
+of whichever components are present. That is what let P be added on 2026-08-06
+without moving any historical score — T, A and M keep the exact ratios they had,
+so a day before the LeetCode log existed renormalises to precisely the number it
+scored before.
 
 A component with nothing to measure is **omitted and the weights renormalise**,
 rather than counted as zero. A day with no deadlines due did not fail to meet
@@ -54,6 +63,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
+import leetcode as lc                                    # noqa: E402
 import todo as td                                        # noqa: E402
 from sigma import (DEFAULT_VAULT, call_model, gitops, ledger,  # noqa: E402
                    make_logger, write_note)
@@ -70,7 +80,12 @@ MODEL = "haiku"
 # where errands live. These are the one genuinely arbitrary numbers in the file
 # and the place to start if a score ever feels wrong.
 WEIGHT = {"procertus": 1.5, "courses": 1.2, "projects": 1.0, "misc": 0.5}
-COMPONENT_WEIGHT = {"T": 0.40, "A": 0.35, "M": 0.25}
+# These deliberately sum to 1.15 rather than 1.0. `score_of` renormalises over
+# the components that are present, so adding P was a pure addition: every day
+# that predates the LeetCode log still divides 0.40/0.35/0.25 by 1.00 and scores
+# exactly what it scored before. Rescaling the other three to make room would
+# have silently rewritten the history the median is computed from.
+COMPONENT_WEIGHT = {"T": 0.40, "A": 0.35, "M": 0.25, "P": 0.15}
 # Below this many recorded days there is no meaningful median, and scoring
 # throughput against one or two samples says more about the sample than the day.
 MIN_HISTORY = 3
@@ -162,6 +177,14 @@ def day_facts(date: str, vault=None, index_path=None, split=None) -> dict:
                                 "days": t["parts"]["age_days"]})
     starved.sort(key=lambda s: -s["days"])
 
+    # Practice: the daily LeetCode problem. Read straight out of the log note
+    # rather than out of the task index, even though each line is also a ticked
+    # checkbox the index knows about — the log is the record, and going through
+    # the index would make the component depend on the queue having scanned
+    # since the problem was logged.
+    lc_items = lc.entries(vault)
+    lc_today = lc.solved_on(lc_items, date)
+
     return {"date": date, "index_ok": readable,
             "adopted": adopted, "covered": covered,
             "done": done, "by_section": by_section, "weighted": weighted,
@@ -170,6 +193,10 @@ def day_facts(date: str, vault=None, index_path=None, split=None) -> dict:
             "advanced": sorted(advanced),
             "frontier": sorted(frontier),
             "starved": starved[:5],
+            "practice": lc_today,
+            "practice_started": lc.started(vault),
+            "practice_streak": lc.streak(lc_items, date),
+            "practice_total": len(lc.by_number(lc_items)),
             "visible": q["counts"]["visible"], "queued": q["counts"]["queued"]}
 
 
@@ -201,6 +228,15 @@ def history(rows_path=None, before: str | None = None) -> list:
 def components(facts: dict, past: list) -> dict:
     """The three 0–5 components. A key is absent when it had nothing to measure."""
     out: dict = {}
+
+    # Practice is independent of the queue: it reads the LeetCode log, which is
+    # its own record, so it is computed before the `covered` gate rather than
+    # inside it. A day can predate the task index and still be a day the log
+    # knows whether you solved something.
+    p = lc.practice_score(facts.get("practice_started"), facts["date"],
+                          len(facts.get("practice") or ()))
+    if p is not None:
+        out["P"] = p
 
     # A day before the queue existed has no recorded completions, so throughput
     # and momentum would both read zero — and be wrong. Adherence still works:
@@ -265,6 +301,9 @@ Active courses: {courses} · touched yesterday: {advanced} · of those, the
 timeline itself moved for: {frontier}
 The standing goal is one task from every active course, every day — name the
 courses that went untouched.
+LeetCode that day: {practice} · current streak {streak} day(s)
+There is a second standing goal of one LeetCode problem a day. Mention it only
+if it is worth mentioning — a broken streak, or a long one still running.
 Sitting still 14+ days: {starved}
 Queue right now: {visible} visible, {queued} waiting"""
 
@@ -283,6 +322,11 @@ def narrative(facts: dict, model: str = MODEL, timeout: int = 60) -> str:
         frontier=", ".join(facts["frontier"]) or "none",
         starved="; ".join(f"{s['text'][:50]} ({s['days']}d)" for s in facts["starved"])
                 or "nothing",
+        practice="; ".join(
+            f"{e['n']} {e['title']}"
+            + (f" ({e['difficulty']})" if e["difficulty"] else "")
+            for e in (facts.get("practice") or [])) or "nothing",
+        streak=(facts.get("practice_streak") or {}).get("current", 0),
         visible=facts["visible"], queued=facts["queued"])
     try:
         out = call_model(prompt, model, timeout=timeout, actor="review").strip()
@@ -302,12 +346,23 @@ def narrative(facts: dict, model: str = MODEL, timeout: int = 60) -> str:
 def note_text(facts: dict, parts: dict, score, said: str) -> str:
     rows = [f"| {k} | {n} | {v:.2f} |" for k, (n, v) in {
         "T": ("throughput", parts.get("T")), "A": ("adherence", parts.get("A")),
-        "M": ("momentum", parts.get("M"))}.items() if v is not None]
+        "M": ("momentum", parts.get("M")),
+        "P": ("practice", parts.get("P"))}.items() if v is not None]
     done = "\n".join(
         f"- {d['section']} — {d['text'][:90]}" for d in facts["done"]) or "- nothing"
     starved = "\n".join(
         f"- {s['text'][:80]} — {s['section']}, {s['days']}d untouched"
         for s in facts["starved"])
+
+    # The practice chip is omitted entirely on a day P could not be measured,
+    # rather than reading "0 LeetCode" — the same distinction the components
+    # table makes between a zero and an absence.
+    lc_done = facts.get("practice") or []
+    lc_run = (facts.get("practice_streak") or {}).get("current", 0)
+    chip = ""
+    if parts.get("P") is not None:
+        chip = ("  ·  " + (f"{len(lc_done)} LeetCode" if lc_done else "no LeetCode")
+                + (f", {lc_run}d streak" if lc_run else ""))
 
     return (
         f"---\ntype: review\ndate: {facts['date']}\n"
@@ -316,7 +371,8 @@ def note_text(facts: dict, parts: dict, score, said: str) -> str:
         f"# Review — {facts['date']}\n\n"
         f"> {stars(score)}  ·  {facts['weighted']} weighted  ·  "
         f"{facts['deadlines_met']}/{facts['deadlines_due']} deadlines  ·  "
-        f"{len(facts['advanced'])}/{len(facts['active_courses'])} courses touched\n\n"
+        f"{len(facts['advanced'])}/{len(facts['active_courses'])} courses touched"
+        f"{chip}\n\n"
         + (f"{said}\n\n" if said else "")
         + ("" if facts.get("covered", True) else
            f"> ⚠ This day predates the task queue, which started recording on "
@@ -342,6 +398,9 @@ def row_of(facts: dict, parts: dict, score) -> dict:
             "advanced": len(facts["advanced"]),
             "frontier": len(facts["frontier"]),
             "courses": len(facts["active_courses"]),
+            "practice": len(facts.get("practice") or ()),
+            "practice_streak": (facts.get("practice_streak") or {}).get("current", 0),
+            "practice_total": facts.get("practice_total", 0),
             "visible": facts["visible"], "queued": facts["queued"]}
 
 

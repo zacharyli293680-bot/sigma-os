@@ -8,6 +8,7 @@ cli.py  —  `sigma`, one front door for the whole OS.
     sigma fleet run            run the specialists that are due
     sigma reflect diff         review staged changes
     sigma todo                 the four priority queues
+    sigma leetcode 217         log today's problem by number
     sigma devlog               which projects have unlogged commits
     sigma new "<one line>"     scaffold a repo + hub note
     sigma install              hooks + scheduled tasks
@@ -55,6 +56,7 @@ MAPPER = HERE / "mapper.py"
 SCAFFOLD = HERE / "scaffold.py"
 HOOKS = HERE / "install_hooks.py"
 TODO = HERE / "todo.py"
+LEETCODE = HERE / "leetcode.py"
 # `sigma review` runs retro.py, not review.py — backend/review.py already owns
 # that module name and runtime/ sits ahead of it on sys.path.
 RETRO = HERE / "retro.py"
@@ -155,6 +157,18 @@ def cmd_status(a) -> int:
             print(f"                 - {p.stem}  ->  sigma reflect merge {p.stem}")
     except Exception as e:
         print(f"proposals      (unavailable: {type(e).__name__})")
+
+    # The daily-problem nudge lives here and deliberately not in doctor.py: the
+    # doctor reports whether *Sigma* is healthy, and a day without a LeetCode
+    # problem is not a system failure. Putting a habit reminder in the health
+    # check is how an all-clear stops meaning anything.
+    try:
+        import leetcode as lcm
+        line = lcm.summary_line(DEFAULT_VAULT)
+        if line:
+            print(line)
+    except Exception as e:
+        print(f"leetcode       (unavailable: {type(e).__name__})")
 
     print("=" * width)
     return rc
@@ -284,6 +298,32 @@ def cmd_todo(a):
     if a.no_persist:
         args.append("--no-persist")
     return run(TODO, *args)
+
+
+def cmd_leetcode(a):
+    """Log the day's problem, or report the streak when given no number.
+
+    Bare `sigma leetcode` reports and `sigma leetcode 217` writes — the same
+    read-is-free/verb-writes split intake, devlog and map already use.
+    """
+    args = []
+    if a.number:
+        args.append(a.number)
+        if a.title:
+            args.append(a.title)
+    if a.difficulty:
+        args += ["--difficulty", a.difficulty]
+    if a.topics:
+        args += ["--topics", a.topics]
+    if a.date:
+        args += ["--date", a.date]
+    if a.again:
+        args.append("--again")
+    if a.offline:
+        args.append("--offline")
+    if a.recent:
+        args += ["--recent", a.recent]
+    return run(LEETCODE, *args)
 
 
 def cmd_review(a):
@@ -420,6 +460,18 @@ def build_parser():
     t.add_argument("--no-persist", action="store_true",
                    help="do not update the index (a pure read)")
 
+    lc = sub.add_parser("leetcode", help="log the day's problem by number")
+    lc.add_argument("number", nargs="?", help="the problem number you solved")
+    lc.add_argument("title", nargs="?", default="",
+                    help="only needed if the lookup cannot reach LeetCode")
+    lc.add_argument("--difficulty", choices=["easy", "medium", "hard"], default="")
+    lc.add_argument("--topics", default="", help="comma-separated, overrides the lookup")
+    lc.add_argument("--date", metavar="YYYY-MM-DD", help="log it against another day")
+    lc.add_argument("--again", action="store_true",
+                    help="log a problem you have already solved, as a revisit")
+    lc.add_argument("--offline", action="store_true", help="never touch the network")
+    lc.add_argument("--recent", metavar="N", help="with no number: list the last N solves")
+
     rv = sub.add_parser("review", help="score yesterday and write it down")
     rv.add_argument("--date", metavar="YYYY-MM-DD", help="review this day instead")
     rv.add_argument("--dry-run", action="store_true",
@@ -468,7 +520,7 @@ def main(argv=None):
         "status": cmd_status, "doctor": cmd_doctor, "fleet": cmd_fleet,
         "reflect": cmd_reflect, "capture": cmd_capture, "intake": cmd_intake,
         "devlog": cmd_devlog, "map": cmd_map, "new": cmd_new,
-        "todo": cmd_todo, "review": cmd_review,
+        "todo": cmd_todo, "review": cmd_review, "leetcode": cmd_leetcode,
         "install": cmd_install, "ui": cmd_ui,
     }[a.cmd](a)
 
