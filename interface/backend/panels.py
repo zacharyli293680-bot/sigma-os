@@ -50,6 +50,7 @@ if _RUNTIME not in sys.path:
     sys.path.insert(0, _RUNTIME)
 import agenda as ag         # noqa: E402  — the calendar resolver
 import fleet as fl          # noqa: E402
+import leetcode as lc       # noqa: E402  — the daily-practice habit
 import reflect as rf        # noqa: E402
 import retro                # noqa: E402  — the 06:00 review; NOT backend/review.py
 import specialists as sp    # noqa: E402
@@ -417,9 +418,23 @@ def api_queue():
     boundary. `_split` closes over VAULT while todo.scan passes it explicitly,
     hence the adapter rather than the bare function.
     """
-    return _cached("queue", 15,
-                   lambda: td.build(vault=VAULT,
-                                    split=lambda _vault, rels: _split(rels)))
+    return _cached("queue", 15, _queue_payload)
+
+
+def _queue_payload() -> dict:
+    """The four queues, plus the daily habit that is deliberately not in them.
+
+    `practice` rides on this payload rather than getting its own endpoint
+    because the Work view renders both in one grid and a second fetch would let
+    them disagree for a frame after a completion. It is a *sibling* of
+    `sections`, never a fifth section: the four queues hold checkbox lines that
+    can be ticked, reordered, snoozed and moved, and a habit has none of those
+    affordances — folding it in would mean every consumer of `sections`
+    special-casing one member.
+    """
+    q = td.build(vault=VAULT, split=lambda _vault, rels: _split(rels))
+    q["practice"] = lc.panel(VAULT)
+    return q
 
 
 # --------------------------------------------------------------------------

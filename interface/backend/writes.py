@@ -36,6 +36,7 @@ if _RUNTIME not in sys.path:
     sys.path.insert(0, _RUNTIME)
 from sigma import call_model, gitops, ledger, parse_model_json, write_note  # noqa: E402
 import agenda as ag  # noqa: E402  — the calendar grammar and its serialiser
+import leetcode as lc  # noqa: E402  — the practice habit's own write path
 import todo as td  # noqa: E402  — section inference, destinations, line grammar
 
 import commands  # noqa: E402  — the one spend-window policy, not a second copy
@@ -227,6 +228,65 @@ def api_queue_add(req: AddReq):
     panels.drop_task_caches(*(("graph",) if not existed else ()))
     return {"ok": True, "file": rel, "section": section, "parent": parent,
             "raw": line, "sha": res["sha"], "created_note": not existed}
+
+
+class PracticeReq(BaseModel):
+    n: str                          # the problem number, as typed
+    again: bool = False             # log one already solved, as a revisit
+
+
+@router.post("/practice/log")
+def api_practice_log(req: PracticeReq):
+    """Enter the number; the habit is met for the day.
+
+    This is the affordance the whole design was pointing at. There is no open
+    checkbox to tick — a daily habit is not a repeated task (see
+    `runtime/leetcode.py`) — so *typing the number is the completion*, and the
+    line it writes is simultaneously the record of what you solved.
+
+    No new write path: `leetcode.add` already runs the mutex → pull → re-check
+    → round-trip → commit → ledger sequence, so this endpoint validates, calls
+    it, and drops the caches. Actor `zach`, like the checkbox toggle: a human
+    typed this, and the ledger's undo should say so.
+
+    A duplicate comes back 409 rather than 400, because it is a conflict with
+    state and not a malformed request — the client turns it into the "you did
+    this on <date>, log it again?" prompt, which is the point of keeping the
+    record at all.
+    """
+    raw = (req.n or "").strip().lstrip("#")
+    if not raw.isdigit():
+        return _err(400, "not a number", detail="a LeetCode problem number")
+    if len(raw) > 6:
+        return _err(400, "not a number", detail="no problem has that many digits")
+
+    rel = lc.LOG_REL
+    if _vault_rel(rel) != rel:
+        return _err(400, "bad path")
+    if rel in sealed_paths(VAULT, [rel]):
+        return _err(403, "sealed path")
+    if not (VAULT / rel).exists():
+        return _err(404, "no log note",
+                    detail=f"{rel} does not exist — create it first")
+
+    # The network lookup is inside a thread-free synchronous call with its own
+    # timeout, and it degrades to a bare number rather than failing, so a slow
+    # leetcode.com costs a plainer line and never the write.
+    r = lc.add(raw, vault=VAULT, again=req.again, actor="zach")
+    if not r.get("ok"):
+        why = r.get("why") or "could not log it"
+        if r.get("duplicate"):
+            return _err(409, "already solved", detail=why,
+                        duplicate=r["duplicate"])
+        if "busy" in why:
+            return _err(409, "busy", detail=why)
+        return _err(500, "write failed", detail=why)
+
+    # Both caches: the queue payload carries `practice`, and the resolver's
+    # habit expansion reads the same note the write just changed.
+    panels.drop_task_caches()
+    return {"ok": True, **{k: v for k, v in r.items() if k != "duplicate"},
+            "practice": lc.panel(VAULT)}
 
 
 class RewordReq(BaseModel):

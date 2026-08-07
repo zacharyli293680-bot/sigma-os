@@ -30,11 +30,15 @@ export type Tasks = { today: string; block: string | null; tasks: VaultTask[] };
  *  occurrence answer "why is this here" the way a queue row answers "why is
  *  this ranked here". `raw` is the exact line, and it is the staleness token
  *  the write path will hand back in P5. */
-export type OccurrenceKind = "task" | "note" | "event" | "rule";
+export type OccurrenceKind = "task" | "note" | "event" | "rule" | "practice";
 export type Occurrence = {
   kind: OccurrenceKind;
   id: string;
   date: string;                  // YYYY-MM-DD
+  /** Whether this day's obligation is met. Only a `practice` occurrence sets
+   *  it; null everywhere else means "not that kind of thing" rather than "not
+   *  done", which a bare false would have claimed of every event. */
+  done: boolean | null;
   /** null when the thing has no clock time — it belongs in the all-day gutter. */
   start: string | null;          // HH:MM
   end: string | null;
@@ -135,16 +139,45 @@ export type QueueSection = {
    *  target has to include the course you have not filed anything against yet. */
   parents: { key: string; label: string }[];
 };
+/** One solved problem, as the log note records it. */
+export type Rep = {
+  n: number; title: string; difficulty: string; topics: string[];
+  date: string; revisit: number;
+};
+/** The daily habit that is deliberately *not* one of the four queues: it has no
+ *  checkbox to tick, so it has none of their affordances. A sibling of
+ *  `sections`, never a fifth member of it. Null when the vault has no log note. */
+export type Practice = {
+  habit: string; title: string; file: string; goal: string;
+  started: string | null;
+  done: boolean;
+  today: Rep[];
+  streak: { current: number; longest: number; last: string | null; at_risk: boolean };
+  total: number;
+  by_difficulty: Record<string, number>;
+  recent: Rep[];
+  /** Exactly the number the 06:00 review will use for today — read from the
+   *  same function, never recomputed, so the card cannot preview a score the
+   *  review will disagree with. */
+  component: number | null;
+};
 export type Queue = {
   today: string; adopted: string | null;
   /** False when the sidecar index existed but did not parse — ages are stale
    *  and nothing was written. Shown, never swallowed. */
   index_ok: boolean;
   sections: Record<string, QueueSection>;
+  practice: Practice | null;
   counts: {
     visible: number; queued: number; blocked: number;
     archived: number; snoozed: number;
   };
+};
+/** What POST /api/practice/log answers with. `duplicate` rides on the 409. */
+export type PracticeLog = {
+  ok: true; n: number; date: string; line: string; file: string;
+  title: string; difficulty: string; topics: string[];
+  sha: string | null; revisit: number; practice: Practice | null;
 };
 export const QUEUE_ORDER = ["courses", "procertus", "projects", "misc"] as const;
 /** What POST /api/queue/add answers with — where the line actually landed. */
@@ -167,7 +200,7 @@ export type RewordResp = { ok: true; suggestion: Reword | null };
 export type ReviewRow = {
   date: string; score: number | null; weighted: number;
   by_section: Record<string, number>;
-  components: { T?: number; A?: number; M?: number };
+  components: { T?: number; A?: number; M?: number; P?: number };
   deadlines_due: number; deadlines_met: number;
   advanced: number; courses: number;
   visible: number; queued: number;
@@ -330,9 +363,16 @@ export async function get<T>(path: string): Promise<T> {
  *  precisely instead of showing one generic failure. */
 export class ApiError extends Error {
   status: number; code: string; detail?: string;
-  constructor(status: number, code: string, detail?: string) {
+  /** The whole error payload. Some refusals carry structure the caller can act
+   *  on rather than only print — a duplicate practice log returns the entry it
+   *  collided with, which is what turns "already solved" from an error into
+   *  "you did this on 2026-07-14, log it again?". */
+  body?: Record<string, unknown>;
+  constructor(status: number, code: string, detail?: string,
+              body?: Record<string, unknown>) {
     super(detail || code);
     this.status = status; this.code = code; this.detail = detail;
+    this.body = body;
   }
 }
 
@@ -349,7 +389,10 @@ export async function post<T>(path: string, body: unknown): Promise<T> {
   });
   let data: { error?: string; detail?: string } | null = null;
   try { data = await r.json(); } catch { /* empty body */ }
-  if (!r.ok) throw new ApiError(r.status, data?.error ?? String(r.status), data?.detail);
+  if (!r.ok) {
+    throw new ApiError(r.status, data?.error ?? String(r.status), data?.detail,
+                       data as Record<string, unknown> | undefined);
+  }
   return data as T;
 }
 

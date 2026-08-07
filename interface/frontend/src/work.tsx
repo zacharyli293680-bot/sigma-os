@@ -18,8 +18,8 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { ApiError, get, obsidianHref, post, QUEUE_ORDER } from "./api";
-import type { Queue, QueueAdd, QueueEdit, QueueSection, QueueTask, Reword,
-              RewordResp, ReviewResp, ReviewRow } from "./api";
+import type { Practice, PracticeLog, Queue, QueueAdd, QueueEdit, QueueSection,
+              QueueTask, Rep, Reword, RewordResp, ReviewResp, ReviewRow } from "./api";
 import { NoSyncMark } from "./panels";
 import { breakdown, chipsFor, progressOf, useFreshIds, useQueueTick } from "./queue-bits";
 import type { RowState } from "./queue-bits";
@@ -703,6 +703,127 @@ function Card({ s, sections, vault, rows, errs, fresh, onTick, onMeta, onMove,
 }
 
 /**
+ * The daily habit — the one card in this grid with no checkbox.
+ *
+ * It is deliberately not a fifth queue. The four queues hold checkbox lines
+ * that can be ticked, snoozed, pinned and moved between sections; a habit has
+ * none of those affordances, and folding it into `sections` would mean every
+ * consumer special-casing one member. It sits beside them because it is work
+ * you owe today, which is what this view is for.
+ *
+ * **Typing the number is the completion.** There is no open box to tick — a
+ * repeated checkbox collides on identity and leaves debt behind on skipped days
+ * (see `runtime/leetcode.py`) — so the input *is* the affordance, and the line
+ * it writes is simultaneously the record of which problem you solved.
+ *
+ * A duplicate comes back 409 with the date you first solved it, and becomes an
+ * offer rather than an error: that prompt is the whole reason for keeping a
+ * record of what you have already done.
+ */
+function PracticeCard({ p, vault, onLogged }: {
+  p: Practice; vault: string; onLogged: () => void;
+}) {
+  const [n, setN] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [dupe, setDupe] = useState<Rep | null>(null);
+  const [said, setSaid] = useState<PracticeLog | null>(null);
+
+  async function submit(again = false) {
+    const num = n.trim().replace(/^#/, "");
+    if (!num || busy) return;
+    setBusy(true); setErr(null); setDupe(null); setSaid(null);
+    try {
+      const r = await post<PracticeLog>("practice/log", { n: num, again });
+      setSaid(r); setN(""); setBusy(false); onLogged();
+    } catch (e) {
+      setBusy(false);
+      if (e instanceof ApiError && e.code === "already solved") {
+        // Not an error state: the record did its job. Keep the number in the
+        // input so the offer below can act on exactly what was typed.
+        setDupe((e.body as { duplicate?: Rep } | undefined)?.duplicate ?? null);
+        setErr(e.detail || "already solved");
+      } else {
+        setErr(e instanceof ApiError ? (e.detail || e.code) : "backend unreachable");
+      }
+    }
+  }
+
+  const st = p.streak;
+  const c = p.by_difficulty;
+  return (
+    <section className={`panel q-card q-practice ${p.done ? "is-done" : ""}`}>
+      <h2>
+        ◇ PRACTICE
+        <span className="q-head">
+          {p.goal}
+          {st.current > 0 && ` · ${st.current}-day streak`}
+          {st.at_risk && " · at risk"}
+        </span>
+      </h2>
+
+      <div className="q-pr-body">
+        <span className={`q-pr-mark ${p.done ? "done" : ""}`}
+              title={p.done ? "today's problem is logged"
+                            : "nothing logged today — the review's practice component reads 0"}>
+          {p.done ? "◉" : "◎"}
+        </span>
+        <a className="q-pr-title" href={obsidianHref(vault, p.file)}
+           title={`${p.file} — the record of every problem solved`}>{p.title}</a>
+        <span className="q-pr-stats dim">
+          {p.total} solved · {c.easy}E {c.medium}M {c.hard}H
+          {st.longest > 0 && ` · longest ${st.longest}d`}
+        </span>
+      </div>
+
+      {p.today.length > 0 && (
+        <ul className="rows q-pr-today">
+          {p.today.map(r => (
+            <li key={`${r.n}-${r.revisit}`}>
+              <span className="q-pr-n">{r.n}</span>
+              <span className="q-pr-name">{r.title || "(no title)"}</span>
+              {r.difficulty && <span className={`q-pr-d d-${r.difficulty}`}>{r.difficulty}</span>}
+              {r.revisit > 1 && <span className="dim">revisit {r.revisit}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <form className="q-pr-add" onSubmit={e => { e.preventDefault(); submit(); }}>
+        {/* type=text with inputMode numeric, not type=number: the spinner and
+            the scroll-wheel increment are both wrong for an identifier, and a
+            mis-scrolled 217 -> 218 would log a problem you did not solve. */}
+        <input value={n} onChange={e => setN(e.target.value)}
+               inputMode="numeric" pattern="[0-9]*" maxLength={6}
+               placeholder={p.done ? "another one?" : "problem #"}
+               aria-label="LeetCode problem number" disabled={busy} />
+        <button type="submit" disabled={busy || !n.trim()}>
+          {busy ? "…" : "LOG"}
+        </button>
+      </form>
+
+      {said && (
+        <p className="q-pr-said">
+          logged <b>{said.n}</b> {said.title}
+          {said.difficulty && <span className={`q-pr-d d-${said.difficulty}`}>{said.difficulty}</span>}
+        </p>
+      )}
+      {err && (
+        <p className={dupe ? "q-pr-dupe" : "err"}>
+          {err}
+          {dupe && (
+            <button className="ghost" onClick={() => submit(true)} disabled={busy}
+                    title="record it again as a revisit — a distinct line, its own completion">
+              LOG AS REVISIT
+            </button>
+          )}
+        </p>
+      )}
+    </section>
+  );
+}
+
+/**
  * Yesterday, in one line, pinned to the bottom.
  *
  * The stars are arithmetic — Python computes them from throughput, deadline
@@ -721,12 +842,13 @@ function ReviewStrip({ r, vault }: { r: ReviewRow | null; vault: string }) {
     );
   }
   const parts = Object.entries(r.components)
-    .map(([k, v]) => `${{ T: "throughput", A: "adherence", M: "momentum" }[k]} ${v?.toFixed(1)}`)
+    .map(([k, v]) => `${{ T: "throughput", A: "adherence", M: "momentum",
+                          P: "practice" }[k]} ${v?.toFixed(1)}`)
     .join(" · ");
   return (
     <footer className="q-review">
       <a href={obsidianHref(vault, `06-System/reviews/${r.date}`)}
-         title={parts ? `${parts}\n(weights 0.40 / 0.35 / 0.25, renormalised over what could be measured)`
+         title={parts ? `${parts}\n(weights 0.40 / 0.35 / 0.25 / 0.15, renormalised over what could be measured)`
                       : "not enough history to score yet"}>
         <b className="q-stars">
           {r.score === null ? "—" : "★".repeat(r.score) + "☆".repeat(5 - r.score)}
@@ -844,6 +966,13 @@ export default function WorkView({ open, vault, onClose, onMutate }: {
                     open={openKey === k} gridRef={gridRef}
                     onToggle={() => setOpenKey(o => (o === k ? null : k))} />
             ))}
+            {/* Null when the vault has no practice-log note, so a vault that
+                never opted into a habit renders no card rather than a
+                permanently-unmet obligation nobody signed up for. */}
+            {q.practice && (
+              <PracticeCard p={q.practice} vault={vault}
+                            onLogged={() => { pull(); onMutate(); }} />
+            )}
           </div>
         )}
 

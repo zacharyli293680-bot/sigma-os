@@ -59,7 +59,7 @@ const AGENDA_DAYS = 14;
 const MONTH_CELL_MAX = 3;      // items drawn per month cell before "+n"
 
 const GLYPH: Record<Occurrence["kind"], string> = {
-  event: "◆", rule: "▣", note: "▦", task: "☐",
+  event: "◆", rule: "▣", note: "▦", task: "☐", practice: "◎",
 };
 const SECTIONS: [string, string][] = [
   ["all", "All"], ["courses", "Courses"], ["procertus", "ProCertus"],
@@ -213,6 +213,12 @@ export default function AgendaView({ open, vault, onClose }: {
   const why = (o: Occurrence): string | null =>
     o.kind === "task" ? "a task's date moves in the work view (Ctrl+;), which owns task lines"
       : o.kind === "rule" && o.skipped ? "this occurrence is already skipped"
+      // A daily habit has no line on the day it lands: the occurrence is
+      // expanded at read time from the log note's `started:`, exactly like a
+      // rule row, and its record is of what happened rather than what is owed.
+      // Moving one would have to mean "I will do it tomorrow instead", which is
+      // a promise this system has nowhere to keep and no way to check.
+      : o.kind === "practice" ? "a daily habit is not rescheduled — log it on the day you do it"
       : o.kind === "note" ? "a dated note's date lives in its frontmatter, which this view does not write"
       // A span occupies several days and is one line. Dragging the day you
       // happened to grab would rewrite it as a single-day event and lose the
@@ -404,6 +410,17 @@ export default function AgendaView({ open, vault, onClose }: {
                   {probe.kind === "rule" && probe.skipped && (
                     <span className="dim" title={`except:: on ${probe.source.rule_id}`}>
                       skipped — edit {probe.source.path} to put it back
+                    </span>
+                  )}
+                  {/* No button here on purpose. Logging a problem needs the
+                      number, and this strip has no input — the work view owns
+                      that field. Saying where it is beats a control that would
+                      have to grow a form inside a provenance footer. */}
+                  {probe.kind === "practice" && (
+                    <span className="dim">
+                      {probe.done
+                        ? "done that day"
+                        : "not logged — enter the number in the work view (Ctrl+;)"}
                     </span>
                   )}
                   <button className="ghost" onClick={() => setProbe(null)}>✕</button>

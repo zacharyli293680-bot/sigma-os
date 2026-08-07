@@ -1302,6 +1302,9 @@ pre.diff .meta { color: var(--muted); }
 .ag-glyph.k-rule  { color: var(--ink-2); }
 .ag-glyph.k-note  { color: var(--accent); opacity: 0.7; }
 .ag-glyph.k-task  { color: var(--ink-2); }
+/* A standing daily goal, dimmer than an appointment: it is owed by the end of
+   the day rather than at a time, so it must not read as the next thing due. */
+.ag-glyph.k-practice { color: var(--ink-2); opacity: 0.85; }
 .ag-when { flex: none; width: 88px; letter-spacing: 0.02em; }
 .ag-title {
   flex: 1 1 auto; min-width: 0; overflow: hidden;
@@ -1723,6 +1726,42 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
   text-transform: none;
 }
 .q-empty { margin: 6px 0 2px; font-size: 12px; }
+
+/* --- the practice card: the one card here with no checkbox ------------------
+   Status is never colour alone — the ◎ / ◉ glyph carries it too, the same rule
+   the rail's kind glyphs follow. */
+.q-practice.is-done { border-color: var(--panel-line-dim); }
+.q-pr-body { display: flex; align-items: baseline; gap: 8px; margin: 6px 0 2px; }
+.q-pr-mark { flex: none; font-size: 15px; color: var(--muted); line-height: 1; }
+.q-pr-mark.done { color: var(--accent); }
+.q-pr-title { flex: none; color: var(--ink); border-bottom: 1px solid transparent; }
+.q-pr-title:hover { border-bottom-color: var(--panel-line-dim); }
+.q-pr-stats {
+  flex: 1 1 auto; min-width: 0; text-align: right;
+  font: 400 10.5px/1.6 var(--mono); letter-spacing: 0.04em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.q-pr-today li { display: flex; align-items: baseline; gap: 6px; margin: 1px 0; }
+.q-pr-n { flex: none; color: var(--accent); font-variant-numeric: tabular-nums; }
+.q-pr-name { flex: 1 1 auto; min-width: 0; overflow: hidden;
+             text-overflow: ellipsis; white-space: nowrap; }
+.q-pr-d {
+  flex: none; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 1px 5px; border: 1px solid var(--panel-line-dim); border-radius: 2px;
+  color: var(--ink-2);
+}
+.q-pr-d.d-easy   { color: var(--accent); }
+.q-pr-d.d-medium { color: var(--bronze); }
+.q-pr-d.d-hard   { color: var(--warn, var(--ink)); }
+.q-pr-add { display: flex; gap: 6px; margin-top: 8px; }
+.q-pr-add input { flex: 1 1 auto; min-width: 0; font-variant-numeric: tabular-nums; }
+.q-pr-add button { flex: none; }
+.q-pr-said { margin: 6px 0 0; font-size: 12px; color: var(--ink-2);
+             display: flex; align-items: baseline; gap: 6px; }
+/* A duplicate is not an error — the record answering "have I done this?" is
+   the point of keeping one — so it reads as an offer, not a failure. */
+.q-pr-dupe { margin: 6px 0 0; font-size: 12px; color: var(--bronze);
+             display: flex; align-items: baseline; gap: 8px; }
 
 .q-rows li { margin: 1px 0; }
 .q-row { display: flex; align-items: baseline; gap: 2px; }

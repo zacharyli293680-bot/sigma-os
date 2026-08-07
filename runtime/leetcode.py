@@ -449,7 +449,8 @@ def splice(body: str, line: str, heading: str = HEADING) -> str:
 
 def add(n, vault=None, date: str | None = None, title: str = "",
         difficulty: str = "", topics=None, again: bool = False,
-        offline: bool = False, rel: str = LOG_REL, cache_path=None) -> dict:
+        offline: bool = False, rel: str = LOG_REL, cache_path=None,
+        actor: str = "leetcode") -> dict:
     """Log one solved problem. The only writer in this module.
 
     No new write path: the same mutex → pull → write → commit → ledger sequence
@@ -515,7 +516,10 @@ def add(n, vault=None, date: str | None = None, title: str = "",
         log(f"write failed: {e}")
         return {"ok": False, "why": str(e)}
 
-    ledger.record("leetcode", "append", rel, res["sha"],
+    # `actor` is the ledger's answer to "who did this" — `zach` when the
+    # dashboard's input was used, the same convention the checkbox toggle
+    # follows, because a human typing a number is not an autonomous write.
+    ledger.record(actor, "append", rel, res["sha"],
                   f"logged LeetCode {n}"
                   f"{' ' + found['title'] if found['title'] else ''} on {date}")
     log(f"{date}: logged {n} {found['title']}".rstrip())
@@ -555,6 +559,31 @@ def summary_line(vault=None, today: str | None = None, rel: str = LOG_REL) -> st
                 f"{s['total']} solved")
     risk = f" · {st['current']}-day streak at risk" if st["at_risk"] else ""
     return f"leetcode       nothing logged today{risk} · {s['total']} solved"
+
+
+def panel(vault=None, today: str | None = None, rel: str = LOG_REL) -> dict | None:
+    """The habit's state for the dashboard's Work view. None when there is no log.
+
+    None rather than an empty shape, so a vault without this habit renders no
+    card at all instead of a permanently-unmet obligation nobody signed up for.
+    `component` is the exact number the 06:00 review will use for this day —
+    read from `practice_score` rather than recomputed here, because a card that
+    disagrees with the review it is previewing is worse than no card.
+    """
+    if not log_path(vault, rel).exists():
+        return None
+    today = today or datetime.date.today().isoformat()
+    items = entries(vault, rel)
+    s = stats(items, today)
+    return {"habit": "leetcode", "title": "LeetCode", "file": rel,
+            "goal": "one problem a day",
+            "started": started(vault, rel),
+            "done": bool(s["today"]),
+            "today": solved_on(items, today),
+            "streak": s["streak"], "total": s["total"],
+            "by_difficulty": s["by_difficulty"],
+            "recent": items[-5:][::-1],
+            "component": practice_score(started(vault, rel), today, s["today"])}
 
 
 def cmd_status(a) -> int:

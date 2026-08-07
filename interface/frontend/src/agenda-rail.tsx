@@ -34,7 +34,7 @@ const WEEK = 7;
 /** Glyphs separate what happens *to* you from what you *do* — the distinction
  *  the brief asks the rail to carry, and status is never colour alone here. */
 const GLYPH: Record<Occurrence["kind"], string> = {
-  event: "◆", rule: "▣", note: "▦", task: "☐",
+  event: "◆", rule: "▣", note: "▦", task: "☐", practice: "◎",
 };
 
 function minutes(hhmm: string): number {
@@ -89,7 +89,10 @@ export default function AgendaRail({ agenda, vault, onOpen }: {
   const ahead = todays
     .filter(o => o.start && minutes(o.start) >= nowMin)
     .sort((a, b) => minutes(a.start!) - minutes(b.start!));
-  const untimed = todays.filter(o => !o.start);
+  // A habit already met today drops out of "what is left". It stays on the
+  // agenda view — the record of a day that was kept is worth seeing — but the
+  // rail answers "what is still ahead", and a satisfied obligation is not.
+  const untimed = todays.filter(o => !o.start && o.done !== true);
   const next = ahead[0] ?? null;
   const upcoming = [...ahead, ...untimed].slice(0, AHEAD);
 
@@ -156,6 +159,12 @@ export default function AgendaRail({ agenda, vault, onOpen }: {
                     {o.conflict && <span className="ag-conflict" title={o.conflict.why}>⚠</span>}
                     {o.title}
                   </span>
+                  {/* A standing daily goal has no countdown — it is due by the
+                      end of the day, not at a time — so the slot carries the
+                      thing that is actually running out instead. */}
+                  {o.kind === "practice" && o.done === false && (
+                    <span className="ag-count dim">not yet</span>
+                  )}
                   {mins !== null && <span className="ag-count">{until(mins)}</span>}
                 </a>
               </li>

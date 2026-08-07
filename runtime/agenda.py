@@ -53,6 +53,7 @@ if str(HERE) not in sys.path:
 from sigma import frontmatter  # noqa: E402
 
 import todo as td  # noqa: E402  — task scanning, sections, identity
+import leetcode as lc  # noqa: E402  — the practice-log line grammar, not a second copy
 
 # --------------------------------------------------------------------------
 # where the hand-written agenda lives
@@ -425,6 +426,7 @@ def collect(vault, split=None) -> dict:
     sealed, no_sync = (split or td._default_split)(vault, rels)
 
     events, notes, rules, problems, timezone = [], [], [], [], None
+    habits = []
     for p, rel in zip(files, rels):
         if rel in sealed:
             continue                     # gitignored and not exempt — hidden
@@ -464,6 +466,29 @@ def collect(vault, split=None) -> dict:
             continue
 
         fm = frontmatter(text)
+
+        # A daily habit is a standing commitment with a completion record, so it
+        # belongs on the calendar for the same reason a schedule.md rule does.
+        # Keyed on the `practice-log` *type* rather than on a filename, so a
+        # second habit note gets its row without touching this module — the
+        # contract already made the type the machine key.
+        if (fm.get("type") or "").strip() == "practice-log":
+            begin = _valid_date((fm.get("started") or "").strip())
+            reps = lc._parse_all(text)
+            if not begin and reps:
+                begin = min(r["date"] for r in reps)
+            habits.append({
+                "file": rel, "line": None,
+                "key": (fm.get("practice") or name[:-3]).strip(),
+                "title": (_H1_RE.search(text).group(1)
+                          if _H1_RE.search(text) else name[:-3]),
+                "started": begin,
+                # Days with at least one rep. A set, not a count: the calendar
+                # asks "was this day done", never "how many".
+                "days": {r["date"] for r in reps},
+                "no_sync": rel in no_sync})
+            continue
+
         for field in ("date", "due"):
             when = _valid_date((fm.get(field) or "").strip())
             if not when:
@@ -474,7 +499,7 @@ def collect(vault, split=None) -> dict:
                           "type": (fm.get("type") or "").strip() or None,
                           "no_sync": rel in no_sync})
 
-    return {"events": events, "notes": notes, "rules": rules,
+    return {"events": events, "notes": notes, "rules": rules, "habits": habits,
             "tasks": td.scan(vault, split=split, tops=TASK_EXCLUDED_TOPS),
             "timezone": timezone, "problems": problems}
 
@@ -526,10 +551,16 @@ def display_title(text: str) -> str:
 def _occ(kind, oid, date, title, *, path, line=None, block_id=None,
          rule_id=None, field=None, start=None, end=None, span=None,
          no_sync=False, owner="sigma", section=None, parent=None,
-         raw=None, priority=None, cancelled=None, skipped=False) -> dict:
+         raw=None, priority=None, cancelled=None, skipped=False,
+         done=None) -> dict:
     if section is None:
         section, parent = td.section_of(path)
     return {
+        # Whether this day's obligation is already met. Only a `practice`
+        # occurrence sets it; None everywhere else means "not that kind of
+        # thing" rather than "not done", which a bare False would have claimed
+        # of every event on the calendar.
+        "done": done,
         "kind": kind, "id": oid, "date": date,
         "start": start, "end": end, "all_day": start is None,
         "title": title, "owner": owner,
@@ -655,6 +686,38 @@ def _conflicts(occurrences: list) -> int:
     return n
 
 
+def _habit_occurrences(h: dict, lo: str, hi: str) -> list:
+    """One all-day occurrence per day the habit was standing, inside the window.
+
+    A daily habit recurs like a `schedule.md` rule and is expanded the same way:
+    read-time only, never written into a note. What it adds is `done`, because
+    unlike a rule this obligation has a record of whether it was met — so a
+    missed day stays visible instead of vanishing, which is the same argument
+    that keeps a cancelled event's line and renders a skipped rule struck.
+
+    Nothing before `started` is emitted: a day the habit did not exist is not a
+    day it was missed, exactly as the review's P component refuses to score one.
+    """
+    begin = h.get("started")
+    if not begin:
+        return []                    # a habit with no start has never been due
+    first = max(begin, lo)
+    if first > hi:
+        return []
+    days = (datetime.date.fromisoformat(hi)
+            - datetime.date.fromisoformat(first)).days + 1
+    d0 = datetime.date.fromisoformat(first)
+    key = h["key"] or "practice"
+    out = []
+    for n in range(days):
+        day = (d0 + datetime.timedelta(days=n)).isoformat()
+        out.append(_occ("practice", f"sg-practice-{key}@{day}", day, h["title"],
+                        path=h["file"], line=h.get("line"),
+                        field="practice", no_sync=h["no_sync"],
+                        done=day in h["days"]))
+    return out
+
+
 def resolve(vault, frm: str, to: str, split=None, ttl: float = CACHE_TTL) -> dict:
     """Everything on the calendar between two dates, merged, with provenance.
 
@@ -699,6 +762,9 @@ def resolve(vault, frm: str, to: str, split=None, ttl: float = CACHE_TTL) -> dic
                             start=ru["start"], end=ru["end"],
                             no_sync=ru["no_sync"], raw=ru["raw"],
                             skipped=was_skipped))
+
+    for h in src.get("habits") or []:
+        out.extend(_habit_occurrences(h, lo, hi))
 
     out.sort(key=lambda o: (o["date"], o["start"] or "", o["kind"], o["title"]))
     # How many occurrences *in this window* disagree with another source. Both
