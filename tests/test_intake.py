@@ -296,5 +296,66 @@ class TestSourceRetention(IntakeBase):
         self.assertTrue(src.exists())
 
 
+# --------------------------------------------------------------------------
+# where the document rides
+# --------------------------------------------------------------------------
+
+# Windows' CreateProcess ceiling. The SDK passes the system prompt — where the
+# brief goes — as `--append-system-prompt` on the command line, so a brief
+# carrying the document blows straight past this.
+CMDLINE_MAX = 32767
+
+
+class TestTheDocumentRidesStdin(IntakeBase):
+    """The document goes in `material`, never in `brief`.
+
+    Every intake of a real lecture PDF failed on this: a 60,000-character
+    extraction embedded in the brief made the spawn fail with
+    `CLINotFoundError: Claude Code not found`, naming a bundled binary that was
+    present and ran fine by hand. The error names the wrong thing entirely,
+    which is why it read as a broken install rather than an oversized argument.
+    `fleet.run_one` already had `material` for exactly this and its docstring
+    documents this precise failure; intake was the caller that never used it.
+    """
+
+    def test_the_brief_never_carries_the_document(self):
+        body = "SENTINEL-BODY " * 5000
+        brief = intake.build_brief(Path("topic01-logic.pdf"), "CSE-311", False)
+        self.assertNotIn("SENTINEL-BODY", brief)
+        self.assertIn("SENTINEL-BODY", intake.build_material(body))
+
+    def test_the_brief_does_not_grow_with_the_document(self):
+        """60k of extracted slides is the ordinary case here, not the extreme."""
+        brief = intake.build_brief(Path("topic01-logic.pdf"), "CSE-311", False)
+        orientation = f"{intake.RULES}\n\n## Your brief\n\n{brief}"
+        self.assertLess(len(orientation), CMDLINE_MAX)
+        self.assertLess(len(intake.build_brief(Path("x.pdf"), "CSE-311", True)),
+                        CMDLINE_MAX // 4)
+
+    def test_intake_one_hands_the_text_to_run_one_as_material(self):
+        """The wiring, not just the shapes: a build_material nothing passes to
+        run_one would leave the document unread and the notes empty."""
+        src = self.drop_file("CSE-311/week-4.md")
+        src.write_text("# Week 4\n\n" + ("real lecture prose. " * 60),
+                       encoding="utf-8")
+        seen = {}
+
+        async def fake_run_one(spec, timeout_s=420, model_override=None,
+                               rules=None, material=None):
+            seen["brief"], seen["material"] = spec.brief, material
+            return {"ok": True, "proposals": 0, "files": [], "summary": ""}
+
+        import fleet as fl
+        orig, fl.run_one = fl.run_one, fake_run_one
+        try:
+            asyncio.run(intake.intake_one(src, "CSE-311"))
+        finally:
+            fl.run_one = orig
+
+        self.assertIsNotNone(seen["material"], "the document was not passed at all")
+        self.assertIn("real lecture prose", seen["material"])
+        self.assertNotIn("real lecture prose", seen["brief"])
+
+
 if __name__ == "__main__":
     unittest.main()

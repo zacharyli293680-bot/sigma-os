@@ -369,13 +369,27 @@ Turn the source below into the notes Zach can actually revise from. Concretely:
 Call `propose_change` once per note, with `kind: note` and `target` set to the
 full vault-relative path. Then finish with one sentence naming what you made.
 
-## The source document
-
-{body}
+The extracted document arrives as the **first message of this conversation**,
+under a `## The source document` heading. Work from that.
 """.strip()
 
 
-def build_brief(path: Path, course: str, text: str, truncated: bool) -> str:
+def build_brief(path: Path, course: str, truncated: bool) -> str:
+    """The instructions only. **The document itself must never go in here.**
+
+    `brief` becomes the system prompt, which the SDK passes as
+    `--append-system-prompt` on the command line, and Windows caps a command
+    line at 32,767 characters. A lecture PDF extracts to 40-65k, so embedding it
+    here made every intake fail — and fail as `CLINotFoundError: Claude Code not
+    found`, naming a binary that was sitting right there and running fine, which
+    is why it read as a broken install rather than an oversized argument.
+
+    `fleet.run_one` already had `material` for exactly this. Its docstring
+    documents this precise failure mode and names "an extracted document" as the
+    use case; intake was simply the one caller that never used it. The mechanism
+    was built and then not wired up — the same shape as this project's other
+    silent failures, where something was configured but never executed.
+    """
     trunc = ""
     if truncated:
         trunc = (f"- **Note:** the extraction was longer than {TEXT_BUDGET:,} characters "
@@ -383,7 +397,13 @@ def build_brief(path: Path, course: str, text: str, truncated: bool) -> str:
                  f"rather than implying you covered the whole document.\n")
     return BRIEF.format(name=path.name, course=course, truncnote=trunc,
                         context=course_context(course),
-                        course_index=f"{course.lower()}", body=text)
+                        course_index=f"{course.lower()}")
+
+
+def build_material(text: str) -> str:
+    """The document, as the conversation turn `run_one` sends over the CLI's
+    stdin — which has no command-line ceiling."""
+    return f"## The source document\n\n{text}"
 
 
 # --------------------------------------------------------------------------
@@ -413,11 +433,14 @@ async def intake_one(path: Path, course: str, model: str = "sonnet") -> dict:
     spec = sp.Specialist(
         key="intake", title="Study intake", cadence="manual",
         model=model, effort="medium",
-        brief=build_brief(path, course, text, truncated),
+        brief=build_brief(path, course, truncated),
         # Several notes, each a propose_change call, plus the reads it makes to
         # check what it is linking to.
         max_turns=44)
-    return await fl.run_one(spec, timeout_s=TIMEOUT_S, rules=RULES)
+    # The document rides `material` (stdin), never the brief (the command line).
+    # See build_brief for what embedding it here cost.
+    return await fl.run_one(spec, timeout_s=TIMEOUT_S, rules=RULES,
+                            material=build_material(text))
 
 
 def run(only_course: str | None = None, dry_run: bool = False,
