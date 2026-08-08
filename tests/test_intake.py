@@ -226,6 +226,95 @@ class TestPptx(IntakeBase):
         self.assertIn("### Slide 1", text)
 
 
+class TestSlideEquations(unittest.TestCase):
+    """Equations are OMML, and python-pptx's `.text` walks `a:t` runs only.
+
+    AA-210's decks carry 4,710 of them; before this, three slides of the
+    friction deck extracted completely empty because the whole slide *is* the
+    formula. These are pure XML functions, so they need no deck on disk.
+    """
+
+    def frag(self, xml: str):
+        from lxml import etree
+        ns = ('xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" '
+              'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+              'xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" '
+              'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"')
+        return etree.fromstring(xml.replace("<root>", f"<root {ns}>"))
+
+    def math(self, body: str) -> str:
+        return intake._omml(self.frag(f"<root><m:oMath>{body}</m:oMath></root>")[0])
+
+    def test_subscript_reads_as_underscore(self):
+        got = self.math("<m:r><m:t>F=</m:t></m:r>"
+                        "<m:sSub><m:e><m:r><m:t>μ</m:t></m:r></m:e>"
+                        "<m:sub><m:r><m:t>s</m:t></m:r></m:sub></m:sSub>"
+                        "<m:r><m:t>N</m:t></m:r>")
+        self.assertEqual(got, "F=μ_sN")
+
+    def test_fraction_is_parenthesised_on_both_sides(self):
+        """`Ph/W` would be wrong; the slide means the whole numerator."""
+        got = self.math("<m:f><m:num><m:r><m:t>Ph</m:t></m:r></m:num>"
+                        "<m:den><m:r><m:t>W</m:t></m:r></m:den></m:f>")
+        self.assertEqual(got, "(Ph)/(W)")
+
+    def test_radical_and_superscript(self):
+        self.assertEqual(
+            self.math("<m:rad><m:e><m:r><m:t>x</m:t></m:r></m:e></m:rad>"),
+            "sqrt(x)")
+        self.assertEqual(
+            self.math("<m:sSup><m:e><m:r><m:t>r</m:t></m:r></m:e>"
+                      "<m:sup><m:r><m:t>2</m:t></m:r></m:sup></m:sSup>"),
+            "r^2")
+
+    def test_run_properties_inside_math_are_not_text(self):
+        """`m:r` carries an `a:rPr` sibling of `m:t` — formatting, not content."""
+        got = self.math('<m:r><a:rPr lang="en-US" i="1"/><m:t>M</m:t></m:r>')
+        self.assertEqual(got, "M")
+
+    def test_unknown_construct_degrades_to_its_children(self):
+        got = self.math("<m:borderBox><m:e><m:r><m:t>Q</m:t></m:r></m:e></m:borderBox>")
+        self.assertEqual(got, "Q")
+
+    def test_math_keeps_its_place_in_the_sentence(self):
+        """'it is NOT true that F=μN' reverses if the math is appended after."""
+        p = self.frag(
+            "<root><a:p>"
+            "<a:r><a:t>it is NOT true that </a:t></a:r>"
+            "<m:oMath><m:r><m:t>F=μN</m:t></m:r></m:oMath>"
+            "</a:p></root>")[0]
+        self.assertEqual(intake._para_text(p), "it is NOT true that F=μN")
+
+    def test_math_italic_unicode_is_normalised(self):
+        """Decks use Cambria Math's italic plane; U+1D439 is an F, not a glyph."""
+        p = self.frag("<root><a:p><m:oMath><m:r><m:t>\U0001d439</m:t></m:r>"
+                      "</m:oMath></a:p></root>")[0]
+        self.assertEqual(intake._para_text(p), "F")
+
+    def test_walk_descends_into_alternate_content(self):
+        """The wrapper PowerPoint puts around every equation-bearing shape."""
+        tree = self.frag(
+            "<root><p:spTree>"
+            "<mc:AlternateContent>"
+            "  <mc:Choice><p:sp><p:txBody><a:p><a:r><a:t>live</a:t></a:r>"
+            "  </a:p></p:txBody></p:sp></mc:Choice>"
+            "  <mc:Fallback><p:sp><p:txBody><a:p><a:r><a:t>flattened</a:t>"
+            "  </a:r></a:p></p:txBody></p:sp></mc:Fallback>"
+            "</mc:AlternateContent>"
+            "</p:spTree></root>")[0]
+        found = [intake._body_text(sp.find(intake._PML_NS + "txBody"))
+                 for sp in intake._walk_shapes(tree)]
+        self.assertEqual(found, ["live"])
+
+    def test_walk_flattens_groups(self):
+        tree = self.frag(
+            "<root><p:spTree><p:grpSp>"
+            "<p:sp><p:txBody><a:p><a:r><a:t>grouped</a:t></a:r></a:p>"
+            "</p:txBody></p:sp>"
+            "</p:grpSp></p:spTree></root>")[0]
+        self.assertEqual(len(list(intake._walk_shapes(tree))), 1)
+
+
 class TestSourceRetention(IntakeBase):
     """When may intake clear the drop folder? Only once a note actually reached
     the vault. Proposing is not landing."""

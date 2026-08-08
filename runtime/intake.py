@@ -176,6 +176,162 @@ def extractor_name() -> str:
     return "markitdown" if importlib.util.find_spec("markitdown") else "pdftotext -layout"
 
 
+# Equations in a deck are OMML, not text. PowerPoint stores them as
+# `<a14:m><m:oMath>` inline inside the paragraph, and python-pptx's `.text`
+# walks `a:t` runs only — so every equation comes back as a gap. On AA-210's
+# 49 statics decks that is 4,710 equations, and three slides of the friction
+# deck extract completely empty because the whole slide *is* the formula.
+# Silent loss is the worst kind: the note reads as if the lecturer never
+# stated `F = mu_s N`. So linearise the math instead.
+# ...and the shapes holding them are invisible to python-pptx twice over:
+# PowerPoint wraps any shape containing an equation in `<mc:AlternateContent>`
+# (a live `mc:Choice` plus a flattened `mc:Fallback` picture for old readers),
+# and `slide.shapes` skips that element rather than descending into it. So the
+# walk below goes over the shape tree XML directly, taking the Choice branch
+# and recursing into groups — which `slide.shapes` also declines to do.
+_MATH_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/math}"
+_DRAW_NS = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+_PML_NS = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
+_MC_NS = "{http://schemas.openxmlformats.org/markup-compatibility/2006}"
+
+
+def _m_part(el, name: str) -> str:
+    """The linearised content of `el`'s first <m:name> child, or ""."""
+    child = el.find(_MATH_NS + name)
+    return _omml(child) if child is not None else ""
+
+
+def _m_val(el, *path: str) -> str:
+    """The m:val attribute of a nested property element, or ""."""
+    node = el
+    for step in path:
+        node = node.find(_MATH_NS + step) if node is not None else None
+    return (node.get(_MATH_NS + "val") or "") if node is not None else ""
+
+
+def _omml(el) -> str:
+    """One OMML element as linear text — `(a)/(b)`, `x_i`, `x^2`, `sqrt(x)`.
+
+    Deliberately plain rather than LaTeX: the consumer is a model reading a
+    slide, and `mu_s` beside its bullet is as legible as `\\mu_s` without
+    inventing markup the rest of the extraction does not use. Unknown
+    constructs fall through to their concatenated children, so a shape this
+    does not model degrades to its text rather than to nothing.
+    """
+    out = []
+    for child in el:
+        tag = child.tag
+        if not isinstance(tag, str) or not tag.startswith(_MATH_NS):
+            continue                    # a:rPr and friends carry formatting only
+        name = tag[len(_MATH_NS):]
+        if name == "t":
+            out.append(child.text or "")
+        elif name == "ctrlPr":
+            continue                    # run properties, no content
+        elif name == "f":
+            out.append(f"({_m_part(child, 'num')})/({_m_part(child, 'den')})")
+        elif name == "sSub":
+            out.append(f"{_m_part(child, 'e')}_{_m_part(child, 'sub')}")
+        elif name == "sSup":
+            out.append(f"{_m_part(child, 'e')}^{_m_part(child, 'sup')}")
+        elif name == "sSubSup":
+            out.append(f"{_m_part(child, 'e')}_{_m_part(child, 'sub')}"
+                       f"^{_m_part(child, 'sup')}")
+        elif name == "rad":
+            deg = _m_part(child, "deg")
+            body = _m_part(child, "e")
+            out.append(f"root{deg}({body})" if deg else f"sqrt({body})")
+        elif name == "d":
+            beg = _m_val(child, "dPr", "begChr") or "("
+            end = _m_val(child, "dPr", "endChr") or ")"
+            inner = ", ".join(_omml(e) for e in child.findall(_MATH_NS + "e"))
+            out.append(f"{beg}{inner}{end}")
+        elif name == "nary":
+            op = _m_val(child, "naryPr", "chr") or "∑"
+            lo, hi = _m_part(child, "sub"), _m_part(child, "sup")
+            span = (f"_{lo}" if lo else "") + (f"^{hi}" if hi else "")
+            out.append(f"{op}{span} {_m_part(child, 'e')}")
+        elif name == "func":
+            out.append(f"{_m_part(child, 'fName')}({_m_part(child, 'e')})")
+        elif name in ("limLow", "limUpp"):
+            joint = "_" if name == "limLow" else "^"
+            out.append(f"{_m_part(child, 'e')}{joint}{_m_part(child, 'lim')}")
+        elif name == "acc":
+            out.append(_m_part(child, "e"))     # the arrow/hat is a glyph, not text
+        elif name == "bar":
+            out.append(f"bar({_m_part(child, 'e')})")
+        elif name == "m":
+            rows = [" | ".join(_omml(e) for e in r.findall(_MATH_NS + "e"))
+                    for r in child.findall(_MATH_NS + "mr")]
+            out.append("[" + "; ".join(rows) + "]")
+        else:
+            out.append(_omml(child))
+    return "".join(out)
+
+
+def _para_text(p) -> str:
+    """One <a:p> as text, with its inline equations in place.
+
+    Document order matters: "it is NOT true that F = mu_s N" is one sentence
+    split across an `a:r` and an `a14:m`, and appending the math after the
+    paragraph would reverse the lecturer's point on the slides that negate a
+    formula.
+    """
+    import unicodedata
+    parts = []
+    for node in p.iter():
+        tag = node.tag
+        if not isinstance(tag, str):
+            continue
+        if tag == _DRAW_NS + "t":
+            # An a:t inside m:r is math, already claimed by the oMath below it.
+            parts.append(node.text or "")
+        elif tag == _MATH_NS + "oMath":
+            parts.append(unicodedata.normalize("NFKC", _omml(node)))
+    return "".join(parts)
+
+
+def _frame_text(frame) -> str:
+    """A text frame's paragraphs, math included, one per line."""
+    try:
+        paras = [_para_text(p) for p in frame._txBody.findall(_DRAW_NS + "p")]
+    except Exception:
+        return (frame.text or "").strip()       # any surprise: the old behaviour
+    return "\n".join(paras).strip()
+
+
+def _body_text(el) -> str:
+    """Every <a:p> under `el`, one per line — el is a txBody or a table cell."""
+    return "\n".join(_para_text(p) for p in el.iter(_DRAW_NS + "p")).strip()
+
+
+def _walk_shapes(el):
+    """Shape elements under `el`, in document order, through the wrappers.
+
+    Yields `p:sp` and `p:graphicFrame` only — the two that carry text — after
+    unwrapping `mc:AlternateContent` and flattening groups.
+    """
+    for child in el:
+        tag = child.tag
+        if not isinstance(tag, str):
+            continue                            # comments and PIs
+        if tag == _MC_NS + "AlternateContent":
+            branch = child.find(_MC_NS + "Choice")
+            if branch is None:
+                branch = child.find(_MC_NS + "Fallback")
+            if branch is not None:
+                yield from _walk_shapes(branch)
+        elif tag in (_PML_NS + "grpSp", _PML_NS + "spTree"):
+            yield from _walk_shapes(child)
+        elif tag in (_PML_NS + "sp", _PML_NS + "graphicFrame"):
+            yield child
+
+
+def _is_title(sp) -> bool:
+    ph = sp.find(f"{_PML_NS}nvSpPr/{_PML_NS}nvPr/{_PML_NS}ph")
+    return ph is not None and (ph.get("type") or "") in ("title", "ctrTitle")
+
+
 def extract_pptx(path: Path) -> str:
     """Lecture slides, with their structure kept.
 
@@ -192,25 +348,32 @@ def extract_pptx(path: Path) -> str:
     deck = Presentation(str(path))
     slides = []
     for n, slide in enumerate(deck.slides, 1):
+        tree = slide._element.find(
+            f"{_PML_NS}cSld/{_PML_NS}spTree")
+        shapes = list(_walk_shapes(tree)) if tree is not None else []
+
         title = ""
-        try:
-            if slide.shapes.title is not None:
-                title = (slide.shapes.title.text or "").strip()
-        except Exception:
-            pass
+        for sp in shapes:
+            if sp.tag == _PML_NS + "sp" and _is_title(sp):
+                body = sp.find(_PML_NS + "txBody")
+                if body is not None:
+                    title = _body_text(body)
+                break
 
         lines, rows = [], []
-        for shape in slide.shapes:
+        for sp in shapes:
             try:
-                if shape.has_table:
-                    for row in shape.table.rows:
-                        cells = [(c.text or "").strip().replace("\n", " ") for c in row.cells]
+                if sp.tag == _PML_NS + "graphicFrame":
+                    for tr in sp.iter(_DRAW_NS + "tr"):
+                        cells = [_body_text(tc).replace("\n", " ")
+                                 for tc in tr.findall(_DRAW_NS + "tc")]
                         if any(cells):
                             rows.append("| " + " | ".join(cells) + " |")
                     continue
-                if not shape.has_text_frame:
+                body = sp.find(_PML_NS + "txBody")
+                if body is None:
                     continue
-                text = (shape.text_frame.text or "").strip()
+                text = _body_text(body)
                 # The title is already the heading; repeating it reads as a
                 # duplicate bullet and the model treats it as emphasis.
                 if not text or text == title:
