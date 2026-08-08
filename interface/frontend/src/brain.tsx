@@ -37,6 +37,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { obsidianHref } from "./api";
 import type { Graph } from "./api";
+import { ITERS, cloudRadius, hash, mulberry32, relax, seedPositions } from "./layout";
+import type { LayoutRequest } from "./layout";
 import { channels, useTheme } from "./theme";
 import type { BrainPalette } from "./theme";
 
@@ -81,20 +83,6 @@ const FILL = 1.35;
  *  than distorted. */
 const STEP_PX = 64;
 
-function hash(s: string): number {
-  let h = 2166136261;
-  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
-  return h >>> 0;
-}
-function mulberry32(seed: number) {
-  return () => {
-    seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
-    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
 /** The layout's inputs, hashed — node ids (which seed every start position) and
  *  the edge list (which springs pull on). Nothing else can move a star.
  *
@@ -116,6 +104,65 @@ function signature(g: Graph): number {
     h ^= b; h = Math.imul(h, 16777619);
   }
   return h >>> 0;
+}
+
+/* -------------------------------------------------------------- layout cache */
+
+/** The layout is deterministic — the same ids and links always relax to
+ *  bit-identical positions, which is exactly what `signature` above already
+ *  measures. So the second time you open the dashboard on an unchanged vault
+ *  there is nothing to compute: the answer is on disk.
+ *
+ *  This is the cheapest of the three layout fixes and the one that matters
+ *  most in daily use, because the common case is not a vault that changed
+ *  shape — it is a reload. The worker covers the case where it *did* change;
+ *  this covers every other case, at ~7KB of localStorage per 476 notes.
+ *
+ *  Versioned in the key: if the algorithm's constants are ever tuned, stale
+ *  positions must not be resurrected from a previous build. Bump `v1`. */
+const LAYOUT_KEY = "sigma.brain.layout.v1";
+
+function b64encode(f: Float32Array): string {
+  const b = new Uint8Array(f.buffer, f.byteOffset, f.byteLength);
+  let s = "";
+  const CH = 0x8000;                       // chunked: apply() blows the stack on big arrays
+  for (let i = 0; i < b.length; i += CH) {
+    s += String.fromCharCode(...b.subarray(i, i + CH));
+  }
+  return btoa(s);
+}
+
+function b64decode(s: string): Float32Array {
+  const bin = atob(s);
+  const b = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) b[i] = bin.charCodeAt(i);
+  return new Float32Array(b.buffer);
+}
+
+/** Cached positions for this exact graph, or null. Every failure path returns
+ *  null and recomputes: a cache that throws is worse than no cache, and
+ *  localStorage throws for reasons that have nothing to do with us (private
+ *  mode, quota, a corrupt value from a half-written previous session). */
+function cachedLayout(sig: number, n: number): Float32Array | null {
+  try {
+    const raw = localStorage.getItem(LAYOUT_KEY);
+    if (!raw) return null;
+    const rec = JSON.parse(raw) as { sig: number; n: number; pos: string };
+    if (rec.sig !== sig || rec.n !== n) return null;
+    const pos = b64decode(rec.pos);
+    // Length is checked rather than trusted: a truncated value would otherwise
+    // pile every missing star at the origin. Truncation arrives two ways and
+    // both have to land on null — a byte count that is not a multiple of four
+    // throws inside `new Float32Array` and is caught below, and one that is
+    // survives the constructor and is caught here.
+    return pos.length === n * 3 ? pos : null;
+  } catch { return null; }
+}
+
+function cacheLayout(sig: number, n: number, pos: Float32Array): void {
+  try {
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify({ sig, n, pos: b64encode(pos) }));
+  } catch { /* quota or private mode — the layout still ran, it just won't persist */ }
 }
 
 /* --------------------------------------------------------------- glow sprites */
@@ -167,6 +214,24 @@ const EDGE_STEPS = 8;
  *  1.7. Anything outside is clamped into an end bucket rather than dropped. */
 const EDGE_FAR = 0.5, EDGE_NEAR = 1.8;
 
+/** How far a star at the cloud's edge may slide, in CSS pixels, before the
+ *  cached edge layer is redrawn.
+ *
+ *  Edges are the largest single cost in the frame and the fastest-growing —
+ *  they outran the node count as the vault filled in (4.1x against 3.5x). They
+ *  are also almost static: ambient drift is 0.000045 rad/ms, which is 2.6° a
+ *  *minute*, so between one frame and the next the outermost star moves about
+ *  0.3px. Stroking 2,734 segments to move them a third of a pixel is the
+ *  clearest waste in the scene. Below this threshold the layer is blitted
+ *  instead — measured 0.021ms against 0.488ms.
+ *
+ *  Expressed in pixels rather than as a frame count on purpose: mouse parallax
+ *  turns the camera far faster than drift does, and a frame count would let
+ *  the edges visibly lag the stars exactly when you are moving the cursor. In
+ *  pixels, the same rule rebuilds every frame while you move and roughly every
+ *  third frame while you don't. */
+const EDGE_SLACK_PX = 0.75;
+
 /** The quantised strokes for one palette. Still hoisted out of the frame —
  *  which was the whole point — but now keyed by theme rather than by module
  *  load, and built at most once per palette. Six themes means at most six of
@@ -200,71 +265,17 @@ function bucket(v: number, lo: number, hi: number): number {
   return u <= 0 ? 0 : u >= 1 ? EDGE_STEPS - 1 : (u * EDGE_STEPS) | 0;
 }
 
-/** 3D force layout: repulsion, springs, centre gravity. Seeded from note ids,
- *  so the sky looks the same on every visit.
- *
- *  Split into seed + relax so the 220 iterations can be spread across frames.
- *  In one go it is ~4.4M pair evaluations — a 100–200ms main-thread block that
- *  used to hide behind a fullscreen overlay's fade and now lands squarely in
- *  the dashboard's first paint, which is exactly where a hitch is most visible.
- */
-const ITERS = 220;
-/** Layout work per tick, as a time budget rather than a fixed iteration count.
- *  A fixed count is a fixed *fraction* of an O(n²) cost, so the freeze it buys
- *  grows with the vault — 22 iterations is a few ms at this size and would be
- *  hundreds at a thousand notes, i.e. the same total work delivered in hostile
- *  lumps. A budget keeps each tick short and simply uses more of them. */
+/* The layout itself moved to layout.ts, so the worker and the fallback below
+   run one implementation rather than two copies of a seeded algorithm whose
+   whole value is that it is reproducible. What stays here is the *scheduling*
+   of it: cache, then worker, then — only if a worker cannot be built — the
+   original chunked main-thread path. */
+
+/** Layout work per tick on the fallback path, as a time budget rather than a
+ *  fixed iteration count. A fixed count is a fixed *fraction* of an O(n²)
+ *  cost, so the freeze it buys grows with the vault. A budget keeps each tick
+ *  short and simply uses more of them. */
 const CHUNK_MS = 8;
-
-function seed(g: Graph): { pos: Float32Array; vel: Float32Array } {
-  const n = g.nodes.length;
-  const pos = new Float32Array(n * 3);
-  const vel = new Float32Array(n * 3);
-  for (let i = 0; i < n; i++) {
-    const rnd = mulberry32(hash(g.nodes[i].id));
-    pos[i * 3] = (rnd() - 0.5) * 420;
-    pos[i * 3 + 1] = (rnd() - 0.5) * 420;
-    pos[i * 3 + 2] = (rnd() - 0.5) * 420;
-  }
-  return { pos, vel };
-}
-
-function relax(g: Graph, pos: Float32Array, vel: Float32Array, iters: number) {
-  const n = g.nodes.length;
-  for (let iter = 0; iter < iters; iter++) {
-    for (let i = 0; i < n; i++) {
-      for (let j = i + 1; j < n; j++) {
-        const dx = pos[i * 3] - pos[j * 3];
-        const dy = pos[i * 3 + 1] - pos[j * 3 + 1];
-        const dz = pos[i * 3 + 2] - pos[j * 3 + 2];
-        const d2 = dx * dx + dy * dy + dz * dz + 1;
-        if (d2 > 62500) continue;
-        const g = 620 / (d2 * Math.sqrt(d2));   // one sqrt, not six
-        vel[i * 3] += dx * g; vel[j * 3] -= dx * g;
-        vel[i * 3 + 1] += dy * g; vel[j * 3 + 1] -= dy * g;
-        vel[i * 3 + 2] += dz * g; vel[j * 3 + 2] -= dz * g;
-      }
-    }
-    for (const [a, b] of g.links) {
-      const dx = pos[b * 3] - pos[a * 3];
-      const dy = pos[b * 3 + 1] - pos[a * 3 + 1];
-      const dz = pos[b * 3 + 2] - pos[a * 3 + 2];
-      const d = Math.sqrt(dx * dx + dy * dy + dz * dz) + 0.01;
-      const f = (d - 72) * 0.012;
-      vel[a * 3] += dx / d * f; vel[b * 3] -= dx / d * f;
-      vel[a * 3 + 1] += dy / d * f; vel[b * 3 + 1] -= dy / d * f;
-      vel[a * 3 + 2] += dz / d * f; vel[b * 3 + 2] -= dz / d * f;
-    }
-    for (let i = 0; i < n; i++) {
-      vel[i * 3] -= pos[i * 3] * 0.004;
-      vel[i * 3 + 1] -= pos[i * 3 + 1] * 0.004;
-      vel[i * 3 + 2] -= pos[i * 3 + 2] * 0.004;
-      pos[i * 3] += (vel[i * 3] *= 0.82);
-      pos[i * 3 + 1] += (vel[i * 3 + 1] *= 0.82);
-      pos[i * 3 + 2] += (vel[i * 3 + 2] *= 0.82);
-    }
-  }
-}
 
 /** Interstellar dust: parallax depth cues, so camera drift reads as motion
  *  through a volume rather than a flat picture rotating. */
@@ -288,7 +299,41 @@ type World = {
   byBase: Map<string, number>;         // basename fallback — ambiguous, last wins
   edgesOf: Map<number, [number, number][]>;
   fires: Map<number, number>;          // node idx -> performance.now() of firing
+  /** Facts the frame loop reads per node, pre-chewed. See `facts()`. */
+  mtimeMs: Float64Array;
+  noSyncIdx: Int32Array;
+  /** Extent of the relaxed cloud, for the edge layer's staleness test. */
+  radius: number;
 };
+
+/** The two per-node facts the draw loop needs as numbers rather than as the
+ *  strings and booleans the API sends.
+ *
+ *  `mtime` arrives as an ISO string, and the week filter used to call
+ *  `new Date(node.mtime).getTime()` inside the star loop *and* again inside
+ *  the ring loop — 952 date parses every frame at this vault's size, ~0.6ms of
+ *  a 16.7ms budget spent re-deriving a number that changes at most once every
+ *  five minutes. Parsed once here instead.
+ *
+ *  `noSyncIdx` is the same argument in its cheaper form: the ring pass walked
+ *  all 476 nodes to draw 17 rings.
+ *
+ *  Both are rebuilt when the poll swaps fresher data into an unchanged world —
+ *  `mtime` and `no_sync` are exactly the two fields that change without moving
+ *  a star, which is the whole reason that path exists. */
+function facts(g: Graph): { mtimeMs: Float64Array; noSyncIdx: Int32Array } {
+  const n = g.nodes.length;
+  const mtimeMs = new Float64Array(n);
+  const ns: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const m = g.nodes[i].mtime;
+    // -Infinity, not 0: a note with no mtime must fail "changed this week"
+    // rather than sort as 1970 and pass some future "older than" filter.
+    mtimeMs[i] = m ? new Date(m).getTime() : -Infinity;
+    if (g.nodes[i].no_sync) ns.push(i);
+  }
+  return { mtimeMs, noSyncIdx: Int32Array.from(ns) };
+}
 
 export default function Brain({ graph, vault, fireRef, filter }: {
   /** Fetched by App, like every other panel's data. The brain is a renderer. */
@@ -354,6 +399,13 @@ export default function Brain({ graph, vault, fireRef, filter }: {
       // five-minute poll; relaying here would reshuffle a sky the reader has
       // already learned in order to arrive at the same picture.
       world.current.g = g;
+      // The derived facts have to come with it. Leaving them behind would pin
+      // the week filter and the bronze rings to whatever was true when the
+      // sky was first built, which is precisely the data this path exists to
+      // refresh — and it would fail silently, by showing a stale answer.
+      const f = facts(g);
+      world.current.mtimeMs = f.mtimeMs;
+      world.current.noSyncIdx = f.noSyncIdx;
       redrawRef.current?.();
       return;
     }
@@ -371,48 +423,90 @@ export default function Brain({ graph, vault, fireRef, filter }: {
       (edgesOf.get(b) ?? edgesOf.set(b, []).get(b)!).push([a, b]);
     }
 
-    // The layout runs in chunks across frames rather than in one block. Done
-    // in one go it is a 100–200ms freeze at exactly the moment the dashboard
-    // is painting for the first time — the single most visible hitch the boot
-    // had. Nothing is drawn until it finishes: a sky that visibly settles
-    // would contradict this view's one promise, that motion means something
-    // happened.
-    const { pos, vel } = seed(g);
-    let iter = 0;
+    // Three ways to get positions, cheapest first. Nothing is drawn until one
+    // of them lands: a sky that visibly settles would contradict this view's
+    // one promise, that motion means something happened.
     let cancelled = false;
     let timer = 0;
+    let worker: Worker | null = null;
 
-    const finish = () => {
+    const finish = (pos: Float32Array) => {
+      if (cancelled) return;
       // Phase from position, not from index: neighbours in space breathe
       // nearly in step, so the sky shows slow travelling swells the way
       // cortex does, instead of 200 independently twinkling stars.
-      const phase = new Float32Array(g.nodes.length);
-      for (let i = 0; i < g.nodes.length; i++) {
+      const n = g.nodes.length;
+      const phase = new Float32Array(n);
+      for (let i = 0; i < n; i++) {
         phase[i] = (pos[i * 3] + pos[i * 3 + 1] * 0.6 + pos[i * 3 + 2] * 0.3) * 0.006;
       }
+      const f = facts(g);
       world.current = {
         g, pos, phase, motes: dust(hash(vault || "sigma")),
         byId, byBase, edgesOf, fires: new Map(),
+        mtimeMs: f.mtimeMs, noSyncIdx: f.noSyncIdx,
+        radius: cloudRadius(pos, n),
       };
       setReady(true);
     };
 
-    const step = () => {
-      if (cancelled) return;
-      // Spend a budget, not a count — see CHUNK_MS. One iteration at a time so
-      // the check is exact rather than a guess at how long a batch will take.
-      const t0 = performance.now();
-      do {
-        relax(g, pos, vel, 1);
-        iter++;
-      } while (iter < ITERS && performance.now() - t0 < CHUNK_MS);
-      if (iter >= ITERS) { finish(); return; }
-      // setTimeout, not rAF: a background tab suspends rAF entirely, and this
-      // dashboard is exactly the kind of thing you open in one and switch to
-      // later. Slower there, but it finishes.
+    // 1. Cached. Deterministic layout + unchanged signature means the answer
+    //    from last time is the answer this time, exactly.
+    const hit = cachedLayout(sig, g.nodes.length);
+    if (hit) { finish(hit); return; }
+
+    const req: LayoutRequest = { ids: g.nodes.map(n => n.id), links: g.links };
+
+    // 2. A worker. The layout is ~650ms at 476 notes and quadratic in them;
+    //    off-thread it costs the dashboard nothing at any size.
+    try {
+      worker = new Worker(new URL("./layout-worker.ts", import.meta.url), { type: "module" });
+      worker.onmessage = (e: MessageEvent<Float32Array>) => {
+        const pos = e.data;
+        cacheLayout(sig, g.nodes.length, pos);
+        finish(pos);
+        worker?.terminate();
+        worker = null;
+      };
+      // A worker that fails to start must not leave the sky permanently empty.
+      // Falling back costs a stutter; not falling back costs the whole view.
+      worker.onerror = () => {
+        worker?.terminate();
+        worker = null;
+        if (!cancelled) chunked();
+      };
+      worker.postMessage(req);
+      // clearTimeout too: onerror may have already handed off to the chunked
+      // path, and that one owns a timer this cleanup would otherwise leave
+      // running until its next `cancelled` check.
+      return () => { cancelled = true; worker?.terminate(); clearTimeout(timer); };
+    } catch {
+      worker = null;                      // no worker support — fall through
+    }
+
+    // 3. The original main-thread path, in time-budgeted chunks. Reached only
+    //    where a module worker cannot be constructed at all.
+    function chunked() {
+      const { pos, vel } = seedPositions(req.ids);
+      let iter = 0;
+      const step = () => {
+        if (cancelled) return;
+        // Spend a budget, not a count — see CHUNK_MS. One iteration at a time
+        // so the check is exact rather than a guess at how long a batch takes.
+        const t0 = performance.now();
+        do {
+          relax(req.links, req.ids.length, pos, vel, 1);
+          iter++;
+        } while (iter < ITERS && performance.now() - t0 < CHUNK_MS);
+        if (iter >= ITERS) { cacheLayout(sig, req.ids.length, pos); finish(pos); return; }
+        // setTimeout, not rAF: a background tab suspends rAF entirely, and this
+        // dashboard is exactly the kind of thing you open in one and switch to
+        // later. Slower there, but it finishes.
+        timer = setTimeout(step, 0);
+      };
       timer = setTimeout(step, 0);
-    };
-    timer = setTimeout(step, 0);
+    }
+    chunked();
     return () => { cancelled = true; clearTimeout(timer); };
   }, [graph, vault]);
 
@@ -452,6 +546,47 @@ export default function Brain({ graph, vault, fireRef, filter }: {
     let awake = !document.hidden;
     /** Scratch for `project` below — one triple for the whole loop. */
     const P3 = new Float32Array(3);
+
+    /** Neighbours of the hovered node, as a 0/1 mask.
+     *
+     *  The star loop used to answer "is this node adjacent to the hovered
+     *  one?" with `hotEdges.some(...)` — a linear scan of the hovered node's
+     *  edge list, per node, per frame. Against this vault's biggest hub that
+     *  is 476 x 170 = 80,920 closure calls a frame, and both factors grow with
+     *  the vault. It was also the one cost that landed while you were actually
+     *  pointing at something: measured, hovering that hub cost 3.74ms a frame
+     *  against 1.76ms idle. Built once per hover change instead, in O(degree).
+     */
+    let nbFor: number | null = null;
+    let nbMask: Uint8Array | null = null;
+    const neighbours = (hi: number | null, n: number): Uint8Array | null => {
+      if (hi === null) { nbFor = null; return null; }
+      if (nbFor === hi && nbMask && nbMask.length === n) return nbMask;
+      if (!nbMask || nbMask.length !== n) nbMask = new Uint8Array(n);
+      else nbMask.fill(0);
+      for (const [a, b] of world.current!.edgesOf.get(hi) ?? []) {
+        nbMask[a] = 1; nbMask[b] = 1;
+      }
+      nbFor = hi;
+      return nbMask;
+    };
+
+    /* The cached edge layer — see EDGE_SLACK_PX. Effect-local rather than a
+       ref: it is tied to this canvas and this context, and both die with the
+       effect. `edgeKey` is the palette's dim ink, which is the only palette
+       value the layer contains, so a theme switch invalidates it and a switch
+       between two themes that happen to share it correctly does not. */
+    let edgeLayer: HTMLCanvasElement | null = null;
+    let edgeCtx: CanvasRenderingContext2D | null = null;
+    let edgeRotY = NaN, edgeRotX = NaN, edgeKey = "", edgeW = 0, edgeH = 0;
+    let edgeBuckets: Int32Array[] | null = null;
+    const edgeCounts = new Int32Array(EDGE_STEPS);
+    /* Firing edges get their own buckets rather than borrowing the layer's:
+       both can be filled in the same frame, and sharing them would have the
+       fire pass overwrite the layer's bins mid-rebuild. Allocated lazily, so a
+       session where nothing ever fires never pays for them. */
+    let fireBuckets: Int32Array[] | null = null;
+    const fireCounts = new Int32Array(EDGE_STEPS);
 
     const draw = (t: number, animating: boolean) => {
       const w = world.current!;
@@ -535,43 +670,121 @@ export default function Brain({ graph, vault, fireRef, filter }: {
       ctx.globalAlpha = 1;
 
       /* ---- edges ----------------------------------------------------------
-         Collected into one path per colour bucket and stroked once each, rather
-         than a path and a parsed colour string per edge. Compositing is
-         additive here, so the order buckets are drawn in cannot change the
-         result — nothing is lost by leaving the link list's own order behind. */
+         Still one stroke per depth bucket, allocating nothing per edge — but
+         stroked into an offscreen layer that survives across frames and is
+         blitted, rather than rebuilt every frame to move by a third of a
+         pixel. See EDGE_SLACK_PX for why that is safe.
+
+         Compositing is additive here, so the order buckets are drawn in cannot
+         change the result — nothing is lost by leaving the link list's own
+         order behind, and nothing is lost by drawing the lit and firing edges
+         over the top of their own dim copies below. */
       const hi = hover.current;
+      const nb = neighbours(hi, n);
       const hotEdges = hi !== null ? w.edgesOf.get(hi) : undefined;
-      ctx.lineWidth = 1;
-      const dimPaths: (Path2D | undefined)[] = new Array(EDGE_STEPS);
-      const firePaths: (Path2D | undefined)[] = new Array(EDGE_STEPS);
-      let litPath: Path2D | undefined;
-      for (const [a, b] of w.g.links) {
-        const boost = Math.max(fireAge(a), fireAge(b));
-        const lit = hi !== null && (a === hi || b === hi);
-        // Depth-fade edges too, or the far side of the volume reads as a
-        // flat wire cage sitting on top of the near stars.
-        const depth = Math.min(pp[a], pp[b]);
-        let path: Path2D;
-        if (boost > 0) {
-          const s = bucket(boost, 0, 1);
-          path = firePaths[s] ?? (firePaths[s] = new Path2D());
-        } else if (lit) {
-          path = litPath ?? (litPath = new Path2D());
-        } else {
-          const s = bucket(depth, EDGE_FAR, EDGE_NEAR);
-          path = dimPaths[s] ?? (dimPaths[s] = new Path2D());
+      const firing = w.fires.size > 0;
+
+      // Staleness measured as displacement at the cloud's edge, in pixels: a
+      // rotation that moves nothing by a pixel is a rotation nobody can see.
+      const K = w.radius * scale;
+      if (!edgeLayer || edgeW !== cw || edgeH !== ch || edgeKey !== pal.edgeDim
+          || Math.abs(rotY - edgeRotY) * K > EDGE_SLACK_PX
+          || Math.abs(rotX - edgeRotX) * K > EDGE_SLACK_PX) {
+        if (!edgeLayer) {
+          edgeLayer = document.createElement("canvas");
+          edgeCtx = edgeLayer.getContext("2d");
         }
-        path.moveTo(px[a], py[a]);
-        path.lineTo(px[b], py[b]);
+        if (edgeW !== cw || edgeH !== ch) {
+          edgeLayer.width = cw; edgeLayer.height = ch;
+          edgeW = cw; edgeH = ch;
+        }
+        const ec = edgeCtx!;
+        ec.setTransform(cw / W, 0, 0, ch / H, 0, 0);
+        ec.clearRect(0, 0, W, H);
+        ec.globalCompositeOperation = "lighter";
+        ec.lineWidth = 1;
+        // Bucket into reused flat arrays. Path2D per bucket per frame was
+        // measured at 0.488ms against 0.387ms for direct ctx paths, and it
+        // allocated up to seventeen objects a frame on top.
+        const m = w.g.links.length;
+        if (!edgeBuckets || edgeBuckets[0].length < m * 2) {
+          edgeBuckets = [];
+          for (let s = 0; s < EDGE_STEPS; s++) edgeBuckets.push(new Int32Array(m * 2));
+        }
+        edgeCounts.fill(0);
+        for (const [a, b] of w.g.links) {
+          // Depth-fade edges too, or the far side of the volume reads as a
+          // flat wire cage sitting on top of the near stars.
+          const s = bucket(Math.min(pp[a], pp[b]), EDGE_FAR, EDGE_NEAR);
+          const q = edgeBuckets[s];
+          q[edgeCounts[s]++] = a; q[edgeCounts[s]++] = b;
+        }
+        for (let s = 0; s < EDGE_STEPS; s++) {
+          const c = edgeCounts[s];
+          if (!c) continue;
+          const q = edgeBuckets[s];
+          ec.strokeStyle = inks.dim[s];
+          ec.beginPath();
+          for (let k = 0; k < c; k += 2) {
+            ec.moveTo(px[q[k]], py[q[k]]); ec.lineTo(px[q[k + 1]], py[q[k + 1]]);
+          }
+          ec.stroke();
+        }
+        edgeRotY = rotY; edgeRotX = rotX; edgeKey = pal.edgeDim;
       }
-      for (let s = 0; s < EDGE_STEPS; s++) {
-        const p = dimPaths[s];
-        if (p) { ctx.strokeStyle = inks.dim[s]; ctx.stroke(p); }
-      }
-      if (litPath) { ctx.strokeStyle = inks.lit; ctx.stroke(litPath); }
-      for (let s = 0; s < EDGE_STEPS; s++) {
-        const p = firePaths[s];
-        if (p) { ctx.strokeStyle = inks.fire[s]; ctx.stroke(p); }
+      // Identity transform to blit: the layer is already in backing-store
+      // pixels, so the scene transform would scale it a second time.
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.drawImage(edgeLayer, 0, 0);
+      ctx.setTransform(cw / W, 0, 0, ch / H, 0, 0);
+
+      /* Lit and firing edges go over the layer rather than being cut out of
+         it, which is what lets one hover or one fire leave 2,734 cached
+         segments alone. They land on top of their own dim copy, which adds
+         about 0.04 alpha under a 0.34 highlight — measured at 42/255 on the
+         hovered node's own edges, on edges whose whole job that frame is to
+         stand out. */
+      if (hotEdges || firing) {
+        ctx.lineWidth = 1;
+        if (hotEdges) {
+          ctx.strokeStyle = inks.lit;
+          ctx.beginPath();
+          for (const [a, b] of hotEdges) { ctx.moveTo(px[a], py[a]); ctx.lineTo(px[b], py[b]); }
+          ctx.stroke();
+        }
+        if (firing) {
+          // Walk the link list, not each fired node's edge list: an edge
+          // between two notes that fired together belongs to both, and
+          // stroking it once per owner drew it twice — measured at 103/255
+          // brighter than the old renderer on exactly that edge. Taking the
+          // higher of the two ages, once per edge, is what the old pass did.
+          // It costs a pass over every link, but only while something is
+          // actually firing, which is under two seconds at a time.
+          const m = w.g.links.length;
+          if (!fireBuckets || fireBuckets[0].length < m * 2) {
+            fireBuckets = [];
+            for (let s = 0; s < EDGE_STEPS; s++) fireBuckets.push(new Int32Array(m * 2));
+          }
+          fireCounts.fill(0);
+          for (const [a, b] of w.g.links) {
+            const boost = Math.max(fireAge(a), fireAge(b));
+            if (boost <= 0) continue;
+            const s = bucket(boost, 0, 1);
+            const q = fireBuckets[s];
+            q[fireCounts[s]++] = a; q[fireCounts[s]++] = b;
+          }
+          for (let s = 0; s < EDGE_STEPS; s++) {
+            const c = fireCounts[s];
+            if (!c) continue;
+            const q = fireBuckets[s];
+            ctx.strokeStyle = inks.fire[s];
+            ctx.beginPath();
+            for (let k = 0; k < c; k += 2) {
+              ctx.moveTo(px[q[k]], py[q[k]]); ctx.lineTo(px[q[k + 1]], py[q[k + 1]]);
+            }
+            ctx.stroke();
+          }
+        }
       }
 
       /* ---- axon pulses ---------------------------------------------------
@@ -598,20 +811,23 @@ export default function Brain({ graph, vault, fireRef, filter }: {
       ctx.globalAlpha = 1;
 
       /* ---- stars --------------------------------------------------------- */
+      // Hoisted out of the loop: the filter and its cutoff are the same for
+      // every node, and `Date.now()` inside the loop was being called 476
+      // times to get 476 answers that differ by microseconds.
+      const flt = filterRef.current;
+      const weekCut = Date.now() - 7 * 864e5;
       for (let i = 0; i < n; i++) {
         const node = w.g.nodes[i];
-        const boost = fireAge(i);
+        const boost = firing ? fireAge(i) : 0;
         // The ambient pulse: a slow spatial swell, deliberately gentle and
         // never white — the eye reads it as breathing, not as an event.
         const swell = animating
           ? 0.80 + 0.20 * Math.sin(t / 3400 * Math.PI * 2 + w.phase[i])
           : 0.88;
         const depth = Math.max(0, Math.min(1, (pp[i] - 0.42) / 0.9));
-        const f = filterRef.current;
-        const passes = !f
-          || (f === "week" ? (node.mtime ? Date.now() - new Date(node.mtime).getTime() < 7 * 864e5 : false)
-              : node.bucket === f);
-        const dim = (hi !== null && i !== hi && !hotEdges?.some(([a, b]) => a === i || b === i)
+        const passes = !flt
+          || (flt === "week" ? w.mtimeMs[i] > weekCut : node.bucket === flt);
+        const dim = (hi !== null && i !== hi && nb !== null && !nb[i]
           ? 0.30 : 1) * (passes ? 1 : 0.12);
 
         const r = (1.7 + Math.sqrt(node.inlinks) * 1.05) * pp[i] + boost * 6;
@@ -632,17 +848,17 @@ export default function Brain({ graph, vault, fireRef, filter }: {
       // Projects, rendered in the only way this view has room for.
       ctx.lineWidth = 1;
       ctx.strokeStyle = pal.noSync;
-      for (let i = 0; i < n; i++) {
-        if (!w.g.nodes[i].no_sync) continue;
+      // Over the 17 no-sync nodes, not all 476. The old loop paid for a full
+      // scan — and, under the week filter, a date parse per node — to draw a
+      // handful of rings.
+      for (let k = 0; k < w.noSyncIdx.length; k++) {
+        const i = w.noSyncIdx[k];
         const depth = Math.max(0, Math.min(1, (pp[i] - 0.42) / 0.9));
         // The ring has to obey the filter too. It did not at first, so a
         // filtered-out ProCertus node vanished while its bronze ring stayed at
         // full brightness — a marker floating with nothing under it.
-        const fr = filterRef.current;
-        const rp = !fr
-          || (fr === "week"
-              ? (w.g.nodes[i].mtime ? Date.now() - new Date(w.g.nodes[i].mtime!).getTime() < 7 * 864e5 : false)
-              : w.g.nodes[i].bucket === fr);
+        const rp = !flt
+          || (flt === "week" ? w.mtimeMs[i] > weekCut : w.g.nodes[i].bucket === flt);
         const dim = (hi !== null && i !== hi ? 0.35 : 1) * (rp ? 1 : 0.12);
         const r = (1.7 + Math.sqrt(w.g.nodes[i].inlinks) * 1.05) * pp[i];
         ctx.globalAlpha = Math.min(0.85, (0.30 + 0.55 * depth) * dim);
@@ -671,20 +887,40 @@ export default function Brain({ graph, vault, fireRef, filter }: {
        lets a fire animate through a reduced-motion sky, where nothing else
        would ever repaint.
 
-       There is no rate cap and no frame-time sampling left: while it is
-       animating it paints every frame the display offers. The two things that
-       still stop it are a hidden tab and prefers-reduced-motion, and both are
-       statements that nobody is watching rather than guesses that it is too
-       expensive to continue. */
+       There is no frame-time sampling left: nothing here measures how long a
+       frame took and nothing degrades in response. What there *is* is a fixed
+       ambient rate, which is a different thing from the quality ladder that
+       was removed — a constant, decided once, rather than a reaction to load.
+
+       Full display rate is earned. A fire is in flight, or something changed
+       (`dirty`, which the mouse sets on every move, so parallax never lags the
+       cursor). Otherwise the sky paints at AMBIENT_FPS, because there is
+       nothing in it that resolves faster: drift is 2.6° a minute and the
+       breathing swell is a 3.4s sine. This is the same principle the firing
+       already follows — the file has always said a fire is the one thing that
+       earns full frame rate — applied to the paint rate rather than only to
+       whether it paints at all. On a dashboard left open all day it halves the
+       cost of the one view that is always on screen. */
+    const AMBIENT_FPS = 30;
+    // Minus a few ms of slack: at 60Hz an exact 33.33ms gate lands a hair
+    // short every other frame and drops the real rate to 20fps.
+    const AMBIENT_MS = 1000 / AMBIENT_FPS - 4;
+    let lastPaint = 0;
+
     const loop = (t: number) => {
       raf = requestAnimationFrame(loop);
       if (!awake) return;                       // hidden tab: cost nothing
-      const dt = prev ? Math.min(t - prev, 100) : 16;
-      prev = t;
 
       const hot = t < hotUntil.current;
       const animating = live || hot;
       if (!animating && !dirty) return;         // static and nothing changed
+      if (animating && !hot && !dirty && t - lastPaint < AMBIENT_MS) return;
+
+      // dt spans whatever was skipped, so drift advances at the same rate per
+      // second whether the sky is painting at 30 or at 144.
+      const dt = prev ? Math.min(t - prev, 100) : 16;
+      prev = t;
+      lastPaint = t;
 
       dirty = false;
       if (animating) driftRef.current += dt * 0.000045;
