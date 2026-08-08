@@ -357,5 +357,120 @@ class TestTheDocumentRidesStdin(IntakeBase):
         self.assertNotIn("real lecture prose", seen["brief"])
 
 
+class TestContinuation(IntakeBase):
+    """Finishing a source that ran past one pass's budget.
+
+    The budget is a ceiling on a *pass*, not on a document — otherwise a long
+    deck is silently abandoned at 75% and the notes look complete. Seven CSE-311
+    decks came in at 89% coverage before this existed.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.cov = self.root / "intake.state.json"
+        self.attach = self.vault / "99-Meta" / "Attachments"
+        self.attach.mkdir(parents=True, exist_ok=True)
+        self._budget = intake.TEXT_BUDGET
+        intake.TEXT_BUDGET = 100
+        self.addCleanup(setattr, intake, "TEXT_BUDGET", self._budget)
+
+    def source(self, name, chars, course="CSE-311", cited=True):
+        (self.attach / name).write_text("A" * chars, encoding="utf-8")
+        if cited:
+            # One note per source: a shared filename made the second call
+            # overwrite the first, so only the last source looked cited.
+            note = (self.vault / "02-Areas" / "Academics" / course / "lectures"
+                    / f"{Path(name).stem}-note.md")
+            note.parent.mkdir(parents=True, exist_ok=True)
+            note.write_text(f"# N\n\n> Source: ![[{name}]]\n", encoding="utf-8")
+        return self.attach / name
+
+    def test_a_pass_reads_the_next_budget_not_the_first_one_again(self):
+        full = "".join(str(i % 10) for i in range(250))
+        first, t1 = intake.slice_of(full, 0)
+        second, t2 = intake.slice_of(full, 100)
+        third, t3 = intake.slice_of(full, 200)
+        self.assertEqual((len(first), t1), (100, True))
+        self.assertEqual((len(second), t2), (100, True))
+        self.assertEqual((len(third), t3), (50, False))
+        self.assertEqual(first + second + third, full)
+
+    def test_only_sources_with_unread_material_are_pending(self):
+        self.source("long.txt", 250)
+        self.source("short.txt", 60)
+        keys = [p["key"] for p in intake.pending("CSE-311", self.cov)]
+        self.assertIn("CSE-311/long.txt", keys)
+        self.assertNotIn("CSE-311/short.txt", keys)
+
+    def test_a_source_with_no_notes_is_not_this_courses_problem(self):
+        """Attachments are a flat folder shared by every course; a deck belongs
+        to the course whose notes cite it."""
+        self.source("orphan.txt", 250, cited=False)
+        self.assertEqual(intake.pending("CSE-311", self.cov), [])
+
+    def test_coverage_with_no_record_is_seeded_from_history(self):
+        """The old code always read exactly TEXT_BUDGET, so that is the honest
+        default — and it means the first --continue needs no migration."""
+        self.source("long.txt", 250)
+        p = intake.pending("CSE-311", self.cov)[0]
+        self.assertEqual((p["read_to"], p["total"]), (100, 250))
+
+    def test_a_recorded_pass_resumes_from_where_it_stopped(self):
+        self.source("long.txt", 250)
+        self.cov.write_text(json.dumps(
+            {"CSE-311/long.txt": {"read_to": 200, "total": 250}}), encoding="utf-8")
+        p = intake.pending("CSE-311", self.cov)[0]
+        self.assertEqual(p["read_to"], 200)
+
+    def test_a_fully_read_source_disappears_from_pending(self):
+        self.source("long.txt", 250)
+        self.cov.write_text(json.dumps(
+            {"CSE-311/long.txt": {"read_to": 250, "total": 250}}), encoding="utf-8")
+        self.assertEqual(intake.pending("CSE-311", self.cov), [])
+
+    def test_a_failed_pass_does_not_advance_coverage(self):
+        """Otherwise the part nobody read is skipped forever — the same rule
+        that keeps a source in the drop folder when its notes did not land."""
+        self.source("long.txt", 250)
+
+        async def fake(*a, **k):
+            return {"ok": False, "proposals": 0, "files": [], "error": "boom"}
+
+        orig, intake.continue_one = intake.continue_one, fake
+        try:
+            intake.run_continue("CSE-311", cov_path=self.cov)
+        finally:
+            intake.continue_one = orig
+        self.assertFalse(self.cov.exists() and json.loads(
+            self.cov.read_text(encoding="utf-8")))
+
+    def test_a_pass_that_found_nothing_new_still_advances(self):
+        """A section that genuinely adds nothing is a correct outcome; not
+        advancing would loop on it forever."""
+        self.source("long.txt", 250)
+
+        async def fake(src, course, start, total, existing, model="sonnet"):
+            return {"ok": True, "proposals": 0, "files": [], "summary": "",
+                    "read_to": start + 100, "total": total}
+
+        orig, intake.continue_one = intake.continue_one, fake
+        try:
+            intake.run_continue("CSE-311", cov_path=self.cov)
+        finally:
+            intake.continue_one = orig
+        rec = json.loads(self.cov.read_text(encoding="utf-8"))["CSE-311/long.txt"]
+        self.assertEqual(rec["read_to"], 200)
+
+    def test_the_continuation_brief_names_what_already_exists(self):
+        brief = intake.build_continue_brief(
+            Path("topic02-proofs.pdf"), "CSE-311", 60000, 79793, 79793,
+            ["02-Areas/Academics/CSE-311/lectures/mathematical-induction.md"])
+        self.assertIn("continuation", brief.lower())
+        self.assertIn("60,000", brief)
+        self.assertIn("mathematical-induction.md", brief)
+        # still an instruction sheet, not a document — the ceiling still applies
+        self.assertLess(len(f"{intake.RULES}\n\n{brief}"), CMDLINE_MAX)
+
+
 if __name__ == "__main__":
     unittest.main()

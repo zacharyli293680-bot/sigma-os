@@ -239,6 +239,8 @@ def cmd_intake(a):
         args.append("--keep")
     if a.max:
         args += ["--max", a.max]
+    if getattr(a, "cont", False):
+        args.append("--continue")
     # needs_sdk: unlike the other verbs this one calls a model, so it has to run
     # on the interpreter that has the agent SDK.
     return run(INTAKE, *args, needs_sdk=True)
@@ -418,11 +420,14 @@ def build_parser():
     ns = n.add_subparsers(dest="intake_cmd")
     ns.add_parser("status", help="what is waiting in the drop folder")
     nr = ns.add_parser("run", help="read the drop folder and write the notes")
-    for p in (n, nr):        # `sigma intake` and `sigma intake run` take the same flags
+    nc = ns.add_parser("continue",
+                       help="finish sources that ran past one pass's budget")
+    for p in (n, nr, nc):    # every intake verb takes the same flags
         p.add_argument("--course", default="", help="only this course code")
         p.add_argument("--dry-run", action="store_true", help="name the files; call no model")
         p.add_argument("--keep", action="store_true", help="leave sources in the drop folder")
         p.add_argument("--max", metavar="N")
+    nc.set_defaults(cont=True)
 
     g = sub.add_parser("devlog", help="write recent commits into a project hub's dev log")
     gs = g.add_subparsers(dest="devlog_cmd")

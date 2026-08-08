@@ -39,6 +39,8 @@ makes it trustworthy.
 import argparse
 import asyncio
 import datetime
+import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -61,7 +63,17 @@ SUPPORTED = {".pdf", ".pptx", ".md", ".txt"}
 # One document's extracted text, capped. A 200-page textbook would otherwise
 # blow the window on a single call and fail the whole run. Truncation is
 # reported, never silent — the note that comes back says it saw a prefix.
+#
+# The cap is per *pass*, not per document: `--continue` reads the next
+# TEXT_BUDGET characters of a source that ran past it, so a long deck ends up
+# fully covered without any single call carrying it all.
 TEXT_BUDGET = 60_000
+
+# How much of each source has been read, keyed "<COURSE>/<filename>".
+# `.state.json` so .gitignore's existing `runtime/*.state.json` rule covers it —
+# this names course files and is machine-local operating state, not a record.
+# The notes themselves are the record; losing this costs a re-read, not work.
+COVERAGE_PATH = _HERE / "intake.state.json"
 
 # Generous: reading a slide deck and drafting several linked notes is more work
 # than any scheduled specialist does in one turn.
@@ -246,9 +258,14 @@ def extract_pptx(path: Path) -> str:
     return "\n".join(out).strip()
 
 
-def extract(path: Path) -> tuple:
-    """(text, truncated). PDFs go through the existing converter's extractor —
-    the one place that knows the markitdown -> pdftotext fallback."""
+def extract_all(path: Path) -> str:
+    """The whole extraction, with no budget applied.
+
+    Split out from `extract` so a caller that needs both the slice and the total
+    length — every continuation does — pays for one extraction rather than two.
+    PDFs go through the existing converter's extractor, the one place that knows
+    the markitdown -> pdftotext fallback.
+    """
     suffix = path.suffix.lower()
     if suffix == ".pdf":
         sys.path.insert(0, str(_HERE.parent / "tools"))
@@ -273,10 +290,124 @@ def extract(path: Path) -> tuple:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             text = ""
-    text = (text or "").strip()
-    if len(text) > TEXT_BUDGET:
-        return text[:TEXT_BUDGET], True
-    return text, False
+    return (text or "").strip()
+
+
+def slice_of(full: str, offset: int = 0) -> tuple:
+    """(text, truncated) for one pass over an already-extracted document."""
+    chunk = full[offset:offset + TEXT_BUDGET]
+    return chunk, offset + len(chunk) < len(full)
+
+
+def extract(path: Path, offset: int = 0) -> tuple:
+    """(text, truncated) — one pass's worth of `path`, starting at `offset`.
+
+    `offset` is what turns the budget from a ceiling on a *document* into a
+    ceiling on a *pass*, which is how a deck too long for one read gets finished
+    rather than abandoned at 75%. Truncation stays reported, never silent.
+    """
+    return slice_of(extract_all(path), offset)
+
+
+# --------------------------------------------------------------------------
+# coverage: how much of a source has been read
+# --------------------------------------------------------------------------
+
+def load_coverage(path=None) -> dict:
+    try:
+        d = json.loads(Path(path or COVERAGE_PATH).read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_coverage(cov: dict, path=None) -> bool:
+    p = Path(path or COVERAGE_PATH)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    try:
+        tmp.write_text(json.dumps(cov, indent=2, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, p)
+        return True
+    except (OSError, TypeError):
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        return False
+
+
+CITE_RE = None      # compiled lazily; `re` is not otherwise needed here
+
+
+def citations(course: str) -> dict:
+    """{source filename: [note paths]} for one course, from one pass over it.
+
+    Intake makes every note carry `> Source: ![[<file>]]`, so the notes
+    themselves record which source they came from — no sidecar is needed for
+    the question that actually matters, which is *what already exists* for a
+    continuation to avoid duplicating.
+
+    One read per note rather than one per (note, attachment) pair: the naive
+    shape is quadratic and this runs over every course's whole folder.
+    """
+    global CITE_RE
+    if CITE_RE is None:
+        import re
+        CITE_RE = re.compile(r"!\[\[([^\]|]+?)\]\]")
+    folder = COURSES_ROOT / course
+    out: dict = {}
+    if not folder.is_dir():
+        return out
+    for p in sorted(folder.rglob("*.md")):
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        rel = p.relative_to(VAULT).as_posix()
+        for name in set(CITE_RE.findall(text)):
+            out.setdefault(name.strip(), []).append(rel)
+    return out
+
+
+def pending(course: str | None = None, cov_path=None) -> list:
+    """Sources with material nobody has read yet.
+
+    An attachment with notes but no coverage record was taken in before this
+    existed, and the old code always read exactly TEXT_BUDGET — so that is the
+    honest default rather than a guess. It also means the first `--continue`
+    seeds its own state from history instead of needing a migration.
+    """
+    cov = load_coverage(cov_path)
+    out = []
+    if not ATTACH.is_dir() or not COURSES_ROOT.is_dir():
+        return out
+    courses = [course] if course else [d.name for d in sorted(COURSES_ROOT.iterdir())
+                                       if d.is_dir()]
+    for c in courses:
+        cites = citations(c)
+        if not cites:
+            continue
+        for src in sorted(ATTACH.iterdir()):
+            if not src.is_file() or src.suffix.lower() not in SUPPORTED:
+                continue
+            cited = cites.get(src.name)
+            if not cited:
+                continue                    # not this course's source
+            key = f"{c}/{src.name}"
+            rec = cov.get(key) or {}
+            # One full extraction to learn the size, recorded after the first
+            # pass so later runs do not pay for it again.
+            total = int(rec.get("total") or _full_length(src))
+            read_to = int(rec.get("read_to") or min(TEXT_BUDGET, total))
+            if read_to < total:
+                out.append({"source": src, "course": c, "key": key,
+                            "read_to": read_to, "total": total, "notes": cited})
+    return out
+
+
+def _full_length(path: Path) -> int:
+    """Length of the whole extraction, ignoring the per-pass budget."""
+    return len(extract_all(path))
 
 
 def course_context(course: str) -> str:
@@ -406,9 +537,149 @@ def build_material(text: str) -> str:
     return f"## The source document\n\n{text}"
 
 
+CONTINUE_NOTE = """
+## This is a continuation, not a fresh document
+
+`{name}` was too long for one pass. Characters **{start:,}–{end:,} of {total:,}**
+are below; everything before {start:,} has already been turned into notes, and
+those notes exist now:
+
+{existing}
+
+So:
+
+- **Write notes only for material the earlier part did not cover.** If this
+  section finishes an idea those notes began, say so by *editing nothing* and
+  instead proposing a new note only when the idea genuinely stands on its own.
+- **Link to the existing notes** by name instead of restating them. They are
+  real notes; `[[propositional-logic]]`-style links to the list above resolve.
+- The slides may open mid-sentence or repeat a summary slide. If this section
+  turns out to hold nothing that is not already covered, **propose nothing and
+  say so** — that is a correct outcome here, not a failure.
+- The `number:` frontmatter field is the lecture/topic number, which does not
+  change just because this is a later part of the same deck.
+"""
+
+
+def build_continue_brief(path: Path, course: str, start: int, end: int,
+                         total: int, existing: list) -> str:
+    """The ordinary brief plus what makes a continuation different."""
+    listed = "\n".join(f"- `{e}`" for e in existing) or "- _(none found)_"
+    return (build_brief(path, course, truncated=end < total)
+            + "\n\n"
+            + CONTINUE_NOTE.format(name=path.name, start=start, end=end,
+                                   total=total, existing=listed).strip())
+
+
 # --------------------------------------------------------------------------
 # the run
 # --------------------------------------------------------------------------
+
+async def continue_one(src: Path, course: str, start: int, total: int,
+                       existing: list, model: str = "sonnet") -> dict:
+    """Read the next TEXT_BUDGET characters of a source already partly taken in.
+
+    The source is the copy in `99-Meta/Attachments/` — the drop-folder original
+    is gone by now, which is exactly why intake archives it before reading. No
+    new write path and no new applier rules: this produces `propose_change`
+    calls like any other intake, so a continuation that re-derives a note that
+    already exists is *held* rather than overwriting it. That safety net is what
+    makes it acceptable for the model to judge overlap.
+    """
+    import fleet as fl
+
+    full = extract_all(src)
+    text, truncated = slice_of(full, start)
+    if len(text) < 200:
+        return {"ok": True, "proposals": 0, "files": [],
+                "summary": f"only {len(text)} characters left after {start:,} — "
+                           f"nothing worth a pass"}
+
+    end = start + len(text)
+    spec = sp.Specialist(
+        key="intake", title="Study intake", cadence="manual",
+        model=model, effort="medium",
+        brief=build_continue_brief(src, course, start, end, total, existing),
+        max_turns=44)
+    r = await fl.run_one(spec, timeout_s=TIMEOUT_S, rules=RULES,
+                         material=build_material(text))
+    r["read_to"] = end
+    r["total"] = total
+    return r
+
+
+def run_continue(only_course: str | None = None, dry_run: bool = False,
+                 limit: int = 0, model: str = "sonnet", cov_path=None) -> int:
+    """Finish every source that ran past one pass.
+
+    Coverage advances only on a run that actually came back ok. A pass that
+    failed leaves the record where it was, so re-running resumes from the same
+    place instead of skipping the part nobody read — the same principle as
+    leaving a source in the drop folder when its notes did not land.
+    """
+    todo = pending(only_course, cov_path)
+    if not todo:
+        log("every source is fully read")
+        return 0
+
+    if limit and len(todo) > limit:
+        log(f"  {len(todo)} source(s) unfinished; taking the first {limit}")
+        todo = todo[:limit]
+
+    log(f"{len(todo)} source(s) with material still unread")
+    for t in todo:
+        pct = 100.0 * t["read_to"] / max(1, t["total"])
+        log(f"  {t['key']}: read to {t['read_to']:,} of {t['total']:,} ({pct:.0f}%)"
+            f" — {t['total'] - t['read_to']:,} left")
+    if dry_run:
+        return 0
+
+    import applier
+    made = failed = 0
+    for t in todo:
+        log(f"-> {t['key']} from {t['read_to']:,}")
+        try:
+            r = asyncio.run(continue_one(t["source"], t["course"], t["read_to"],
+                                         t["total"], t["notes"], model=model))
+        except Exception as e:
+            log(f"   failed — {type(e).__name__}: {e}")
+            failed += 1
+            continue
+        if not r.get("ok"):
+            log(f"   failed — {r.get('error')}")
+            failed += 1
+            continue
+
+        applied = []
+        try:
+            applied = applier.apply_run(r["files"], actor="intake")
+        except Exception as e:
+            log(f"   proposals written but applying failed: {type(e).__name__}: {e}")
+        landed = [a for a in applied if a.get("action") in ("create", "update")]
+        held = [a for a in applied if a.get("action") == "held"]
+        log(f"   {r.get('proposals', 0)} note(s) proposed, {len(landed)} applied"
+            + (f", {len(held)} held" if held else ""))
+        for a in landed:
+            log(f"      {a.get('target') or a.get('proposal')}")
+        for a in held:
+            log(f"      HELD {a.get('target') or a.get('proposal')} — {a.get('reason')}")
+        if r.get("summary"):
+            log(f"   {' '.join(str(r['summary']).split())[:200]}")
+
+        # Coverage advances even when this pass proposed nothing: the
+        # characters *were* read, and a section that genuinely added nothing new
+        # is a correct outcome. Not advancing would loop on it forever.
+        cov = load_coverage(cov_path)
+        cov[t["key"]] = {"read_to": int(r.get("read_to") or t["read_to"]),
+                         "total": t["total"],
+                         "last": datetime.date.today().isoformat()}
+        save_coverage(cov, cov_path)
+        made += 1
+
+    log(f"continue finished: {made} pass(es)"
+        + (f", {failed} failed" if failed else ""))
+    return 1 if failed else 0
+
 
 async def intake_one(path: Path, course: str, model: str = "sonnet") -> dict:
     import fleet as fl
@@ -584,9 +855,14 @@ def main() -> int:
     ap.add_argument("--keep", action="store_true", help="leave sources in the drop folder")
     ap.add_argument("--max", type=int, default=0, help="stop after N files")
     ap.add_argument("--model", default="sonnet")
+    ap.add_argument("--continue", dest="cont", action="store_true",
+                    help="read the rest of any source that ran past one pass")
     a = ap.parse_args()
     if a.status:
         return status()
+    if a.cont:
+        return run_continue(only_course=a.course or None, dry_run=a.dry_run,
+                            limit=a.max, model=a.model)
     return run(only_course=a.course or None, dry_run=a.dry_run,
                keep=a.keep, limit=a.max, model=a.model)
 
