@@ -9,6 +9,7 @@ cli.py  —  `sigma`, one front door for the whole OS.
     sigma reflect diff         review staged changes
     sigma todo                 the four priority queues
     sigma leetcode 217         log today's problem by number
+    sigma leetcode --history   every problem you have solved
     sigma devlog               which projects have unlogged commits
     sigma new "<one line>"     scaffold a repo + hub note
     sigma install              hooks + scheduled tasks
@@ -325,6 +326,17 @@ def cmd_leetcode(a):
         args.append("--offline")
     if a.recent:
         args += ["--recent", a.recent]
+    # `--history` takes an optional N, so "given with no value" (None) still has
+    # to be forwarded — testing truthiness here would silently drop bare
+    # `--history` and quietly show the status screen instead of the record.
+    if a.history is not False:
+        args.append("--history")
+        if a.history is not None:
+            args.append(a.history)
+    if a.find:
+        args += ["--find", a.find]
+    if a.since:
+        args += ["--since", a.since]
     return run(LEETCODE, *args)
 
 
@@ -376,6 +388,31 @@ def cmd_ui(a):
         return 0
 
 
+def shared_flags(parent, verbs, specs):
+    """Give a group's parent parser and each of its verbs the same flags.
+
+    **The verbs get `argparse.SUPPRESS` as their default, never a concrete one,
+    and that is the entire point of this helper.** argparse parses a subcommand
+    into a *fresh* namespace and then copies every key of it onto the parent's,
+    so a concrete default on a verb silently overwrites a flag the user typed
+    *before* the verb. `sigma intake --dry-run run` set `dry_run=True` while
+    parsing `intake`, and then `run`'s own `store_true` default clobbered it
+    back to `False` — performing a real intake, spending model calls and
+    clearing the drop folder, while printing nothing to say it had ignored the
+    flag. The same trap sat on `sigma devlog --dry-run run` and `sigma map
+    --dry-run run`, where the verb writes notes.
+
+    SUPPRESS keeps the key out of the subnamespace entirely, so the parent's
+    value survives unless the user really did type the flag after the verb.
+    Both orders now mean the same thing, which is what the flag being on both
+    parsers was always meant to promise.
+    """
+    for name, kw in specs:
+        parent.add_argument(name, **kw)
+        for v in verbs:
+            v.add_argument(name, **{**kw, "default": argparse.SUPPRESS})
+
+
 def build_parser():
     ap = argparse.ArgumentParser(
         prog="sigma", description="Sigma — a personal agentic OS.",
@@ -422,11 +459,15 @@ def build_parser():
     nr = ns.add_parser("run", help="read the drop folder and write the notes")
     nc = ns.add_parser("continue",
                        help="finish sources that ran past one pass's budget")
-    for p in (n, nr, nc):    # every intake verb takes the same flags
-        p.add_argument("--course", default="", help="only this course code")
-        p.add_argument("--dry-run", action="store_true", help="name the files; call no model")
-        p.add_argument("--keep", action="store_true", help="leave sources in the drop folder")
-        p.add_argument("--max", metavar="N")
+    # every intake verb takes the same flags, in either order — see shared_flags
+    shared_flags(n, (nr, nc), [
+        ("--course", {"default": "", "help": "only this course code"}),
+        ("--dry-run", {"action": "store_true",
+                       "help": "name the files; call no model"}),
+        ("--keep", {"action": "store_true",
+                    "help": "leave sources in the drop folder"}),
+        ("--max", {"metavar": "N"}),
+    ])
     nc.set_defaults(cont=True)
 
     g = sub.add_parser("devlog", help="write recent commits into a project hub's dev log")
@@ -434,22 +475,26 @@ def build_parser():
     gss = gs.add_parser("status", help="which projects have unlogged work")
     gss.add_argument("--project", default="", help="only this hub note's name")
     gr = gs.add_parser("run", help="write up every project with unlogged work")
-    for p in (g, gr):      # `sigma devlog` and `sigma devlog run` take the same flags
-        p.add_argument("--project", default="", help="only this hub note's name")
-        p.add_argument("--dry-run", action="store_true",
-                       help="name the commits; call no model")
-        p.add_argument("--max", metavar="N")
+    # `sigma devlog` and `sigma devlog run` take the same flags, in either order
+    shared_flags(g, (gr,), [
+        ("--project", {"default": "", "help": "only this hub note's name"}),
+        ("--dry-run", {"action": "store_true",
+                       "help": "name the commits; call no model"}),
+        ("--max", {"metavar": "N"}),
+    ])
 
     mp = sub.add_parser("map", help="turn a project's codebase into architecture notes")
     ms = mp.add_subparsers(dest="map_cmd")
     mss = ms.add_parser("status", help="which projects have no architecture notes")
     mss.add_argument("--project", default="", help="only this hub note's name")
     mr = ms.add_parser("run", help="survey the code and write the notes")
-    for p in (mp, mr):
-        p.add_argument("--project", default="", help="only this hub note's name")
-        p.add_argument("--dry-run", action="store_true",
-                       help="build the survey and report its size; call no model")
-        p.add_argument("--max", metavar="N")
+    shared_flags(mp, (mr,), [
+        ("--project", {"default": "", "help": "only this hub note's name"}),
+        ("--dry-run", {"action": "store_true",
+                       "help": "build the survey and report its size; "
+                               "call no model"}),
+        ("--max", {"metavar": "N"}),
+    ])
 
     nw = sub.add_parser("new", help="scaffold a project from a one-line description")
     nw.add_argument("description", nargs="+", help="what the project is, in one line")
@@ -476,6 +521,14 @@ def build_parser():
                     help="log a problem you have already solved, as a revisit")
     lc.add_argument("--offline", action="store_true", help="never touch the network")
     lc.add_argument("--recent", metavar="N", help="with no number: list the last N solves")
+    # `default=False` is the "absent" sentinel here, because None already means
+    # "given with no cap" — see cmd_leetcode, which forwards the difference.
+    lc.add_argument("--history", nargs="?", const=None, default=False, metavar="N",
+                    help="browse solved problems, newest first (N caps it)")
+    lc.add_argument("--find", default="", metavar="TEXT",
+                    help="with no number: match a number, title or topic")
+    lc.add_argument("--since", default="", metavar="YYYY-MM-DD",
+                    help="with no number: only solves on or after this day")
 
     rv = sub.add_parser("review", help="score yesterday and write it down")
     rv.add_argument("--date", metavar="YYYY-MM-DD", help="review this day instead")
