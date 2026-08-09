@@ -2318,6 +2318,82 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
 
 .wb-foot {
   flex: none; padding: 6px 18px; border-top: 1px solid var(--panel-line-dim);
-  font-size: 11px;
+  font-size: 11px; display: flex; justify-content: space-between; gap: 12px;
 }
 .wb-foot kbd { font-family: var(--mono); border: 1px solid var(--panel-line-dim); padding: 0 4px; }
+.wb-roll { font-family: var(--mono); font-size: 10.5px; }
+.wb-roll code { color: var(--accent); }
+.wb-roll.err { color: var(--red); }
+
+/* --- the chain view (study S2 — the course dashboard) -------------------- */
+.wb-chain { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.wb-chainbody { padding: 2px 18px 14px; }
+.wb-chainhead {
+  display: flex; justify-content: space-between; align-items: baseline;
+  gap: 12px; margin: 10px 0 6px; font-size: 12px;
+}
+.wb-chainhead a { color: var(--accent); text-decoration: none; font-family: var(--mono); font-size: 11px; }
+.wb-chainhead a:hover { text-decoration: underline; }
+.wb-last {
+  display: flex; align-items: center; gap: 8px; margin: 4px 0;
+  font: 400 11.5px/1.6 var(--mono); color: var(--add);
+}
+.wb-last code { color: var(--accent); }
+
+.wb-rows { list-style: none; margin: 6px 0; padding: 0; }
+.wb-row {
+  display: flex; align-items: baseline; gap: 8px;
+  border: 1px solid transparent; padding: 5px 8px; margin: 2px 0;
+}
+.wb-row-glyph { font-family: var(--mono); color: var(--muted); flex: none; width: 14px; }
+.wb-frontier { border-color: var(--panel-line); }
+.wb-frontier .wb-row-glyph { color: var(--accent); }
+.wb-row-done .wb-row-text, .wb-row-done .wb-row-glyph { color: var(--muted); }
+.wb-row-skipped .wb-row-text { color: var(--muted); text-decoration: line-through; }
+.wb-row-text { flex: 1 1 auto; min-width: 0; font-size: 12.5px; }
+.wb-row-open {
+  background: none; border: none; padding: 0; cursor: pointer;
+  color: var(--ink); font: inherit; text-decoration: none;
+}
+.wb-row-done .wb-row-open, .wb-row-skipped .wb-row-open { color: var(--muted); }
+.wb-row-open:hover { color: var(--accent); }
+.wb-chip {
+  font: 400 10px/1.5 var(--mono); color: var(--muted); font-style: normal;
+  border: 1px solid var(--panel-line-dim); padding: 0 5px; margin-left: 8px;
+  white-space: nowrap;
+}
+.wb-row-act { display: flex; gap: 6px; flex: none; }
+
+/* --- the practice engine (study S3) -------------------------------------- */
+.wb-q { border: 1px solid var(--panel-line-dim); padding: 6px 10px; margin: 8px 0; }
+.wb-q-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.wb-q-mark { font: 400 10.5px/1.5 var(--mono); }
+.wb-q-mark.correct { color: var(--add); }
+.wb-q-mark.wrong { color: var(--amber); }
+.wb-q-mark.skipped { color: var(--muted); }
+.wb-q-correct { border-color: color-mix(in srgb, var(--add) 40%, transparent); }
+.wb-q-wrong { border-color: rgb(var(--amber-rgb) / 0.45); }
+.wb-q-skipped { opacity: 0.55; }
+.wb-hints { list-style: none; margin: 4px 0; padding: 0; }
+.wb-hints li {
+  font-size: 12px; color: var(--ink-2, var(--ink));
+  border-left: 2px solid var(--panel-line); padding: 1px 8px; margin: 4px 0;
+}
+.wb-q-act { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0 2px; }
+.wb-num {
+  background: none; border: 1px solid var(--panel-line-dim); color: var(--ink);
+  font: 400 12px/1.6 var(--mono); padding: 1px 8px; width: 12ch;
+}
+.wb-num:focus { outline: none; border-color: var(--accent); }
+.wb-mcq { font-family: var(--mono); }
+.wb-q-skip { color: var(--muted); }
+.wb-solution {
+  border-top: 1px dashed var(--panel-line-dim); margin-top: 6px; padding-top: 4px;
+}
+
+/* the guide head's marker in the Courses queue card (study S2) */
+.q-guide {
+  font: 400 9.5px/1.5 var(--mono); font-style: normal; color: var(--accent);
+  border: 1px solid var(--panel-line); padding: 0 4px; margin-right: 6px;
+  vertical-align: 1px;
+}

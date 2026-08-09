@@ -330,6 +330,12 @@ function Row({ t, s, sections, vault, rows, errs, fresh, onTick, onMeta, onMove 
           {t.pinned && <span className="q-pin" title="pinned">📌</span>}
           {t.no_sync && <NoSyncMark />}
           {t.parent && s.kind === "chain" && <b className="q-parent">{t.parent}</b>}
+          {t.chain_kind === "guide" && (
+            <em className="q-guide"
+                title="the study guide's frontier — its own slot beside the course's other work, never displacing it">
+              guide
+            </em>
+          )}
           {t.text}
         </span>
         {sub && <span className="q-sub">{sub}</span>}
@@ -661,8 +667,10 @@ function Card({ s, sections, vault, rows, errs, fresh, onTick, onMeta, onMove,
   // "2 of 5 courses" rather than "top 5": the number counts parents, not tasks,
   // and it puts the silent ones on screen — three active courses have no
   // timeline and contribute nothing, which "one per course" would hide.
+  // Distinct parents, not rows: a course showing both its timeline head and
+  // its guide head (study S2's widened window) is still one course.
   const head = s.parent_noun
-    ? `${s.visible.length} of ${s.window} ${s.parent_noun}s`
+    ? `${new Set(s.visible.map(t => t.parent)).size} of ${s.window} ${s.parent_noun}s`
     : `top ${s.window}`;
 
   const depth = s.queue.length + s.blocked.length + s.snoozed.length

@@ -117,6 +117,9 @@ export type QueueTask = {
   /** True when it lives in a sequence document (a course timeline), where rank
    *  is meaningless and the expanded view must render order instead. */
   chain: boolean;
+  /** Which kind of sequence document. A course can run both, one head each —
+   *  the guide head takes its own window slot and renders marked (study S2). */
+  chain_kind: "timeline" | "guide" | null;
   parts: ScoreParts; score: number;
   overdue: boolean; archived: boolean; snoozed: boolean;
 };
@@ -282,6 +285,9 @@ export type Lesson = {
   title: string; estimate: number | null; verified: string | null; tags: string;
   sources: string[]; preamble: string; segments: LessonSegment[];
   problems: string[]; file: string;
+  /** The sidecar's resume state, riding along so a reopened module lands where
+   *  it was. Loosely typed on purpose — the workbench validates on hydrate. */
+  state: LessonState | null;
 };
 export type LessonListRow = {
   course: string; module: number | null; unit: number | null; title: string;
@@ -289,6 +295,49 @@ export type LessonListRow = {
   problems: string[];
 };
 export type LessonList = { modules: LessonListRow[] };
+
+/** What the workbench posts to /api/lesson/state — machine-local view state,
+ *  never a commit. JSON object keys are strings, so the depth map is keyed by
+ *  the segment index's string form. */
+export type LessonState = {
+  depth?: Record<string, string>;
+  fallback?: string;
+  practice?: Record<string, {
+    hints?: number; revealed?: boolean;
+    result?: "correct" | "wrong" | "skipped" | null; given?: string;
+  }>;
+};
+
+/** Study S2: one row of a course's guide chain — `[-]` included, which the
+ *  queue's scanner deliberately cannot see (that is what advances the
+ *  frontier past a skip; the renderer shows the row dimmed instead). */
+export type GuideRow = {
+  line: number; raw: string;
+  state: "open" | "done" | "skipped";
+  text: string;
+  target: string | null; label: string | null;
+  skipped: string | null; date: string | null;
+};
+export type Guide = {
+  course: string; file: string; rows: GuideRow[];
+  total: number; done: number; skipped: number;
+  frontier: GuideRow | null;
+  /** The blueprint note's `status:` — draft | approved — or null without one. */
+  blueprint: string | null;
+};
+/** GET /api/courses — every active course's study surface at a glance. */
+export type CourseRow = {
+  course: string; name: string; timeline: boolean;
+  modules: number; held: number;
+  guide: Omit<Guide, "rows"> | null;
+};
+export type Courses = { courses: CourseRow[] };
+/** What POST /api/lesson/session-end answers with. `wrote: false` is the
+ *  idempotent no-op — nothing uncovered since the last rollup. */
+export type Rollup = {
+  ok: true; rows: number; wrote: boolean;
+  file?: string; raw?: string; sha?: string; digest?: string;
+};
 
 /** Repo awareness (Phase 6). `root` is derived from where hubs point. */
 export type RepoRow = {
