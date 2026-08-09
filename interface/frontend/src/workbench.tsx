@@ -159,24 +159,36 @@ export default function WorkbenchView({ open, vault, onClose }: {
     setList(undefined); setPicked(null); setLesson(undefined);
     get<LessonList>("lesson").then(l => {
       setList(l);
-      setPicked(l.modules[0] ?? null);
+      // A row without a module number is unaddressable by the detail
+      // endpoint — never auto-pick it, and the picker disables it below.
+      setPicked(l.modules.find(m => m.module != null) ?? null);
     }).catch(() => setList(null));
   }, [open]);
 
   useEffect(() => {
     if (!open || !picked) return;
+    // Reset per-module view state: a surviving segment index from a longer
+    // module would point past the end of a shorter one.
+    dispatch({ t: "reset" });
     setLesson(undefined);
     get<Lesson>(`lesson/${picked.course}/${picked.module}`)
       .then(setLesson).catch(() => setLesson(null));
   }, [open, picked]);
 
+  // Only intercept keys while a lesson body is actually rendered — with the
+  // held panel or a loading state on screen there is no dock or focus to
+  // peel, and a swallowed Esc would just feel dead.
+  const rendered = !!lesson && lesson.problems.length === 0;
   useEffect(() => {
-    if (!open) return;
+    if (!open || !rendered) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.repeat || e.ctrlKey || e.altKey || e.metaKey) return;
+      // An overlay stacked above the workbench (Capture autofocuses its
+      // textarea) must get its own keys — a capture-phase listener fires
+      // before the target's handlers, so check where focus actually is.
+      const el = document.activeElement as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA")) return;
       if (e.key === "f") {
-        const tag = (e.target as HTMLElement | null)?.tagName;
-        if (tag === "INPUT" || tag === "TEXTAREA") return;
         e.preventDefault();
         dispatch({ t: "focus" });
       } else if (e.key === "Escape") {
@@ -189,7 +201,7 @@ export default function WorkbenchView({ open, vault, onClose }: {
     };
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
-  }, [open, st.focus, st.dock]);
+  }, [open, rendered, st.focus, st.dock]);
 
   if (!open) return null;
 
@@ -228,6 +240,9 @@ export default function WorkbenchView({ open, vault, onClose }: {
             {list.modules.map(m => (
               <button key={m.file}
                       className={picked?.file === m.file ? "active" : ""}
+                      disabled={m.module == null}
+                      title={m.module == null
+                        ? `${m.file} — no module number, unaddressable` : m.title}
                       onClick={() => setPicked(m)}>
                 {m.course} M{String(m.module ?? "?").padStart(2, "0")}
                 {m.problems.length > 0 ? " ⚠" : ""}

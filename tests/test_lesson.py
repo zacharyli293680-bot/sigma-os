@@ -194,6 +194,26 @@ class TestValidate(LessonBase):
                              "- solution:: 1 + 1 = 2.\nstray trailing prose\n"),
             "after a practice item")
 
+    def test_a_malformed_practice_opener_is_named_not_absorbed(self):
+        # A near-miss `??` line silently read as prose would leak the question
+        # and its answer into a depth section while the module stayed clean.
+        self.assert_problem(_valid().replace("?? q-1-8 · numeric", "?? q-1-8·numeric"),
+                            "malformed practice opener")
+
+    def test_an_unresolvable_item_source_is_named(self):
+        self.assert_problem(
+            _valid().replace("- solution:: 1 + 1 = 2.\n",
+                             "- solution:: 1 + 1 = 2.\n- source:: 02-Areas/ghost.md\n"),
+            "item q-1-1 source does not resolve")
+
+    def test_a_formula_first_section_keeps_its_indent(self):
+        text = _valid().replace(
+            "\n### Normal\n\nThe teaching text for topic 3.\n",
+            "\n### Normal\n\n    C = A x B\n\nProse after the formula.\n")
+        d = lesson.parse(text)
+        self.assertTrue(d["segments"][2]["normal"].startswith("    C = A x B"),
+                        d["segments"][2]["normal"][:40])
+
 
 class TestSerialize(LessonBase):
     def test_canonical_text_is_a_byte_fixed_point(self):
@@ -249,6 +269,23 @@ class TestScanAndLoad(LessonBase):
         self.assertEqual(d["title"], "Test module")
         self.assertTrue(d["file"].endswith("test-101-m01-test-module.md"))
         self.assertIsNone(lesson.load(self.vault, "TEST-101", 2, split=OPEN))
+
+    def test_a_bom_does_not_hide_a_module(self):
+        # A Windows editor's BOM in front of the frontmatter fence must not
+        # make the module silently vanish from scan, the API and doctor.
+        self._write_module(text="﻿" + _valid())
+        self.assertEqual(len(lesson.scan(self.vault, split=OPEN)), 1)
+
+    def test_two_files_claiming_one_module_number_are_both_flagged(self):
+        self._write_module()
+        self._write_module("test-101-m01-duplicate.md")
+        rows = lesson.scan(self.vault, split=OPEN)
+        self.assertEqual(len(rows), 2)
+        for r in rows:
+            self.assertTrue(any("duplicate module number" in p
+                                for p in r["problems"]), r)
+        d = lesson.load(self.vault, "TEST-101", 1, split=OPEN)
+        self.assertTrue(any("duplicate module number" in p for p in d["problems"]))
 
 
 if __name__ == "__main__":

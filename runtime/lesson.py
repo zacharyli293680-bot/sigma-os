@@ -160,6 +160,17 @@ def _int_or_none(v):
         return None
 
 
+def _trim_block(lines: list[str]) -> str:
+    """Drop leading/trailing blank lines but keep indentation — a bare
+    .strip() would eat the 4-space indent of a formula block that opens a
+    section, and the renderer would show the formula as prose."""
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return "\n".join(lines)
+
+
 def _parse_segment(lines: list[str], start: int, end: int, problems: list[str]) -> dict:
     m = SEG_RE.match(lines[start])
     seg = {
@@ -179,7 +190,7 @@ def _parse_segment(lines: list[str], start: int, end: int, problems: list[str]) 
         nonlocal item
         if item is None:
             return
-        item["prompt"] = "\n".join(item.pop("_prompt")).strip()
+        item["prompt"] = _trim_block(item.pop("_prompt"))
         if not item["prompt"]:
             problems.append(f"line {item['line']}: practice item "
                             f"{item['id']} has no question text")
@@ -235,6 +246,16 @@ def _parse_segment(lines: list[str], start: int, end: int, problems: list[str]) 
                     "source": None, "_prompt": [], "_keys_seen": False}
             i += 1
             continue
+        if line.startswith("??"):
+            # A near-miss opener silently absorbed as prose would leak the
+            # question and its answer into a depth section while the module
+            # still validated clean — name it instead.
+            problems.append(f"line {i + 1}: malformed practice opener "
+                            f"(expected '?? <q-id> · <kind>'): {line.strip()!r}")
+            close_item()
+            bucket = None
+            i += 1
+            continue
 
         km = ITEM_KEY_RE.match(line)
         if km and item is not None:
@@ -265,7 +286,7 @@ def _parse_segment(lines: list[str], start: int, end: int, problems: list[str]) 
 
     close_item()
     for key, collected in buckets.items():
-        seg[key] = "\n".join(collected).strip()
+        seg[key] = _trim_block(collected)
     for it in seg["practice"]:
         it.pop("_keys_seen", None)
     return seg
@@ -404,6 +425,10 @@ def validate(text: str, vault: Path | None = None) -> list[str]:
                 if not (vault / src["path"]).is_file():
                     out.append(f"segment S{s['n']} source does not resolve "
                                f"(line {src['line']}): {src['path']}")
+            for it in s["practice"]:
+                if it["source"] and not (vault / it["source"]).is_file():
+                    out.append(f"practice item {it['id']} source does not "
+                               f"resolve: {it['source']}")
     return out
 
 
@@ -442,7 +467,11 @@ def scan(vault: Path, split=None) -> list[dict]:
         if rel in sealed:
             continue
         try:
-            text = p.read_text(encoding="utf-8", errors="replace")
+            # utf-8-sig: a Windows editor's BOM would otherwise hide the
+            # frontmatter from the type check and the module would vanish
+            # from scan, the API and doctor without a word — the exact
+            # silent failure this module exists to prevent.
+            text = p.read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
             continue
         fm = frontmatter(text) or {}
@@ -457,6 +486,21 @@ def scan(vault: Path, split=None) -> list[dict]:
             "problems": validate(text, vault=vault),
         })
     out.sort(key=lambda r: (r["course"], r["module"] if r["module"] is not None else 0))
+
+    # Two files claiming the same (course, module) would be silently aliased —
+    # load() serves whichever sorts first. Flag both instead.
+    seen_key: dict = {}
+    for r in out:
+        key = (r["course"].lower(), r["module"])
+        if key in seen_key and r["module"] is not None:
+            msg = (f"duplicate module number: {seen_key[key]} and {r['file']} "
+                   f"both claim {r['course']} M{r['module']}")
+            r["problems"].append(msg)
+            for prev in out:
+                if prev["file"] == seen_key[key]:
+                    prev["problems"].append(msg)
+        else:
+            seen_key.setdefault(key, r["file"])
     return out
 
 
@@ -467,12 +511,15 @@ def load(vault: Path, course: str, module_no: int, split=None) -> dict | None:
         if row["course"].lower() == course.lower() and row["module"] == module_no:
             p = vault / row["file"]
             try:
-                text = p.read_text(encoding="utf-8", errors="replace")
+                text = p.read_text(encoding="utf-8-sig", errors="replace")
             except OSError:
                 return None
             d = parse(text)
             d["file"] = row["file"]
-            d["problems"] = validate(text, vault=vault)
+            # Single-file validation, plus what only the whole-course scan can
+            # see (a duplicate module number) — held either way.
+            d["problems"] = validate(text, vault=vault) + [
+                p_ for p_ in row["problems"] if p_.startswith("duplicate module")]
             return d
     return None
 
@@ -491,7 +538,7 @@ def main():
     a = ap.parse_args()
 
     if a.cmd == "validate":
-        text = Path(a.path).read_text(encoding="utf-8", errors="replace")
+        text = Path(a.path).read_text(encoding="utf-8-sig", errors="replace")
         problems = validate(text, vault=Path(a.vault))
         for p in problems:
             print(f"  !! {p}")
