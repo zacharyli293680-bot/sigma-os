@@ -69,8 +69,8 @@ function Course({ c, vault }: { c: CourseCoverage; vault: string }) {
   );
 }
 
-export default function StudyView({ open, vault, onClose }: {
-  open: boolean; vault: string; onClose: () => void;
+export default function StudyView({ open, vault, onClose, onWorkbench }: {
+  open: boolean; vault: string; onClose: () => void; onWorkbench?: () => void;
 }) {
   const [d, setD] = useState<Study | null | undefined>(undefined);
 
@@ -88,7 +88,15 @@ export default function StudyView({ open, vault, onClose }: {
            role="dialog" aria-label="Study">
         <header className="study-head">
           <span className="label">◇ STUDY — EXAM MODE</span>
-          <button className="ghost" onClick={onClose} title="Close (Esc)">✕</button>
+          <span>
+            {/* The door to the S1 workbench. Exam mode folds into it as
+                panels in S2; until then the two views point at each other. */}
+            {onWorkbench && (
+              <button className="ghost" onClick={onWorkbench}
+                      title="Study workbench (Ctrl+\)">◫ workbench</button>
+            )}
+            <button className="ghost" onClick={onClose} title="Close (Esc)">✕</button>
+          </span>
         </header>
 
         {d === undefined && <p className="dim pad">reading…</p>}

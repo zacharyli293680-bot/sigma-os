@@ -10,6 +10,8 @@ Five endpoints, all read-only, all serving panels in the web dashboard:
     GET /api/projects    project hubs + live git state of their repos
     GET /api/window      rate-limit headroom — honestly unknown until the Phase 4 spike
     GET /api/nosync      the audit view: everything that never leaves this machine
+    GET /api/lesson      study mode S1: every guide module, with its problems
+    GET /api/lesson/{course}/{module}   one parsed module for the workbench
 
 Nothing here writes, and nothing here calls a model. Two boundaries hold:
 
@@ -51,6 +53,7 @@ if _RUNTIME not in sys.path:
 import agenda as ag         # noqa: E402  — the calendar resolver
 import fleet as fl          # noqa: E402
 import leetcode as lc       # noqa: E402  — the daily-practice habit
+import lesson as ln         # noqa: E402  — the study-guide module grammar
 import reflect as rf        # noqa: E402
 import retro                # noqa: E402  — the 06:00 review; NOT backend/review.py
 import specialists as sp    # noqa: E402
@@ -847,6 +850,34 @@ def _scan_study() -> dict:
 @router.get("/study")
 def api_study():
     return _cached("study", 60, _scan_study)
+
+
+# --------------------------------------------------------------------------
+# study mode S1 — guide modules, through the one grammar owner (lesson.py)
+# --------------------------------------------------------------------------
+def _lesson_split(_vault, rels):
+    return _split(rels)
+
+
+def _scan_lesson_list() -> dict:
+    return {"modules": ln.scan(VAULT, split=_lesson_split)}
+
+
+@router.get("/lesson")
+def api_lesson_list():
+    # 30s: one parse per module note; the vault has a handful of modules.
+    return _cached("lesson", 30, _scan_lesson_list)
+
+
+@router.get("/lesson/{course}/{module_no}")
+def api_lesson(course: str, module_no: int):
+    # Parsed fresh on every call, never cached — editing the note in Obsidian
+    # must never disagree with the workbench. The queue's rule, kept.
+    d = ln.load(VAULT, course, module_no, split=_lesson_split)
+    if d is None:
+        return JSONResponse({"error": "no such module",
+                             "detail": f"{course} M{module_no}"}, status_code=404)
+    return d
 
 
 # --------------------------------------------------------------------------

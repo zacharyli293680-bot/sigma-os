@@ -578,8 +578,28 @@ def check_backup(out):
         out.append((TODO, f"backup check could not run: {type(e).__name__}: {e}", None))
 
 
+def check_modules(out):
+    """Study mode S1: does every guide module still conform to the grammar?
+    Modules are co-writable by hand, and the applier holds only guard the
+    generated path — this check is what catches a hand-edit that broke one."""
+    import lesson as ln
+    rows = ln.scan(ln.DEFAULT_VAULT)
+    if not rows:
+        return                      # no guides yet — nothing worth saying
+    broken = [r for r in rows if r["problems"]]
+    if broken:
+        worst = broken[0]
+        out.append((ALERT, f"{len(broken)} of {len(rows)} guide module(s) fail "
+                           f"the grammar - e.g. {worst['file']}: "
+                           f"{worst['problems'][0]}",
+                    f"python lesson.py validate \"<vault>/{worst['file']}\""))
+    else:
+        out.append((OK, f"guide modules conform ({len(rows)} checked)", None))
+
+
 CHECKS = (check_capture, check_reflection, check_schedule, check_review,
-          check_auth, check_privacy, check_toolgate, check_backup, check_fleet)
+          check_auth, check_privacy, check_toolgate, check_backup, check_fleet,
+          check_modules)
 
 
 def collect():

@@ -1741,7 +1741,13 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
   font: 400 10.5px/1.6 var(--mono); letter-spacing: 0.04em;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.q-pr-today li { display: flex; align-items: baseline; gap: 6px; margin: 1px 0; }
+.q-pr-today li,
+.q-pr-hist li { display: flex; align-items: baseline; gap: 6px; margin: 1px 0; }
+/* History rows sit behind today's: same shape, less weight, so the eye lands on
+   what is current and the record stays readable underneath it. */
+.q-pr-hist li { color: var(--ink-2); }
+.q-pr-hist .q-pr-n { color: var(--ink-2); }
+.q-pr-day { flex: none; font-variant-numeric: tabular-nums; font-size: 11px; }
 .q-pr-n { flex: none; color: var(--accent); font-variant-numeric: tabular-nums; }
 .q-pr-name { flex: 1 1 auto; min-width: 0; overflow: hidden;
              text-overflow: ellipsis; white-space: nowrap; }
@@ -1762,6 +1768,12 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
    the point of keeping one — so it reads as an offer, not a failure. */
 .q-pr-dupe { margin: 6px 0 0; font-size: 12px; color: var(--bronze);
              display: flex; align-items: baseline; gap: 8px; }
+.q-pr-past { margin-top: 8px; border-top: 1px solid var(--panel-line-dim); padding-top: 6px; }
+.q-pr-more { font-size: 10.5px; letter-spacing: 0.06em; padding: 0; }
+.q-pr-hist { margin-top: 4px; }
+.q-pr-all { margin-top: 4px; font-size: 11px; }
+.q-pr-all a { color: var(--muted); border-bottom: 1px solid transparent; }
+.q-pr-all a:hover { color: var(--ink-2); border-bottom-color: var(--panel-line-dim); }
 
 .q-rows li { margin: 1px 0; }
 .q-row { display: flex; align-items: baseline; gap: 2px; }
@@ -2222,3 +2234,90 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
 .q-stars { color: var(--amber); font-weight: 400; letter-spacing: 0.1em; flex: none; }
 .q-review-date { color: var(--muted); flex: none; }
 .q-review-facts { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* --- the study workbench (study mode S1) --------------------------------- */
+
+/* Two panes: reading column and dock, 55/45 per the plan. Wider than .study
+   because a lesson is a document, not a list; align-self keeps a short module
+   at the top instead of floating in the void (the .work lesson, relearned). */
+.workbench {
+  margin-top: 4vh; width: min(1240px, 96vw); max-height: 88vh;
+  align-self: flex-start;
+  background: var(--void); border: 1px solid var(--panel-line);
+  box-shadow: 0 0 40px rgb(var(--glow-rgb) / 0.08);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+
+/* Segment chips — the module's spine. The minutes ride along because the time
+   budget is the grammar's most load-bearing number. */
+.wb-segs { display: flex; gap: 6px; flex-wrap: wrap; padding: 10px 18px 0; flex: none; }
+.wb-segs button {
+  background: none; border: 1px solid var(--panel-line-dim); color: var(--ink-2);
+  font: 400 11.5px/1.5 var(--mono); padding: 2px 9px; cursor: pointer;
+}
+.wb-segs button.active { border-color: var(--accent); color: var(--ink); }
+.wb-segs button:hover { color: var(--ink); }
+.wb-min { color: var(--muted); font-family: var(--mono); font-size: 10.5px; }
+
+.wb-body { display: grid; grid-template-columns: 11fr 9fr; flex: 1 1 auto; min-height: 0; }
+.wb-read { overflow-y: auto; padding: 12px 20px 16px; border-right: 1px solid var(--panel-line-dim); }
+/* Focus mode is the same tree with the dock collapsed — a class flip. */
+.workbench.focus .wb-body { grid-template-columns: 1fr; }
+.workbench.focus .wb-read { max-width: 74ch; margin: 0 auto; border-right: none; }
+
+.wb-seghead { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.wb-seghead h3 { margin: 4px 0 2px; font-size: 14px; color: var(--ink); }
+.wb-read p { margin: 8px 0; line-height: 1.6; color: var(--ink); }
+/* Formula blocks: bordered, never filled, monospace — the vault's own style. */
+.wb-read pre {
+  font: 400 12px/1.6 var(--mono); color: var(--ink);
+  border: 1px solid var(--panel-line-dim); padding: 8px 12px; margin: 10px 0;
+  overflow-x: auto;
+}
+.wb-link { color: var(--accent); }
+
+.wb-depths { display: flex; gap: 6px; margin: 6px 0 2px; }
+.wb-depths button {
+  background: none; border: 1px solid var(--panel-line-dim); color: var(--ink-2);
+  font: 400 10.5px/1.5 var(--mono); letter-spacing: 0.06em;
+  padding: 2px 9px; cursor: pointer;
+}
+.wb-depths button.active { border-color: var(--accent); color: var(--accent); }
+
+.wb-example { border: 1px solid var(--panel-line-dim); padding: 4px 12px 8px; margin: 12px 0; }
+.wb-example h4, .wb-practice h4, .wb-dock h4 {
+  margin: 8px 0 4px; font: 400 10.5px/1.5 var(--mono);
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2);
+}
+
+.wb-practice ul { list-style: none; margin: 0; padding: 0; }
+.wb-practice li { border: 1px solid var(--panel-line-dim); padding: 6px 10px; margin: 8px 0; }
+.wb-practice li p { margin: 4px 0; }
+.wb-kind { font: 400 10.5px/1.5 var(--mono); color: var(--muted); }
+
+.wb-nav { display: flex; align-items: center; justify-content: space-between; margin-top: 14px; }
+
+.wb-dock { overflow-y: auto; padding: 12px 16px; }
+.wb-dock-closed { display: flex; align-items: flex-start; justify-content: flex-end; }
+.wb-prov { list-style: none; margin: 0 0 10px; padding: 0; font-size: 12px; }
+.wb-prov li { margin: 4px 0; overflow-wrap: anywhere; }
+.wb-prov a { color: var(--accent); text-decoration: none; }
+.wb-prov a:hover { text-decoration: underline; }
+
+/* Held is a word plus amber, never colour alone. */
+.wb-held { margin: 14px 18px; border: 1px solid var(--amber); padding: 8px 14px; overflow-y: auto; }
+.wb-held h3 { color: var(--amber); font-size: 13px; margin: 4px 0; }
+.wb-held ul { font: 400 11.5px/1.7 var(--mono); padding-left: 18px; }
+
+.wb-picker { display: flex; gap: 6px; flex-wrap: wrap; padding: 10px 18px 0; flex: none; }
+.wb-picker button {
+  background: none; border: 1px solid var(--panel-line-dim); color: var(--ink-2);
+  font: 400 11.5px/1.5 var(--mono); padding: 2px 9px; cursor: pointer;
+}
+.wb-picker button.active { border-color: var(--accent); color: var(--ink); }
+
+.wb-foot {
+  flex: none; padding: 6px 18px; border-top: 1px solid var(--panel-line-dim);
+  font-size: 11px;
+}
+.wb-foot kbd { font-family: var(--mono); border: 1px solid var(--panel-line-dim); padding: 0 4px; }

@@ -19,6 +19,7 @@ import Palette from "./palette";
 import Review from "./review";
 import StudyView from "./study";
 import BuildView from "./build";
+import WorkbenchView from "./workbench";
 import WorkView from "./work";
 import AgendaRail from "./agenda-rail";
 import AgendaView from "./agenda";
@@ -82,6 +83,7 @@ export default function App() {
   const [noSyncOpen, setNoSyncOpen] = useState(false);
   const [reviewing, setReviewing] = useState<string | null>(null);
   const [studyOpen, setStudyOpen] = useState(false);
+  const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const [buildOpen, setBuildOpen] = useState(false);
   const [workOpen, setWorkOpen] = useState(false);
   const [agendaOpen, setAgendaOpen] = useState(false);
@@ -204,6 +206,12 @@ export default function App() {
         // changes how the dashboard looks rather than what it says.
         e.preventDefault();
         setThemeOpen(o => !o);
+      } else if (e.ctrlKey && e.key === "\\") {
+        // The study workbench. L is the address bar and G is find-next —
+        // both eaten at the browser level like Ctrl+K — and `\` is unclaimed;
+        // mnemonically it is the split between the workbench's two panes.
+        e.preventDefault();
+        setWorkbenchOpen(o => !o);
       } else if (e.ctrlKey && e.key === "'") {
         // The full agenda. `'` sits next to `;` (work) and `.` (no-sync), so
         // the three "what is on my plate" surfaces are three neighbouring keys.
@@ -222,6 +230,10 @@ export default function App() {
         // handles its own in the capture phase and stops the event here.
         if (captureOpen) setCaptureOpen(false);
         else if (reviewing) setReviewing(null);
+        // The workbench peels before work: its own capture-phase handler has
+        // already eaten Esc for the dock and focus rungs, so an event arriving
+        // here means the view itself should close.
+        else if (workbenchOpen) setWorkbenchOpen(false);
         else if (workOpen) setWorkOpen(false);
         // Agenda peels after work: it is normally entered from the work view or
         // from the today rail, so Esc unwinds in the order you arrived.
@@ -243,7 +255,7 @@ export default function App() {
     // opens and closes on Ctrl+' while Esc silently skips its rung. `agendaOpen`
     // was missing exactly that way and it took driving the view to notice.
   }, [paletteOpen, ledgerOpen, chatOpen, noSyncOpen, reviewing, studyOpen,
-      buildOpen, workOpen, agendaOpen, captureOpen, brainFilter]);
+      workbenchOpen, buildOpen, workOpen, agendaOpen, captureOpen, brainFilter]);
 
   // Palette jobs stream here and take over the dock while they run; when one
   // finishes, the panels it may have changed refetch immediately.
@@ -331,13 +343,17 @@ export default function App() {
             onNoSync={() => setNoSyncOpen(o => !o)}
             onCapture={() => setCaptureOpen(o => !o)}
             onWork={() => setWorkOpen(true)}
-            onAgenda={() => setAgendaOpen(o => !o)} />
+            onAgenda={() => setAgendaOpen(o => !o)}
+            onWorkbench={() => setWorkbenchOpen(o => !o)} />
       <Ledger open={ledgerOpen} vault={vault} onClose={() => setLedgerOpen(false)}
               onMutate={refresh} />
       <NoSyncView open={noSyncOpen} vault={vault} onClose={() => setNoSyncOpen(false)} />
       <Review name={reviewing} vault={vault} onClose={() => setReviewing(null)}
               onMutate={refresh} />
-      <StudyView open={studyOpen} vault={vault} onClose={() => setStudyOpen(false)} />
+      <StudyView open={studyOpen} vault={vault} onClose={() => setStudyOpen(false)}
+                 onWorkbench={() => { setStudyOpen(false); setWorkbenchOpen(true); }} />
+      <WorkbenchView open={workbenchOpen} vault={vault}
+                     onClose={() => setWorkbenchOpen(false)} />
       <BuildView open={buildOpen} vault={vault} onClose={() => setBuildOpen(false)} />
       <WorkView open={workOpen} vault={vault} onClose={() => setWorkOpen(false)}
                 onMutate={refresh} />

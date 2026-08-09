@@ -155,6 +155,10 @@ export type Practice = {
   streak: { current: number; longest: number; last: string | null; at_risk: boolean };
   total: number;
   by_difficulty: Record<string, number>;
+  /** The last few solves *before* today, newest first — `today` above already
+   *  holds today's, and overlapping them would render the same solve twice.
+   *  Capped by the backend because this rides on the queue poll: the log note
+   *  is the full record, this is the glance at it. */
   recent: Rep[];
   /** Exactly the number the 06:00 review will use for today — read from the
    *  same function, never recomputed, so the card cannot preview a score the
@@ -257,6 +261,34 @@ export type CourseCoverage = {
   uncovered_sample: string[]; uncovered_more: number;
 };
 export type Study = { exams: ExamUnit[]; coverage: CourseCoverage[] };
+
+/** Study mode S1: a guide module, parsed by runtime/lesson.py. The workbench
+ *  renders exactly what the one grammar owner hands over — problems non-empty
+ *  means the module is held, and the view says so rather than rendering it. */
+export type LessonSource = { path: string; line: number };
+export type PracticeItem = {
+  id: string; kind: string; line: number; prompt: string;
+  hints: string[]; answer: string | null; solution: string | null;
+  source: string | null;
+};
+export type LessonSegment = {
+  n: number; title: string; minutes: number; line: number;
+  sources: LessonSource[];
+  summary: string; normal: string; in_depth: string; example: string | null;
+  practice: PracticeItem[];
+};
+export type Lesson = {
+  type: string; course: string; module: number | null; unit: number | null;
+  title: string; estimate: number | null; verified: string | null; tags: string;
+  sources: string[]; preamble: string; segments: LessonSegment[];
+  problems: string[]; file: string;
+};
+export type LessonListRow = {
+  course: string; module: number | null; unit: number | null; title: string;
+  estimate: number | null; file: string; segments: number; practice: number;
+  problems: string[];
+};
+export type LessonList = { modules: LessonListRow[] };
 
 /** Repo awareness (Phase 6). `root` is derived from where hubs point. */
 export type RepoRow = {
