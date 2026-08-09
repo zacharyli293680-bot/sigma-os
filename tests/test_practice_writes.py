@@ -30,6 +30,7 @@ import panels                                  # noqa: E402
 import privacy                                 # noqa: E402
 import writes                                  # noqa: E402
 from sigma import gitops, ledger               # noqa: E402
+from test_checkpoint import _valid_cp          # noqa: E402
 from test_lesson import _valid                 # noqa: E402
 
 
@@ -65,6 +66,8 @@ class PracticeWritesBase(unittest.TestCase):
                 "# src\n", encoding="utf-8")
         (self.course / "guide" / "test-101-m01-test-module.md").write_text(
             _valid(), encoding="utf-8")
+        (self.course / "guide" / "test-101-checkpoint-1.md").write_text(
+            _valid_cp(), encoding="utf-8")
         (self.course / "test-101-guide.md").write_text(CHAIN, encoding="utf-8")
         (self.course / "test-101-study-log.md").write_text(
             STUDY_LOG, encoding="utf-8")
@@ -220,6 +223,57 @@ class TestAttempt(PracticeWritesBase):
         before = _run(self.vault, "rev-parse", "HEAD").stdout
         self.attempt()
         self.assertEqual(_run(self.vault, "rev-parse", "HEAD").stdout, before)
+
+
+class TestCheckpointPractice(PracticeWritesBase):
+    """Checkpoint attempts share the one attempt log and the one state
+    sidecar (study S6) — a `cp<n>` key and a `checkpoint` field, never a
+    second mechanism."""
+
+    def test_a_checkpoint_attempt_lands_with_derived_identity(self):
+        r = self.attempt(module=None, checkpoint=1, qid="q-cp1-1",
+                         result="wrong")
+        self.assertEqual(r.status_code, 200, r.text)
+        row = json.loads(Path(ln.ATTEMPTS_PATH)
+                         .read_text(encoding="utf-8").splitlines()[0])
+        self.assertEqual(row["checkpoint"], 1)
+        self.assertIsNone(row["module"])
+        self.assertEqual(row["kind"], "numeric")     # from the note, not the client
+        self.assertEqual(row["seg_title"], "Topic A")
+        self.assertEqual(row["qhash"], ln.qhash("What is 1 plus one?"))
+
+    def test_naming_both_or_neither_unit_is_refused(self):
+        self.assertEqual(self.attempt(checkpoint=1).status_code, 400)
+        self.assertEqual(self.attempt(module=None).status_code, 400)
+        r = self.client.post("/api/lesson/state",
+                             json={"course": "TEST-101", "state": {}})
+        self.assertEqual(r.status_code, 400)
+
+    def test_an_unknown_checkpoint_is_a_404(self):
+        r = self.attempt(module=None, checkpoint=9, qid="q-cp9-1")
+        self.assertEqual(r.status_code, 404)
+        self.assertEqual(r.json()["error"], "no such checkpoint")
+
+    def test_checkpoint_state_keys_under_cp(self):
+        st = {"practice": {"q-cp1-1": {"revealed": True}}}
+        r = self.client.post("/api/lesson/state",
+                             json={"course": "TEST-101", "checkpoint": 1,
+                                   "state": st})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(ln.load_state()["modules"]["TEST-101/cp1"], st)
+        d = self.client.get("/api/checkpoint/test-101/1").json()
+        self.assertEqual(d["state"], st)
+
+    def test_the_rollup_labels_modules_and_checkpoints_together(self):
+        self.attempt(qid="q-1-1", result="correct")
+        self.attempt(module=None, checkpoint=1, qid="q-cp1-2", result="wrong")
+        r = self.client.post("/api/lesson/session-end",
+                             json={"course": "TEST-101"})
+        self.assertEqual(r.status_code, 200, r.text)
+        body = r.json()
+        self.assertTrue(body["wrote"])
+        self.assertIn("· M01+CP1 ·", body["raw"])
+        self.assertEqual(body["digest"], "Topic A ×1")
 
 
 class TestSessionEnd(PracticeWritesBase):

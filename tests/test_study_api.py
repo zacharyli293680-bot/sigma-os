@@ -15,6 +15,8 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "runtime"))
 sys.path.insert(0, str(REPO / "interface" / "backend"))
 
+import json                                      # noqa: E402
+import lesson as ln                              # noqa: E402
 import panels                                    # noqa: E402
 import privacy                                   # noqa: E402
 
@@ -33,13 +35,16 @@ class StudyBase(unittest.TestCase):
         _git(self.vault, "init", "-b", "master")
         _git(self.vault, "config", "user.name", "T")
         _git(self.vault, "config", "user.email", "t@e.com")
-        self._saved = panels.VAULT
+        self._saved = (panels.VAULT, ln.ATTEMPTS_PATH)
         panels.VAULT = self.vault
+        # The practice-history half reads the attempt log by module global —
+        # pointed into the sandbox so the suite never reads this machine's.
+        ln.ATTEMPTS_PATH = Path(self.tmp.name) / "study.jsonl"
         panels._cache.clear()
         privacy.VaultPrivacy._git_ignored.cache_clear()
 
     def tearDown(self):
-        panels.VAULT = self._saved
+        panels.VAULT, ln.ATTEMPTS_PATH = self._saved
         panels._cache.clear()
         self.tmp.cleanup()
 
@@ -120,6 +125,61 @@ class TestExamUnits(StudyBase):
     def test_only_exam_prep_notes_become_units(self):
         self.note("Exams/lec.md", "type: lecture\ncourse: AA-210\nnumber: 2")
         self.assertEqual(panels._scan_study()["exams"], [])
+
+
+class TestPracticeHistory(StudyBase):
+    """Exam mode's third panel (study S6): records, never guesses. A course
+    appears only when the attempt log or the study log actually has rows."""
+
+    def attempts(self, *rows):
+        Path(ln.ATTEMPTS_PATH).write_text(
+            "".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
+    def test_no_records_means_an_empty_list_not_zeros(self):
+        self.assertEqual(panels._scan_study()["practice"], [])
+
+    def test_misses_group_by_topic_worst_first(self):
+        self.attempts(
+            {"ts": "2026-08-08T10:00:00", "course": "AA-210", "qid": "q-2-7",
+             "seg_title": "The dot product", "result": "wrong"},
+            {"ts": "2026-08-09T10:00:00", "course": "AA-210", "qid": "q-2-8",
+             "seg_title": "The dot product", "result": "wrong"},
+            {"ts": "2026-08-09T11:00:00", "course": "AA-210", "qid": "q-2-1",
+             "seg_title": "Components", "result": "wrong"},
+            {"ts": "2026-08-09T12:00:00", "course": "AA-210", "qid": "q-2-2",
+             "seg_title": "Components", "result": "correct"})
+        hist = panels._scan_study()["practice"]
+        self.assertEqual(len(hist), 1)
+        h = hist[0]
+        self.assertEqual((h["course"], h["attempts"], h["wrong"]), ("AA-210", 4, 3))
+        self.assertEqual(h["by_topic"][0],
+                         {"topic": "The dot product", "wrong": 2, "last": "2026-08-09"})
+        self.assertEqual(h["by_topic"][1]["topic"], "Components")
+        self.assertEqual(h["last"], "2026-08-09")
+
+    def test_session_rows_come_from_the_study_log_newest_first(self):
+        self.note("aa-210-study-log.md",
+                  "type: study-log\ncourse: AA-210\ntags: [guide]",
+                  "# log\n\n## Sessions\n"
+                  "- 2026-08-08 · M02 · 4 answered, 3 correct · missed 1\n"
+                  "- 2026-08-09 · CP1 · 5 answered, 5 correct · missed 0\n\n"
+                  "## Not sessions\n- a bullet that must not leak in\n")
+        h = panels._scan_study()["practice"][0]
+        self.assertEqual(h["sessions"][0],
+                         "2026-08-09 · CP1 · 5 answered, 5 correct · missed 0")
+        self.assertEqual(len(h["sessions"]), 2)
+        self.assertEqual(h["sessions_more"], 0)
+        self.assertEqual(h["attempts"], 0)   # the two sources are independent
+
+    def test_a_sealed_study_log_stays_unread(self):
+        self.note("aa-210-study-log.md",
+                  "type: study-log\ncourse: AA-210\ntags: [guide]",
+                  "## Sessions\n- 2026-08-09 · M02 · secret row\n")
+        (self.vault / ".gitignore").write_text(
+            "02-Areas/Academics/AA-210/aa-210-study-log.md\n", encoding="utf-8")
+        panels._cache.clear()
+        privacy.VaultPrivacy._git_ignored.cache_clear()
+        self.assertEqual(panels._scan_study()["practice"], [])
 
 
 if __name__ == "__main__":

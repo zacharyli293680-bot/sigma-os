@@ -583,13 +583,15 @@ def check_modules(out):
     Modules are co-writable by hand, and the applier holds only guard the
     generated path — this check is what catches a hand-edit that broke one."""
     import lesson as ln
-    rows = ln.scan(ln.DEFAULT_VAULT)
+    # Checkpoints are co-writable by hand too (study S6) — same sweep, same
+    # reason, their own validator.
+    rows = ln.scan(ln.DEFAULT_VAULT) + ln.scan_checkpoints(ln.DEFAULT_VAULT)
     if not rows:
         return                      # no guides yet — nothing worth saying
     broken = [r for r in rows if r["problems"]]
     if broken:
         worst = broken[0]
-        out.append((ALERT, f"{len(broken)} of {len(rows)} guide module(s) fail "
+        out.append((ALERT, f"{len(broken)} of {len(rows)} guide note(s) fail "
                            f"the grammar - e.g. {worst['file']}: "
                            f"{worst['problems'][0]}",
                     f"python lesson.py validate \"<vault>/{worst['file']}\""))

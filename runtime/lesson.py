@@ -648,6 +648,200 @@ def guide(vault: Path, course: str, split=None) -> dict | None:
 
 
 # --------------------------------------------------------------------------
+# the checkpoint grammar — a unit's assessment (§5.4, study S6)
+# --------------------------------------------------------------------------
+# A checkpoint is the module grammar minus the teaching: the same parser, the
+# same segment headings and practice openers, but practice items only — no
+# depth levels, no example, and ids carry the checkpoint's own number
+# (`q-cp1-3`) so they can never collide with a module's `q-<module>-<n>`.
+# One parser for both is the point: a second grammar would be a second owner.
+
+CP_QID_RE = re.compile(r"^q-cp(\d+)-(\d+)$")
+
+
+def _fm_covers(text: str) -> list[int]:
+    """The `covers:` list — `[2, 3]` inline in the frontmatter, read
+    mechanically. Digits are the grammar; anything else in the value is
+    someone's prose and not this parser's business."""
+    fm = frontmatter(text) or {}
+    return [int(m) for m in re.findall(r"\d+", str(fm.get("covers") or ""))]
+
+
+def validate_checkpoint(text: str, vault: Path | None = None) -> list[str]:
+    """Every way this checkpoint note violates its contract; [] conforms.
+
+    Deliberately not a flag on validate(): the two contracts share a parser
+    but disagree about what must and must not exist (a module is held
+    *without* depth levels, a checkpoint is held *with* them), and one
+    function serving both would be a function whose rules depend on who is
+    asking."""
+    d = parse(text)
+    fm = frontmatter(text) or {}
+    out = list(d["problems"])
+
+    if d["type"] != "checkpoint":
+        out.append(f"frontmatter: type is {d['type']!r}, expected 'checkpoint'")
+    if not d["course"]:
+        out.append("frontmatter: course is blank")
+    cp = _int_or_none(fm.get("checkpoint"))
+    if cp is None:
+        out.append("frontmatter: checkpoint number is missing or not an integer")
+    covers = _fm_covers(text)
+    if not covers:
+        out.append("frontmatter: covers is empty — a checkpoint must name "
+                   "the modules it assesses")
+    date = str(fm.get("date") or "").strip()
+    if date:
+        try:
+            datetime.date.fromisoformat(date)
+        except ValueError:
+            out.append(f"frontmatter: date {date!r} is not YYYY-MM-DD")
+
+    segs = d["segments"]
+    if not segs:
+        out.append("no segments — a checkpoint groups its items under "
+                   "'## S<n> · <topic> ⏱ <min>' headings like a module")
+    seen_numbers = set()
+    for s in segs:
+        tag = f"segment S{s['n']} (line {s['line']})"
+        if s["n"] in seen_numbers:
+            out.append(f"{tag}: duplicate segment number")
+        seen_numbers.add(s["n"])
+        if not s["sources"]:
+            out.append(f"{tag}: no source:: line — unverified content is held")
+        for depth, label in (("summary", "Summary"), ("normal", "Normal"),
+                             ("in_depth", "In depth")):
+            if s[depth]:
+                out.append(f"{tag}: has '### {label}' — a checkpoint carries "
+                           f"practice only, never depth levels (§5.4)")
+        if s["example"] is not None:
+            out.append(f"{tag}: has '### Example' — a checkpoint carries "
+                       f"practice only")
+
+    items = [it for s in segs for it in s["practice"]]
+    if segs and not items:
+        out.append("no practice items — a checkpoint with nothing to answer "
+                   "assesses nothing")
+    seen_ids = set()
+    for it in items:
+        tag = f"practice item {it['id']} (line {it['line']})"
+        if it["kind"] not in KINDS:
+            out.append(f"{tag}: unknown kind {it['kind']!r} "
+                       f"(mcq | numeric | short | code | proof)")
+        qm = CP_QID_RE.match(it["id"])
+        if not qm:
+            out.append(f"{tag}: id does not match q-cp<checkpoint>-<n>")
+        elif cp is not None and int(qm.group(1)) != cp:
+            out.append(f"{tag}: id names checkpoint {qm.group(1)} but this "
+                       f"is checkpoint {cp}")
+        if it["id"] in seen_ids:
+            out.append(f"{tag}: duplicate question id")
+        seen_ids.add(it["id"])
+        if not it["answer"]:
+            out.append(f"{tag}: answer:: is missing — this holds the checkpoint")
+        if not it["solution"]:
+            out.append(f"{tag}: solution:: is missing — this holds the checkpoint")
+
+    if vault is not None:
+        for s in segs:
+            for src in s["sources"]:
+                if not (vault / src["path"]).is_file():
+                    out.append(f"segment S{s['n']} source does not resolve "
+                               f"(line {src['line']}): {src['path']}")
+            for it in s["practice"]:
+                if it["source"] and not (vault / it["source"]).is_file():
+                    out.append(f"practice item {it['id']} source does not "
+                               f"resolve: {it['source']}")
+    return out
+
+
+def _h1(text: str) -> str | None:
+    m = re.search(r"^#\s+(.+?)\s*$", text, re.M)
+    return m.group(1) if m else None
+
+
+def scan_checkpoints(vault: Path, split=None) -> list[dict]:
+    """Every `type: checkpoint` note under guide/, with its problems — the
+    same walk as scan(), same fail-closed sealing, same drift checks."""
+    root = vault.joinpath(*ACADEMICS)
+    if not root.is_dir():
+        return []
+    paths = sorted(root.glob("*/guide/*.md"))
+    rels = [p.relative_to(vault).as_posix() for p in paths]
+    sealed, _ = (split or _default_split)(vault, rels)
+
+    out = []
+    for p, rel in zip(paths, rels):
+        if rel in sealed:
+            continue
+        try:
+            text = p.read_text(encoding="utf-8-sig", errors="replace")
+        except OSError:
+            continue
+        fm = frontmatter(text) or {}
+        if str(fm.get("type") or "").strip() != "checkpoint":
+            continue
+        d = parse(text)
+        problems = validate_checkpoint(text, vault=vault)
+        folder = p.parents[1].name
+        if d["course"] and d["course"] != folder:
+            problems.append(f"course field says {d['course']!r} but the note "
+                            f"lives in {folder}/ — the naming rule is one "
+                            f"string, and attempts are keyed by the field")
+        out.append({
+            "course": d["course"],
+            "checkpoint": _int_or_none(fm.get("checkpoint")),
+            "covers": _fm_covers(text),
+            "date": str(fm.get("date") or "").strip() or None,
+            "title": _h1(text) or (f"Checkpoint {_int_or_none(fm.get('checkpoint'))}"
+                                   if _int_or_none(fm.get("checkpoint")) else p.stem),
+            "file": rel,
+            "segments": len(d["segments"]),
+            "practice": sum(len(s["practice"]) for s in d["segments"]),
+            "problems": problems,
+        })
+    out.sort(key=lambda r: (r["course"],
+                            r["checkpoint"] if r["checkpoint"] is not None else 0))
+
+    seen_key: dict = {}
+    for r in out:
+        key = (r["course"].lower(), r["checkpoint"])
+        if key in seen_key and r["checkpoint"] is not None:
+            msg = (f"duplicate checkpoint number: {seen_key[key]} and "
+                   f"{r['file']} both claim {r['course']} CP{r['checkpoint']}")
+            r["problems"].append(msg)
+            for prev in out:
+                if prev["file"] == seen_key[key]:
+                    prev["problems"].append(msg)
+        else:
+            seen_key.setdefault(key, r["file"])
+    return out
+
+
+def load_checkpoint(vault: Path, course: str, cp_no: int, split=None) -> dict | None:
+    """One parsed checkpoint for the API, or None. load()'s shape — the full
+    parse plus identity, `covers`, `date` and every validation problem."""
+    for row in scan_checkpoints(vault, split=split):
+        if row["course"].lower() == course.lower() and row["checkpoint"] == cp_no:
+            p = vault / row["file"]
+            try:
+                text = p.read_text(encoding="utf-8-sig", errors="replace")
+            except OSError:
+                return None
+            d = parse(text)
+            d["file"] = row["file"]
+            d["checkpoint"] = row["checkpoint"]
+            d["covers"] = row["covers"]
+            d["date"] = row["date"]
+            d["title"] = row["title"]
+            d["problems"] = validate_checkpoint(text, vault=vault) + [
+                p_ for p_ in row["problems"]
+                if p_.startswith(("duplicate checkpoint", "course field"))]
+            return d
+    return None
+
+
+# --------------------------------------------------------------------------
 # the practice sidecars — machine-local state, never the vault (§8)
 # --------------------------------------------------------------------------
 # `.state.json` and `.jsonl` are both load-bearing suffixes: .gitignore already

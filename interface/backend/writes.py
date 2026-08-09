@@ -1028,9 +1028,18 @@ RESULTS = ("correct", "wrong", "skipped")
 SESSIONS_HEADING = "## Sessions"     # the study-log schema's one section
 
 
+def _unit_key(module, checkpoint) -> str | None:
+    """The sidecar key for one study unit: `<module>` or `cp<n>`. Exactly one
+    of the two must be set — a request naming both is confused, not flexible."""
+    if (module is None) == (checkpoint is None):
+        return None
+    return f"cp{checkpoint}" if checkpoint is not None else str(module)
+
+
 class LessonState(BaseModel):
     course: str
-    module: int
+    module: int | None = None
+    checkpoint: int | None = None    # a checkpoint's state, keyed cp<n> (S6)
     state: dict
 
 
@@ -1044,6 +1053,9 @@ def api_lesson_state(req: LessonState):
     course = (req.course or "").strip()
     if not course:
         return _err(400, "no course")
+    key = _unit_key(req.module, req.checkpoint)
+    if key is None:
+        return _err(400, "bad unit", detail="exactly one of module | checkpoint")
     try:
         blob = json.dumps(req.state)
     except (TypeError, ValueError):
@@ -1052,7 +1064,7 @@ def api_lesson_state(req: LessonState):
         return _err(413, "too large",
                     detail="view state is a few flags, not a document")
     st = ln.load_state()
-    st["modules"][f"{course}/{req.module}"] = req.state
+    st["modules"][f"{course}/{key}"] = req.state
     if not ln.save_state(st):
         return _err(500, "write failed", detail="the sidecar could not be written")
     return {"ok": True}
@@ -1060,7 +1072,8 @@ def api_lesson_state(req: LessonState):
 
 class AttemptReq(BaseModel):
     course: str
-    module: int
+    module: int | None = None
+    checkpoint: int | None = None  # checkpoint attempts share the one log (S6)
     qid: str
     result: str                    # correct | wrong | skipped
     hints: int = 0                 # how many hints were open when it resolved
@@ -1078,21 +1091,33 @@ def api_lesson_attempt(req: AttemptReq):
     the hash being the hash of what was actually asked."""
     if req.result not in RESULTS:
         return _err(400, "bad result", detail="correct | wrong | skipped")
-    d = ln.load(VAULT, req.course, req.module, split=panels._lesson_split)
-    if d is None:
-        return _err(404, "no such module", detail=f"{req.course} M{req.module}")
+    if _unit_key(req.module, req.checkpoint) is None:
+        return _err(400, "bad unit", detail="exactly one of module | checkpoint")
+    if req.checkpoint is not None:
+        d = ln.load_checkpoint(VAULT, req.course, req.checkpoint,
+                               split=panels._lesson_split)
+        if d is None:
+            return _err(404, "no such checkpoint",
+                        detail=f"{req.course} CP{req.checkpoint}")
+    else:
+        d = ln.load(VAULT, req.course, req.module, split=panels._lesson_split)
+        if d is None:
+            return _err(404, "no such module", detail=f"{req.course} M{req.module}")
     hit = ln.find_item(d, req.qid)
     if hit is None:
         return _err(404, "no such question", detail=req.qid)
     seg, item = hit
 
     row = {
-        "ts": ln.now_iso(), "course": d["course"], "module": d["module"],
+        "ts": ln.now_iso(), "course": d["course"],
+        "module": None if req.checkpoint is not None else d["module"],
         "qid": req.qid, "qhash": ln.qhash(item["prompt"]),
         "kind": item["kind"], "seg": seg["n"], "seg_title": seg["title"],
         "result": req.result, "hints": max(0, req.hints),
         "revealed": bool(req.revealed),
     }
+    if req.checkpoint is not None:
+        row["checkpoint"] = req.checkpoint
     if req.answer:
         row["answer"] = " ".join(req.answer.split())[:200]
     if not ln.record_attempt(row):
@@ -1148,7 +1173,10 @@ def api_lesson_session_end(req: SessionEnd):
     skipped = [r for r in rows if r.get("result") == "skipped"]
     mods = sorted({int(r["module"]) for r in rows
                    if isinstance(r.get("module"), int)})
-    mod_label = "+".join(f"M{m:02d}" for m in mods) or "M?"
+    cps = sorted({int(r["checkpoint"]) for r in rows
+                  if isinstance(r.get("checkpoint"), int)})
+    mod_label = "+".join([f"M{m:02d}" for m in mods]
+                         + [f"CP{c}" for c in cps]) or "M?"
 
     bits = [f"- {datetime.date.today().isoformat()} · {mod_label}",
             f"{len(answered)} answered, {len(correct)} correct"]

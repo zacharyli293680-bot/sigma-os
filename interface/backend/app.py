@@ -22,7 +22,7 @@ from claude_agent_sdk import (AssistantMessage, ClaudeSDKClient, ResultMessage,
                               StreamEvent, TextBlock, ToolUseBlock)
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from agent import VAULT, build_options, describe
@@ -79,7 +79,15 @@ async def run(ask: Ask):
     opts = build_options()
     if ask.session_id:
         opts.resume = ask.session_id
+    async for chunk in stream_agent(ask.question, opts, "ask"):
+        yield chunk
 
+
+async def stream_agent(question: str, opts, spend_actor: str):
+    """One agent conversation as an SSE stream — the loop behind /api/ask
+    since Phase 3, parameterised for the tutor (study S5) rather than copied.
+    `spend_actor` labels the metering row; everything else is identical, which
+    is the point: one streaming loop, one options builder, one privacy guard."""
     saw_text = False
     try:
         # ClaudeSDKClient rather than query(): it always runs the CLI in
@@ -88,7 +96,7 @@ async def run(ask: Ask):
         # a privacy guard that silently does not run is the whole failure mode
         # this project keeps rediscovering.
         async with ClaudeSDKClient(options=opts) as client:
-            await client.connect(as_stream(ask.question))
+            await client.connect(as_stream(question))
             async for msg in client.receive_response():
                 # Token deltas — what makes the answer appear as it is written.
                 if isinstance(msg, StreamEvent):
@@ -144,7 +152,7 @@ async def run(ask: Ask):
                         from sigma import spend
                         blob = str(getattr(msg, "result", "") or "").lower()
                         spend.record_spend(
-                            actor="ask", cost_usd=msg.total_cost_usd,
+                            actor=spend_actor, cost_usd=msg.total_cost_usd,
                             rate_limited=bool(msg.is_error) and any(
                                 s in blob for s in ("rate limit", "rate_limit", "429",
                                                     "usage limit", "quota", "overloaded")))
@@ -209,6 +217,175 @@ app.include_router(writes.router)
 # them) coexist — a literal path wins over a parameterised one.
 import review  # noqa: E402
 app.include_router(review.router)
+
+
+# --------------------------------------------------------------------------
+# the tutor (study S5) — the same conversation loop, pinned to the workbench
+# --------------------------------------------------------------------------
+# What makes this a tutor rather than a second chat drawer is the context
+# block: assembled HERE, from what the workbench actually has open, never by
+# the model (§12). It rides at the top of every message — a resumed session
+# re-pins as Zach moves through segments — and the mode decides how much of
+# the reference answer he gets. One options builder, one privacy guard, one
+# streaming loop: everything but the orientation is /api/ask's machinery.
+import lesson as tutor_ln  # noqa: E402  — runtime/ is on sys.path above
+import panels as panels_mod  # noqa: E402  — for the sealed-path split
+import commands as commands_mod  # noqa: E402  — the ONE window-hold policy
+
+TUTOR_ORIENTATION = """
+You are Sigma's study tutor, working in the dock beside one module of one of
+Zach's courses. Every message you receive opens with a **pinned context
+block** the backend assembled from what is actually open in the workbench —
+course, module, segment, the exact practice item, Zach's current attempt,
+which hints he has opened, his recent misses. Trust it over memory. Read the
+cited lecture notes with Read/Grep when depth is needed; do not answer from
+recall what the vault can answer from disk.
+
+Discipline:
+- **Ground everything.** The module cites its sources; a claim you cannot
+  trace to one is a claim to withhold. Cite notes as `[[wikilinks]]`.
+- **You can see the reference answer.** That is so you can steer, not so you
+  can recite — the mode line at the end of this prompt decides how much of it
+  Zach gets, and it wins over anything the conversation asks of you.
+- **Stay small.** This is a margin conversation beside a lesson, not an
+  essay: a few sentences, formulas in backticks or 4-space-indented blocks.
+- If the module note itself is wrong — it contradicts the source it cites —
+  say so and raise `propose_change` (kind: note, target: the module's
+  vault-relative path, content: the full corrected note). The correction goes
+  through Zach's approval queue like every other change; never claim it was
+  applied, because it was not.
+""".strip()
+
+# Three modes matching the three depths (§12). Default nudge — a tutor that
+# answers on the first ask is a spoiler button with extra steps.
+TUTOR_MODES = {
+    "nudge": ("Mode: NUDGE — reply with at most one short guiding question or "
+              "observation that moves Zach a single step. Never state the "
+              "final answer or perform the decisive computation, even if "
+              "pressed twice; switching modes is his click, not your call."),
+    "explain": ("Mode: EXPLAIN — re-teach the underlying concept differently "
+                "than the module text does, with one tiny fresh example of "
+                "your own. Stop short of the pinned item's final answer."),
+    "solve": ("Mode: SOLVE — walk the pinned practice item through to its "
+              "answer step by step, naming the principle behind each step, "
+              "and end with the result stated plainly."),
+}
+
+
+class TutorAsk(BaseModel):
+    course: str
+    module: int | None = None       # exactly one of module | checkpoint
+    checkpoint: int | None = None
+    seg: int | None = None          # the open segment's number S<n>
+    qid: str | None = None          # the pinned practice item, if any
+    given: str | None = None        # Zach's current attempt text
+    hints: int = 0                  # hints he has opened on that item
+    revealed: bool = False          # whether the answer is already shown
+    mode: str = "nudge"
+    question: str
+    session_id: str | None = None
+
+
+def _tutor_context(ask: TutorAsk) -> tuple[str | None, str | None]:
+    """(pinned block, error). The error names what could not be pinned —
+    a tutor with a wrong pin would teach beside the wrong lesson."""
+    course = (ask.course or "").strip()
+    if not course:
+        return None, "no course"
+    if (ask.module is None) == (ask.checkpoint is None):
+        return None, "exactly one of module | checkpoint"
+    if ask.checkpoint is not None:
+        d = tutor_ln.load_checkpoint(VAULT, course, ask.checkpoint,
+                                     split=panels_mod._lesson_split)
+        if d is None:
+            return None, f"no such checkpoint: {course} CP{ask.checkpoint}"
+        unit = f"checkpoint CP{ask.checkpoint}"
+    else:
+        d = tutor_ln.load(VAULT, course, ask.module,
+                          split=panels_mod._lesson_split)
+        if d is None:
+            return None, f"no such module: {course} M{ask.module}"
+        unit = f"module M{d['module']:02d}" if d["module"] is not None else "module"
+
+    lines = ["## Pinned context",
+             "Assembled by Sigma's backend from the open workbench — ground "
+             "truth for this conversation.",
+             "",
+             f"- course: {d['course']} · {unit}"
+             + (f" — {d['title']}" if d.get("title") else ""),
+             f"- note: {d['file']}"]
+
+    seg = next((s for s in d["segments"] if s["n"] == ask.seg), None) \
+        if ask.seg is not None else None
+    if seg is not None:
+        lines.append(f"- open segment: S{seg['n']} · {seg['title']} "
+                     f"(⏱ {seg['minutes']} min)")
+        for src in seg["sources"]:
+            lines.append(f"- segment source: {src['path']}")
+
+    if ask.qid:
+        hit = tutor_ln.find_item(d, ask.qid)
+        if hit is not None:
+            iseg, item = hit
+            prompt = "\n".join(f"    {l}" for l in item["prompt"].splitlines())
+            lines.append(f"- pinned practice item {item['id']} ({item['kind']}, "
+                         f"in S{iseg['n']} · {iseg['title']}):")
+            lines.append(prompt)
+            lines.append(f"  - reference answer: {item['answer'] or '(none)'}")
+            lines.append(f"  - reference solution: {item['solution'] or '(none)'}")
+            lines.append(f"  - hints opened: {max(0, ask.hints)} of "
+                         f"{len(item['hints'])}"
+                         + (" · answer already revealed" if ask.revealed else ""))
+            if ask.given and ask.given.strip():
+                lines.append(f"  - Zach's current attempt: "
+                             f"{' '.join(ask.given.split())[:200]}")
+
+    try:
+        wrong = [r for r in tutor_ln.attempts_for(course)
+                 if r.get("result") == "wrong"]
+    except Exception:
+        wrong = []                  # the pin must survive a torn sidecar
+    if wrong:
+        lines.append(f"- recent misses in {course} (from the attempt log): "
+                     f"{tutor_ln.digest(wrong[-8:])}")
+
+    if d.get("sources"):
+        lines.append("- module sources: " + " · ".join(d["sources"]))
+    return "\n".join(lines), None
+
+
+@app.get("/api/tutor/hold")
+def api_tutor_hold():
+    """Why the tutor is unavailable right now, or null. The same function the
+    palette greys model verbs with — inherited, never a second policy (§12)."""
+    return {"hold": commands_mod._window_hold()}
+
+
+@app.post("/api/tutor")
+async def api_tutor(ask: TutorAsk):
+    # Enforced at POST, not just advertised at GET — the listing is a
+    # courtesy, the refusal is the policy. commands.py's exact doctrine.
+    hold = commands_mod._window_hold()
+    if hold:
+        return JSONResponse({"error": "window", "reason": hold}, status_code=409)
+
+    ctx, err = _tutor_context(ask)
+    if err:
+        return JSONResponse({"error": err},
+                            status_code=404 if err.startswith("no such") else 400)
+
+    mode = ask.mode if ask.mode in TUTOR_MODES else "nudge"
+    opts = build_options(allow_proposals=True,
+                         orientation=f"{TUTOR_ORIENTATION}\n\n{TUTOR_MODES[mode]}",
+                         actor="tutor")
+    if ask.session_id:
+        opts.resume = ask.session_id
+    question = (ask.question or "").strip() or "Where should I look next?"
+    return StreamingResponse(
+        stream_agent(f"{ctx}\n\n{question}", opts, "tutor"),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.on_event("shutdown")

@@ -849,7 +849,68 @@ def _scan_study() -> dict:
     # with no date cannot be ranked against one that has one.
     exams.sort(key=lambda e: (e["days"] is None, e["days"] if e["days"] is not None else 0,
                               e["course"], e["exam"] or ""))
-    return {"exams": exams, "coverage": coverage}
+    return {"exams": exams, "coverage": coverage, "practice": _practice_history()}
+
+
+def _practice_history() -> list:
+    """What was actually missed, per course — exam mode's third panel
+    (study S6), built on the attempt log the practice engine writes.
+
+    Two sources, both named in the payload rather than blended: `by_topic`
+    comes from the machine-local attempt log (fine-grained, gitignored,
+    losable), and `sessions` are the durable digest rows the rollup spliced
+    into the course's study log. When both are empty the course is omitted
+    and the view keeps its honest empty state — this panel was deliberately
+    absent until a real source existed, and it must never show a guess."""
+    root = VAULT / "02-Areas" / "Academics"
+    out = []
+    if not root.is_dir():
+        return out
+    for folder in sorted(p for p in root.iterdir() if p.is_dir()):
+        course = folder.name
+        rows = ln.attempts_for(course)
+        answered = [r for r in rows if r.get("result") in ("correct", "wrong")]
+        wrong = [r for r in rows if r.get("result") == "wrong"]
+        by: dict = {}
+        for r in wrong:
+            key = str(r.get("seg_title") or r.get("qid") or "?").strip()
+            g = by.setdefault(key, {"topic": key, "wrong": 0, "last": ""})
+            g["wrong"] += 1
+            g["last"] = max(g["last"], str(r.get("ts") or "")[:10])
+
+        sessions = []
+        log_p = folder / f"{course.lower()}-study-log.md"
+        rel = _rel(log_p)
+        sealed, _ = _split([rel])
+        if log_p.is_file() and rel not in sealed:
+            try:
+                text = log_p.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                text = ""
+            in_sessions = False
+            for line in text.splitlines():
+                if line.strip() == "## Sessions":
+                    in_sessions = True
+                    continue
+                if in_sessions and line.startswith("#"):
+                    break
+                if in_sessions and line.lstrip().startswith("- "):
+                    sessions.append(line.lstrip()[2:].strip())
+            sessions.reverse()               # newest rollup row last in the note
+
+        if not rows and not sessions:
+            continue
+        out.append({
+            "course": course,
+            "attempts": len(rows), "answered": len(answered),
+            "wrong": len(wrong),
+            "last": max((str(r.get("ts") or "")[:10] for r in rows), default=None),
+            "by_topic": sorted(by.values(),
+                               key=lambda g: (-g["wrong"], g["topic"])),
+            "sessions": sessions[:10],
+            "sessions_more": max(0, len(sessions) - 10),
+        })
+    return out
 
 
 @router.get("/study")
@@ -865,7 +926,11 @@ def _lesson_split(_vault, rels):
 
 
 def _scan_lesson_list() -> dict:
-    return {"modules": ln.scan(VAULT, split=_lesson_split)}
+    # Checkpoints ride the same list (study S6): the chain view joins its rows
+    # to what is openable by wikilink basename, and a checkpoint row is
+    # openable exactly like a module row.
+    return {"modules": ln.scan(VAULT, split=_lesson_split),
+            "checkpoints": ln.scan_checkpoints(VAULT, split=_lesson_split)}
 
 
 @router.get("/lesson")
@@ -886,6 +951,19 @@ def api_lesson(course: str, module_no: int):
     # it was — keyed on the note's own course spelling, which is what the
     # state write stores under.
     d["state"] = ln.load_state()["modules"].get(f"{d['course']}/{module_no}")
+    return d
+
+
+@router.get("/checkpoint/{course}/{cp_no}")
+def api_checkpoint(course: str, cp_no: int):
+    # Fresh like the lesson detail, and for the same reason. The sidecar key
+    # is `<course>/cp<n>` — the `cp` prefix is what keeps checkpoint state
+    # from colliding with module state in the same map.
+    d = ln.load_checkpoint(VAULT, course, cp_no, split=_lesson_split)
+    if d is None:
+        return JSONResponse({"error": "no such checkpoint",
+                             "detail": f"{course} CP{cp_no}"}, status_code=404)
+    d["state"] = ln.load_state()["modules"].get(f"{d['course']}/cp{cp_no}")
     return d
 
 
