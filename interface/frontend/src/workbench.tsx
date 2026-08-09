@@ -1,6 +1,6 @@
 /**
- * workbench.tsx — study mode's course dashboard, lesson view and practice
- * engine (S1–S3 of the study plan).
+ * workbench.tsx — study mode's course dashboard, lesson view, practice
+ * engine, dock and tutor (S1–S6 of the study plan).
  *
  * Two levels inside one component tree. The **chain view** (S2) is the course
  * dashboard: every active course, its guide chain rendered as the sequence it
@@ -8,10 +8,17 @@
  * carrying the three actions (study, complete, skip). Completion goes through
  * the same POST /api/tasks/toggle as any checkbox — a human click, one commit,
  * one ledger row — and skip through POST /api/tasks/skip, so undo is the
- * ledger's revert either way. The **lesson view** (S1) renders one module,
- * now with the practice engine (S3): staged hints, numeric auto-check with
+ * ledger's revert either way. The **lesson view** renders one module (S1)
+ * or one checkpoint (S6 — same grammar, practice only, no depth levels),
+ * with the practice engine (S3): staged hints, numeric auto-check with
  * tolerance, MCQ letter checks, self-assessed reveal for short/proof/code,
  * per-question skip, every resolution appended to the attempt log.
+ *
+ * The dock holds exactly one slot at a time (§11): provenance, the work pad,
+ * the code sandbox (S4 — Pyodide + sql.js, vendored, lazy-loaded, failures
+ * reported as failures), or the tutor (S5 — the backend pins course/module/
+ * segment/item context on every message; three modes; window-held exactly as
+ * the palette's model verbs are; module corrections arrive as proposals).
  *
  * All view state lives in one reducer on purpose (the plan's §11/§15); the
  * reducer state mirrors to the machine-local sidecar (POST /api/lesson/state)
@@ -24,11 +31,13 @@
  * A module whose parse reports problems is HELD and never rendered as if fine.
  */
 import { useEffect, useReducer, useRef, useState } from "react";
-import { get, obsidianHref, post, ApiError } from "./api";
+import { API, get, obsidianHref, post, ApiError } from "./api";
 import type {
-  Courses, Guide, GuideRow, Lesson, LessonList, LessonListRow,
+  Courses, Guide, GuideRow, Lesson, LessonList,
   LessonSegment, PracticeItem, Rollup,
 } from "./api";
+import { pythonReady, resetSql, runPython, runSql, warmPython } from "./sandbox";
+import type { PyRun, SqlRun } from "./sandbox";
 
 type Depth = "summary" | "normal" | "in_depth";
 const DEPTH_LABEL: [Depth, string][] = [
@@ -44,29 +53,44 @@ type PracticeSt = {
 };
 const P0: PracticeSt = { hints: 0, revealed: false, result: null, given: "" };
 
+/** The dock's four slots — exactly one open at a time (§11). */
+type Slot = "prov" | "work" | "code" | "tutor";
+const SLOT_LABEL: [Slot, string][] = [
+  ["prov", "[?] prov"], ["work", "✎ work"], ["code", "▸ code"], ["tutor", "✦ tutor"]];
+
+type Lang = "python" | "sql";
+const SCRATCH_MAX = 4000;
+
 type WbState = {
   seg: number;                       // index into segments
   depth: Record<number, Depth>;      // per-segment and sticky…
   fallback: Depth;                   // …over a course-level default
   focus: boolean;                    // dock collapsed, column centred
-  dock: boolean;                     // the provenance slot
+  dock: Slot | null;                 // which slot is open, if any
   practice: Record<string, PracticeSt>;
+  scratch: string;                   // the work pad — sidecar-persisted
+  lastQid: string | null;            // what the tutor pins — last touched item
+  code: { lang: Lang; text: string };  // the sandbox editor — transient
 };
 type WbAction =
   | { t: "seg"; i: number }
   | { t: "depth"; i: number; d: Depth }
   | { t: "focus" }
-  | { t: "dock"; open: boolean }
+  | { t: "dock"; slot: Slot | null }
   | { t: "reset" }
   | { t: "hydrate"; depth: Record<number, Depth>; fallback: Depth;
-      practice: Record<string, PracticeSt> }
+      practice: Record<string, PracticeSt>; scratch: string }
   | { t: "hint"; qid: string }
   | { t: "reveal"; qid: string }
   | { t: "given"; qid: string; text: string }
-  | { t: "result"; qid: string; r: Result };
+  | { t: "result"; qid: string; r: Result }
+  | { t: "scratch"; text: string }
+  | { t: "code"; lang?: Lang; text?: string };
 
 const START: WbState = {
-  seg: 0, depth: {}, fallback: "normal", focus: false, dock: true, practice: {},
+  seg: 0, depth: {}, fallback: "normal", focus: false, dock: "prov",
+  practice: {}, scratch: "", lastQid: null,
+  code: { lang: "python", text: "" },
 };
 
 function pr(st: WbState, qid: string): PracticeSt {
@@ -78,22 +102,26 @@ function reduce(st: WbState, a: WbAction): WbState {
     case "seg": return { ...st, seg: a.i };
     case "depth": return { ...st, depth: { ...st.depth, [a.i]: a.d } };
     case "focus": return { ...st, focus: !st.focus };
-    case "dock": return { ...st, dock: a.open };
+    case "dock": return { ...st, dock: a.slot };
     case "reset": return START;
     case "hydrate":
-      return { ...st, depth: a.depth, fallback: a.fallback, practice: a.practice };
+      return { ...st, depth: a.depth, fallback: a.fallback,
+               practice: a.practice, scratch: a.scratch };
     case "hint":
-      return { ...st, practice: { ...st.practice,
+      return { ...st, lastQid: a.qid, practice: { ...st.practice,
         [a.qid]: { ...pr(st, a.qid), hints: pr(st, a.qid).hints + 1 } } };
     case "reveal":
-      return { ...st, practice: { ...st.practice,
+      return { ...st, lastQid: a.qid, practice: { ...st.practice,
         [a.qid]: { ...pr(st, a.qid), revealed: true } } };
     case "given":
-      return { ...st, practice: { ...st.practice,
+      return { ...st, lastQid: a.qid, practice: { ...st.practice,
         [a.qid]: { ...pr(st, a.qid), given: a.text } } };
     case "result":
-      return { ...st, practice: { ...st.practice,
+      return { ...st, lastQid: a.qid, practice: { ...st.practice,
         [a.qid]: { ...pr(st, a.qid), result: a.r } } };
+    case "scratch": return { ...st, scratch: a.text.slice(0, SCRATCH_MAX) };
+    case "code": return { ...st, code: { lang: a.lang ?? st.code.lang,
+                                         text: a.text ?? st.code.text } };
   }
 }
 
@@ -174,14 +202,27 @@ function mcqAnswer(answer: string): string | null {
   return m ? m[1] : null;
 }
 
+/** The first fenced code block of a `code` practice item, for the sandbox.
+ *  No fence → the prompt itself, commented, so context rides along. */
+function fenced(prompt: string): { lang: Lang; code: string } {
+  const m = prompt.match(/```(\w+)?\r?\n([\s\S]*?)```/);
+  if (m) {
+    const lang: Lang = (m[1] || "").toLowerCase() === "sql" ? "sql" : "python";
+    return { lang, code: m[2].replace(/\s+$/, "") + "\n" };
+  }
+  const commented = prompt.split("\n").map(l => (l.trim() ? `# ${l}` : "#")).join("\n");
+  return { lang: "python", code: `${commented}\n\n` };
+}
+
 /** One practice item, live. Auto-checked where the decision list allows
  *  (MCQ, numeric with tolerance), self-assessed everywhere else — a model
  *  never grades free response, and neither does a regex pretending to. */
-function PracticeBox({ it, st, onHint, onReveal, onGiven, onResolve }: {
+function PracticeBox({ it, st, onHint, onReveal, onGiven, onResolve, onSandbox }: {
   it: PracticeItem; st: PracticeSt;
   onHint: () => void; onReveal: () => void;
   onGiven: (s: string) => void;
   onResolve: (r: Result, given?: string) => void;
+  onSandbox?: (lang: Lang, code: string) => void;
 }) {
   const expected = it.kind === "numeric" ? parseNumeric(it.answer ?? "") : null;
   const letters = it.kind === "mcq" ? mcqLetters(it.prompt) : [];
@@ -251,6 +292,12 @@ function PracticeBox({ it, st, onHint, onReveal, onGiven, onResolve }: {
               ({l})
             </button>
           ))}
+          {it.kind === "code" && onSandbox && (
+            <button className="ghost" title="load this item into the code dock"
+                    onClick={() => { const f = fenced(it.prompt); onSandbox(f.lang, f.code); }}>
+              ▸ open in sandbox
+            </button>
+          )}
           {!auto && !st.revealed && (
             <button className="ghost" onClick={onReveal}>reveal answer</button>
           )}
@@ -277,11 +324,14 @@ function PracticeBox({ it, st, onHint, onReveal, onGiven, onResolve }: {
   );
 }
 
-function Segment({ seg, depth, st, onDepth, dispatch, onResolve }: {
+function Segment({ seg, depth, st, cp, onDepth, dispatch, onResolve, onSandbox }: {
   seg: LessonSegment; depth: Depth; st: WbState;
+  /** Checkpoint rendering: practice only — no depth tabs, no example (§5.4). */
+  cp: boolean;
   onDepth: (d: Depth) => void;
   dispatch: (a: WbAction) => void;
   onResolve: (it: PracticeItem, r: Result, given?: string) => void;
+  onSandbox: (lang: Lang, code: string) => void;
 }) {
   const resolved = seg.practice.filter(it => pr(st, it.id).result !== null).length;
   return (
@@ -290,15 +340,17 @@ function Segment({ seg, depth, st, onDepth, dispatch, onResolve }: {
         <h3>S{seg.n} · {seg.title}</h3>
         <span className="wb-min">⏱ {seg.minutes} min</span>
       </div>
-      <div className="wb-depths" role="tablist" aria-label="Depth">
-        {DEPTH_LABEL.map(([d, label]) => (
-          <button key={d} role="tab" aria-selected={depth === d}
-                  className={depth === d ? "active" : ""}
-                  onClick={() => onDepth(d)}>{label}</button>
-        ))}
-      </div>
-      <Rich text={seg[depth]} />
-      {seg.example && (
+      {!cp && (
+        <div className="wb-depths" role="tablist" aria-label="Depth">
+          {DEPTH_LABEL.map(([d, label]) => (
+            <button key={d} role="tab" aria-selected={depth === d}
+                    className={depth === d ? "active" : ""}
+                    onClick={() => onDepth(d)}>{label}</button>
+          ))}
+        </div>
+      )}
+      {!cp && <Rich text={seg[depth]} />}
+      {!cp && seg.example && (
         <div className="wb-example">
           <h4>Example</h4>
           <Rich text={seg.example} />
@@ -313,12 +365,202 @@ function Segment({ seg, depth, st, onDepth, dispatch, onResolve }: {
                 onHint={() => dispatch({ t: "hint", qid: it.id })}
                 onReveal={() => dispatch({ t: "reveal", qid: it.id })}
                 onGiven={s => dispatch({ t: "given", qid: it.id, text: s })}
-                onResolve={(r, given) => onResolve(it, r, given)} />
+                onResolve={(r, given) => onResolve(it, r, given)}
+                onSandbox={onSandbox} />
             ))}
           </ul>
         </div>
       )}
     </>
+  );
+}
+
+/* ------------------------------------------------------------------ dock */
+
+/** The code sandbox (S4). Pyodide and sql.js, vendored and lazy — the first
+ *  run pays the load, and a failure is a traceback on screen, never a shrug. */
+function CodeDock({ code, dispatch }: {
+  code: { lang: Lang; text: string };
+  dispatch: (a: WbAction) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [coldLoad, setColdLoad] = useState(false);
+  const [py, setPy] = useState<PyRun | null>(null);
+  const [sq, setSq] = useState<SqlRun | null>(null);
+
+  // Opening the slot on python overlaps the ~14 MB load with typing.
+  useEffect(() => {
+    if (code.lang === "python") warmPython();
+  }, [code.lang]);
+
+  const run = async () => {
+    if (busy || !code.text.trim()) return;
+    setBusy(true);
+    if (code.lang === "python") {
+      setColdLoad(!pythonReady());
+      setPy(await runPython(code.text));
+      setColdLoad(false);
+    } else {
+      setSq(await runSql(code.text));
+    }
+    setBusy(false);
+  };
+
+  const out = code.lang === "python" ? py : sq;
+  return (
+    <div className="wb-code">
+      <div className="wb-codebar">
+        {(["python", "sql"] as Lang[]).map(l => (
+          <button key={l} className={`ghost ${code.lang === l ? "active" : ""}`}
+                  onClick={() => dispatch({ t: "code", lang: l })}>{l}</button>
+        ))}
+        <span className="dim wb-codenote"
+              title="both engines are vendored into the build — no CDN, nothing leaves this machine">
+          runs locally
+        </span>
+        {code.lang === "sql" && (
+          <button className="ghost" title="drop the session database"
+                  onClick={() => { resetSql(); setSq(null); }}>reset db</button>
+        )}
+        <button className="ghost" disabled={busy || !code.text.trim()} onClick={run}>
+          {busy ? "running…" : "▶ run"}
+        </button>
+      </div>
+      <textarea className="wb-editor" value={code.text} spellCheck={false}
+                aria-label="sandbox editor"
+                placeholder={code.lang === "python"
+                  ? "# python — e.g. compute a resultant, a moment, a unit vector…"
+                  : "-- sql — the database persists between runs; reset db to start over"}
+                onChange={e => dispatch({ t: "code", text: e.target.value })}
+                onKeyDown={e => {
+                  if (e.key === "Enter" && e.ctrlKey) { e.preventDefault(); void run(); }
+                }} />
+      <div className="wb-codeout">
+        {busy && coldLoad && (
+          <p className="dim">loading the vendored Python runtime — first run
+          only, ~14 MB from this machine…</p>
+        )}
+        {code.lang === "python" && py && (
+          <>
+            {py.stdout && <pre className="wb-out">{py.stdout}</pre>}
+            {py.result !== null && <p className="wb-res">→ {py.result}</p>}
+            {py.error && <pre className="wb-out wb-outerr">{py.error}</pre>}
+            <p className="dim">{py.ok ? "ok" : "failed"} · {py.ms} ms</p>
+          </>
+        )}
+        {code.lang === "sql" && sq && (
+          <>
+            {sq.tables.map((t, i) => (
+              <table key={i} className="wb-sqltab">
+                <thead><tr>{t.columns.map(c => <th key={c}>{c}</th>)}</tr></thead>
+                <tbody>
+                  {t.values.map((row, j) => (
+                    <tr key={j}>{row.map((v, k) => <td key={k}>{v}</td>)}</tr>
+                  ))}
+                </tbody>
+              </table>
+            ))}
+            {sq.ok && sq.tables.length === 0 && (
+              <p className="dim">ok — no result set (statement ran)</p>
+            )}
+            {sq.error && <pre className="wb-out wb-outerr">{sq.error}</pre>}
+            <p className="dim">{sq.ok ? "ok" : "failed"} · {sq.ms} ms</p>
+          </>
+        )}
+        {!out && !busy && (
+          <p className="dim">python and sql run here; other languages render
+          in lessons but are labelled not runnable. Ctrl+Enter runs.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+type TutorMode = "nudge" | "explain" | "solve";
+type TutorTurn = {
+  q: string; a: string;
+  tools: { name: string; detail: string }[];
+  blocked: string[];
+  proposals: string[];              // propose_change titles — the S5 done-when
+  error?: string;
+};
+
+/** The tutor slot (S5). The pin line is what the backend will assemble the
+ *  context from — shown so what the tutor knows is never a mystery. */
+function TutorDock({ turns, busy, hold, mode, pin, onMode, onAsk }: {
+  turns: TutorTurn[]; busy: boolean; hold: string | null;
+  mode: TutorMode; pin: string;
+  onMode: (m: TutorMode) => void;
+  onAsk: (q: string) => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const endRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); },
+            [turns, busy]);
+  return (
+    <div className="wb-tutor">
+      <div className="wb-modes" role="tablist" aria-label="Tutor mode">
+        {(["nudge", "explain", "solve"] as TutorMode[]).map(m => (
+          <button key={m} role="tab" aria-selected={mode === m}
+                  className={mode === m ? "active" : ""}
+                  title={m === "nudge" ? "one question back, never the answer"
+                    : m === "explain" ? "re-teach it differently"
+                    : "walk it through to the answer"}
+                  onClick={() => onMode(m)}>{m}</button>
+        ))}
+      </div>
+      <p className="dim wb-pin" title="the backend assembles this context onto every message">
+        pinned: {pin}
+      </p>
+      {hold && <p className="wb-hold">⏸ {hold}</p>}
+      <div className="wb-turns">
+        {turns.length === 0 && !hold && (
+          <p className="dim">Ask about the open segment or the pinned item.
+          Nudge mode answers with a question, on purpose.</p>
+        )}
+        {turns.map((t, i) => (
+          <div key={i} className="wb-turn">
+            <p className="wb-turn-q">{t.q}</p>
+            {t.tools.length > 0 && (
+              <p className="dim wb-turn-trail">
+                {t.tools.map(x => x.detail || x.name).join(" · ")}
+              </p>
+            )}
+            {t.blocked.map((b, j) => (
+              <p key={j} className="dim wb-turn-trail">🔒 {b}</p>
+            ))}
+            {t.proposals.map((p, j) => (
+              <p key={j} className="wb-proposal">
+                ✎ proposal raised: <b>{p}</b> — pending in WAITING ON YOU, nothing
+                applied
+              </p>
+            ))}
+            <div className="wb-turn-a">
+              {t.a ? <Rich text={t.a} />
+                : busy && i === turns.length - 1
+                ? <span className="dim">thinking…</span> : null}
+            </div>
+            {t.error && <p className="err">{t.error}</p>}
+          </div>
+        ))}
+        <div ref={endRef} />
+      </div>
+      <form className="wb-tutorform" onSubmit={e => {
+        e.preventDefault();
+        const q = draft.trim();
+        if (!q || busy || hold) return;
+        setDraft("");
+        onAsk(q);
+      }}>
+        <input value={draft} onChange={e => setDraft(e.target.value)}
+               disabled={busy || !!hold}
+               placeholder={hold ? "held — the window is reserved"
+                 : busy ? "thinking…" : `ask (${mode})…`} />
+        <button type="submit" className="ghost" disabled={busy || !!hold || !draft.trim()}>
+          ask
+        </button>
+      </form>
+    </div>
   );
 }
 
@@ -331,6 +573,13 @@ function rowText(r: GuideRow): string {
     .replace(/\s+/g, " ").trim();
 }
 
+/** What a chain row can open: a module or a checkpoint, joined by wikilink
+ *  target basename — basenames are vault-unique, so the join is exact. */
+type Openable = {
+  kind: "module" | "checkpoint";
+  course: string; num: number; file: string; title: string;
+};
+
 export default function WorkbenchView({ open, vault, onClose }: {
   open: boolean; vault: string; onClose: () => void;
 }) {
@@ -338,13 +587,21 @@ export default function WorkbenchView({ open, vault, onClose }: {
   const [courses, setCourses] = useState<Courses | null | undefined>(undefined);
   const [course, setCourse] = useState<string | null>(null);
   const [guide, setGuide] = useState<Guide | null | undefined>(undefined);
-  const [picked, setPicked] = useState<LessonListRow | null>(null);
+  const [picked, setPicked] = useState<Openable | null>(null);
   const [lesson, setLesson] = useState<Lesson | null | undefined>(undefined);
   const [st, dispatch] = useReducer(reduce, START);
   const [busy, setBusy] = useState(false);
   const [chainErr, setChainErr] = useState<string | null>(null);
   const [last, setLast] = useState<{ sha: string; what: string } | null>(null);
   const [rollup, setRollup] = useState<Rollup | "busy" | string | null>(null);
+  // The tutor conversation lives up here, not in the slot component — switching
+  // dock slots must not lose the chat, and the close path needs nothing from it.
+  const [tutorTurns, setTutorTurns] = useState<TutorTurn[]>([]);
+  const [tutorSession, setTutorSession] = useState<string | null>(null);
+  const [tutorMode, setTutorMode] = useState<TutorMode>("nudge");
+  const [tutorHold, setTutorHold] = useState<string | null>(null);
+  const [tutorBusy, setTutorBusy] = useState(false);
+  const tutorInFlight = useRef(false);
   // Which courses have un-rolled-up attempts this session. A ref, not state:
   // nothing renders from it except the end-session button's presence, and the
   // close path reads it during cleanup when state is already torn down.
@@ -389,10 +646,16 @@ export default function WorkbenchView({ open, vault, onClose }: {
   useEffect(() => {
     if (!open || !picked) return;
     // Reset per-module view state: a surviving segment index from a longer
-    // module would point past the end of a shorter one.
+    // module would point past the end of a shorter one. The tutor resets too —
+    // its pinned context is this module, and a conversation about the last one
+    // continuing under a new pin would be quietly wrong.
     dispatch({ t: "reset" });
     setLesson(undefined);
-    get<Lesson>(`lesson/${picked.course}/${picked.module}`).then(l => {
+    setTutorTurns([]); setTutorSession(null); setTutorHold(null);
+    const url = picked.kind === "checkpoint"
+      ? `checkpoint/${picked.course}/${picked.num}`
+      : `lesson/${picked.course}/${picked.num}`;
+    get<Lesson>(url).then(l => {
       setLesson(l);
       // Resume where this module was left: the sidecar state rides on the
       // lesson payload. Validated field by field — it is machine-local JSON
@@ -416,23 +679,37 @@ export default function WorkbenchView({ open, vault, onClose }: {
       dispatch({ t: "hydrate", depth,
                  fallback: DEPTHS.includes(s.fallback as Depth)
                    ? s.fallback as Depth : "normal",
-                 practice });
+                 practice,
+                 scratch: typeof s.scratch === "string"
+                   ? s.scratch.slice(0, SCRATCH_MAX) : "" });
     }).catch(() => setLesson(null));
   }, [open, picked]);
 
   // Mirror view state to the sidecar, debounced — resume is the feature,
   // never a commit. Depth keys become strings in JSON; hydrate converts back.
   const rendered = !!lesson && lesson.problems.length === 0;
+  const isCp = picked?.kind === "checkpoint";
   useEffect(() => {
     if (!open || !rendered || !lesson) return;
     const id = window.setTimeout(() => {
       void post("lesson/state", {
-        course: lesson.course, module: lesson.module,
-        state: { depth: st.depth, fallback: st.fallback, practice: st.practice },
+        course: lesson.course,
+        ...(lesson.checkpoint != null
+          ? { checkpoint: lesson.checkpoint } : { module: lesson.module }),
+        state: { depth: st.depth, fallback: st.fallback,
+                 practice: st.practice, scratch: st.scratch },
       }).catch(() => {});
     }, 600);
     return () => window.clearTimeout(id);
-  }, [open, rendered, lesson, st.depth, st.fallback, st.practice]);
+  }, [open, rendered, lesson, st.depth, st.fallback, st.practice, st.scratch]);
+
+  // The tutor's availability, checked when its slot opens — the same window
+  // hold the palette's model verbs answer to, fetched, never guessed.
+  useEffect(() => {
+    if (!open || st.dock !== "tutor") return;
+    get<{ hold: string | null }>("tutor/hold")
+      .then(h => setTutorHold(h.hold)).catch(() => {});
+  }, [open, st.dock]);
 
   // Only intercept keys while a lesson body is actually rendered — the chain
   // view owns no focus or dock, and its Esc belongs to App's ladder.
@@ -450,7 +727,7 @@ export default function WorkbenchView({ open, vault, onClose }: {
         dispatch({ t: "focus" });
       } else if (e.key === "Escape") {
         if (st.focus) dispatch({ t: "focus" });
-        else if (st.dock) dispatch({ t: "dock", open: false });
+        else if (st.dock) dispatch({ t: "dock", slot: null });
         else { setPicked(null); setLesson(undefined); }   // module → chain view
         e.preventDefault();
         e.stopPropagation();
@@ -466,12 +743,20 @@ export default function WorkbenchView({ open, vault, onClose }: {
   const depth = st.depth[st.seg] ?? st.fallback;
   const held = (lesson?.problems.length ?? 0) > 0;
 
-  // Chain rows address modules by wikilink target; the lesson list addresses
-  // them by (course, module). Basenames are vault-unique, so they join there.
-  const byBase = new Map<string, LessonListRow>(
-    (list?.modules ?? []).map(m =>
-      [m.file.split("/").pop()!.replace(/\.md$/, ""), m]));
-  const rowModule = (r: GuideRow): LessonListRow | null =>
+  // Chain rows address notes by wikilink target; the lesson list addresses
+  // them by (course, number). Basenames are vault-unique, so they join there —
+  // modules and checkpoints both (S6).
+  const base = (f: string) => f.split("/").pop()!.replace(/\.md$/, "");
+  const byBase = new Map<string, Openable>();
+  for (const m of list?.modules ?? []) {
+    if (m.module != null) byBase.set(base(m.file),
+      { kind: "module", course: m.course, num: m.module, file: m.file, title: m.title });
+  }
+  for (const c of list?.checkpoints ?? []) {
+    if (c.checkpoint != null) byBase.set(base(c.file),
+      { kind: "checkpoint", course: c.course, num: c.checkpoint, file: c.file, title: c.title });
+  }
+  const rowOpen = (r: GuideRow): Openable | null =>
     r.target ? byBase.get(r.target.split("/").pop()!) ?? null : null;
 
   const act = async (what: string, path: string, body: unknown) => {
@@ -510,10 +795,18 @@ export default function WorkbenchView({ open, vault, onClose }: {
     dispatch({ t: "result", qid: it.id, r });
     touched.current.add(lesson.course);
     void post("lesson/attempt", {
-      course: lesson.course, module: lesson.module, qid: it.id, result: r,
+      course: lesson.course,
+      ...(lesson.checkpoint != null
+        ? { checkpoint: lesson.checkpoint } : { module: lesson.module }),
+      qid: it.id, result: r,
       hints: pr(st, it.id).hints, revealed: pr(st, it.id).revealed,
       answer: given ?? null,
     }).catch(() => {});
+  };
+
+  const toSandbox = (lang: Lang, code: string) => {
+    dispatch({ t: "code", lang, text: code });
+    dispatch({ t: "dock", slot: "code" });
   };
 
   const endSession = async () => {
@@ -530,8 +823,93 @@ export default function WorkbenchView({ open, vault, onClose }: {
     }
   };
 
+  // The tutor's ask: stream over POST /api/tutor, the chat drawer's reader
+  // with the workbench's pin riding in the body. A 409 is the window hold
+  // doing its job — shown as the hold, not as a failure.
+  const askTutor = async (question: string) => {
+    if (tutorInFlight.current || !lesson) return;
+    tutorInFlight.current = true;
+    setTutorBusy(true);
+    setTutorTurns(ts => [...ts, { q: question, a: "", tools: [], blocked: [], proposals: [] }]);
+    const patch = (fn: (t: TutorTurn) => TutorTurn) =>
+      setTutorTurns(ts => ts.map((t, i) => (i === ts.length - 1 ? fn(t) : t)));
+    const qid = st.lastQid;
+    const p = qid ? pr(st, qid) : null;
+    let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+    try {
+      const res = await fetch(`${API}/api/tutor`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          course: lesson.course,
+          ...(lesson.checkpoint != null
+            ? { checkpoint: lesson.checkpoint } : { module: lesson.module }),
+          seg: seg?.n ?? null, qid,
+          given: p?.given || null, hints: p?.hints ?? 0,
+          revealed: p?.revealed ?? false,
+          mode: tutorMode, question, session_id: tutorSession,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null) as
+          { error?: string; reason?: string } | null;
+        if (res.status === 409 && body?.reason) setTutorHold(body.reason);
+        patch(t => ({ ...t, error: body?.reason ?? body?.error ?? `${res.status}` }));
+        return;
+      }
+      if (!res.body) throw new Error("no response body");
+      reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const chunks = buf.split(/\r?\n\r?\n/);
+        buf = chunks.pop() ?? "";
+        for (const chunk of chunks) {
+          const line = chunk.split(/\r?\n/).find(l => l.startsWith("data: "));
+          if (!line) continue;
+          let e;
+          try { e = JSON.parse(line.slice(6)); } catch { continue; }
+          if (e.type === "token") patch(t => ({ ...t, a: t.a + e.text }));
+          else if (e.type === "tool") {
+            if (String(e.name).endsWith("propose_change")) {
+              patch(t => ({ ...t, proposals: [...t.proposals, e.detail || "a change"] }));
+            } else {
+              patch(t => ({ ...t, tools: [...t.tools, { name: e.name, detail: e.detail }] }));
+            }
+          }
+          else if (e.type === "denied")
+            patch(t => ({ ...t, blocked: [...t.blocked, e.message] }));
+          else if (e.type === "error") {
+            patch(t => ({ ...t, error: e.message }));
+            setTutorSession(null);
+          }
+          else if (e.type === "done") setTutorSession(e.session_id);
+        }
+      }
+    } catch (err) {
+      patch(t => ({ ...t, error: String(err) }));
+      setTutorSession(null);
+    } finally {
+      try { await reader?.cancel(); } catch { /* already closed */ }
+      tutorInFlight.current = false;
+      setTutorBusy(false);
+    }
+  };
+
   const inLesson = picked !== null;
   const row = courses?.courses.find(c => c.course === course) ?? null;
+  const unitLabel = lesson
+    ? (lesson.checkpoint != null
+      ? `CP${lesson.checkpoint}`
+      : `M${String(lesson.module ?? "?").padStart(2, "0")}`)
+    : "";
+  const pin = lesson
+    ? `${lesson.course} ${unitLabel}${seg ? ` · S${seg.n} ${seg.title}` : ""}`
+      + (st.lastQid ? ` · ${st.lastQid}` : "")
+    : "";
 
   return (
     <div className="palette-backdrop" onClick={onClose}>
@@ -541,10 +919,12 @@ export default function WorkbenchView({ open, vault, onClose }: {
           <span className="label">
             ◇ STUDY — {inLesson ? "WORKBENCH" : "COURSES"}
             {inLesson && lesson
-              ? ` · ${lesson.course} M${String(lesson.module ?? "?").padStart(2, "0")} — ${lesson.title}`
-              : ""}
+              ? ` · ${lesson.course} ${unitLabel} — ${lesson.title}` : ""}
             {inLesson && lesson?.estimate
               ? <span className="dim"> · {lesson.estimate} min</span> : null}
+            {inLesson && lesson && lesson.checkpoint != null && (lesson.covers?.length ?? 0) > 0
+              ? <span className="dim"> · covers {lesson.covers!.map(m => `M${String(m).padStart(2, "0")}`).join(", ")}</span>
+              : null}
           </span>
           <span>
             {inLesson && (
@@ -609,7 +989,9 @@ export default function WorkbenchView({ open, vault, onClose }: {
                         .filter(m => m.course === course)
                         .map(m => (
                           <button key={m.file} disabled={m.module == null}
-                                  onClick={() => setPicked(m)}>
+                                  onClick={() => m.module != null && setPicked({
+                                    kind: "module", course: m.course,
+                                    num: m.module, file: m.file, title: m.title })}>
                             M{String(m.module ?? "?").padStart(2, "0")} · {m.title}
                           </button>
                         ))}
@@ -644,9 +1026,9 @@ export default function WorkbenchView({ open, vault, onClose }: {
                 {chainErr && <p className="err">{chainErr}</p>}
                 <ul className="wb-rows">
                   {guide.rows.map(r => {
-                    const m = rowModule(r);
+                    const m = rowOpen(r);
                     const frontier = guide.frontier?.line === r.line;
-                    const openable = m != null && m.module != null;
+                    const openable = m != null;
                     return (
                       <li key={r.line}
                           className={`wb-row wb-row-${r.state} ${frontier ? "wb-frontier" : ""}`}>
@@ -659,6 +1041,9 @@ export default function WorkbenchView({ open, vault, onClose }: {
                             ? <button className="wb-row-open" onClick={() => setPicked(m)}
                                       title={`open ${m.file}`}>{rowText(r)}</button>
                             : <span title="module not authored yet">{rowText(r)}</span>}
+                          {m?.kind === "checkpoint" && (
+                            <em className="wb-chip">checkpoint</em>
+                          )}
                           {r.state === "skipped" && r.skipped && (
                             <em className="wb-chip">skipped {r.skipped}</em>
                           )}
@@ -707,9 +1092,9 @@ export default function WorkbenchView({ open, vault, onClose }: {
 
         {inLesson && lesson && held && (
           <div className="wb-held">
-            <h3>HELD — this module fails the grammar</h3>
-            <p className="dim">A malformed module is a broken lesson that would read
-            as shipped, so it is named instead of rendered:</p>
+            <h3>HELD — this {isCp ? "checkpoint" : "module"} fails the grammar</h3>
+            <p className="dim">A malformed lesson would read as shipped, so it is
+            named instead of rendered:</p>
             <ul>{lesson.problems.map((p, i) => <li key={i}>{p}</li>)}</ul>
             <button className="ghost" onClick={() => { setPicked(null); setLesson(undefined); }}>
               ⟵ back to the chain
@@ -731,9 +1116,10 @@ export default function WorkbenchView({ open, vault, onClose }: {
             <div className="wb-body">
               <div className="wb-read">
                 {seg && (
-                  <Segment seg={seg} depth={depth} st={st}
+                  <Segment seg={seg} depth={depth} st={st} cp={isCp}
                            onDepth={d => dispatch({ t: "depth", i: st.seg, d })}
-                           dispatch={dispatch} onResolve={resolve} />
+                           dispatch={dispatch} onResolve={resolve}
+                           onSandbox={toSandbox} />
                 )}
                 <div className="wb-nav">
                   <button className="ghost" disabled={st.seg === 0}
@@ -743,44 +1129,95 @@ export default function WorkbenchView({ open, vault, onClose }: {
                           onClick={() => dispatch({ t: "seg", i: st.seg + 1 })}>next →</button>
                 </div>
               </div>
-              {!st.focus && st.dock && seg && (
+              {!st.focus && st.dock && (
                 <aside className="wb-dock">
-                  <h4>[?] Provenance</h4>
-                  <p className="dim">where this segment comes from — the claim is
-                  only as good as the note it cites</p>
-                  <ul className="wb-prov">
-                    {seg.sources.map(src => (
-                      <li key={`${src.path}:${src.line}`}>
-                        <a href={obsidianHref(vault, src.path)}
-                           title={`source:: at line ${src.line} of the module`}>
-                          {src.path.split("/").pop()}
-                        </a>
-                        <span className="dim"> · {src.path}</span>
-                      </li>
+                  <div className="wb-slots" role="tablist" aria-label="Dock slot">
+                    {SLOT_LABEL.map(([s, label]) => (
+                      <button key={s} role="tab" aria-selected={st.dock === s}
+                              className={st.dock === s ? "active" : ""}
+                              onClick={() => dispatch({ t: "dock", slot: s })}>
+                        {label}
+                      </button>
                     ))}
-                  </ul>
-                  <h4>Module</h4>
-                  <ul className="wb-prov">
-                    <li>
-                      <a href={obsidianHref(vault, lesson.file)}>{lesson.file.split("/").pop()}</a>
-                      <span className="dim"> · segment at line {seg.line}</span>
-                    </li>
-                    {lesson.verified && <li className="dim">sources last verified {lesson.verified}</li>}
-                  </ul>
-                  <h4>All module sources</h4>
-                  <ul className="wb-prov">
-                    {lesson.sources.map(s => (
-                      <li key={s}>
-                        <a href={obsidianHref(vault, s)}>{s.split("/").pop()}</a>
-                      </li>
-                    ))}
-                  </ul>
+                    <button className="ghost wb-slot-x" title="Close the dock (Esc)"
+                            onClick={() => dispatch({ t: "dock", slot: null })}>✕</button>
+                  </div>
+
+                  {st.dock === "prov" && seg && (
+                    <div className="wb-slotbody">
+                      <h4>[?] Provenance</h4>
+                      <p className="dim">where this segment comes from — the claim is
+                      only as good as the note it cites</p>
+                      <ul className="wb-prov">
+                        {seg.sources.map(src => (
+                          <li key={`${src.path}:${src.line}`}>
+                            <a href={obsidianHref(vault, src.path)}
+                               title={`source:: at line ${src.line} of the module`}>
+                              {src.path.split("/").pop()}
+                            </a>
+                            <span className="dim"> · {src.path}</span>
+                          </li>
+                        ))}
+                      </ul>
+                      <h4>{isCp ? "Checkpoint" : "Module"}</h4>
+                      <ul className="wb-prov">
+                        <li>
+                          <a href={obsidianHref(vault, lesson.file)}>{lesson.file.split("/").pop()}</a>
+                          <span className="dim"> · segment at line {seg.line}</span>
+                        </li>
+                        {lesson.verified && <li className="dim">sources last verified {lesson.verified}</li>}
+                      </ul>
+                      {lesson.sources.length > 0 && (
+                        <>
+                          <h4>All module sources</h4>
+                          <ul className="wb-prov">
+                            {lesson.sources.map(s => (
+                              <li key={s}>
+                                <a href={obsidianHref(vault, s)}>{s.split("/").pop()}</a>
+                              </li>
+                            ))}
+                          </ul>
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  {st.dock === "work" && (
+                    <div className="wb-slotbody wb-work">
+                      <h4>✎ Work</h4>
+                      <textarea className="wb-editor" value={st.scratch}
+                                aria-label="work pad" spellCheck={false}
+                                placeholder="scratch space — resolve components, set up the FBD, keep the arithmetic honest…"
+                                onChange={e => dispatch({ t: "scratch", text: e.target.value })} />
+                      <p className="dim">persists on this machine (sidecar), per
+                      {isCp ? " checkpoint" : " module"} — never a note</p>
+                    </div>
+                  )}
+
+                  {st.dock === "code" && (
+                    <div className="wb-slotbody">
+                      <CodeDock code={st.code} dispatch={dispatch} />
+                    </div>
+                  )}
+
+                  {st.dock === "tutor" && (
+                    <div className="wb-slotbody">
+                      <TutorDock turns={tutorTurns} busy={tutorBusy} hold={tutorHold}
+                                 mode={tutorMode} pin={pin}
+                                 onMode={setTutorMode} onAsk={q => void askTutor(q)} />
+                    </div>
+                  )}
                 </aside>
               )}
               {!st.focus && !st.dock && (
                 <aside className="wb-dock wb-dock-closed">
-                  <button className="ghost" onClick={() => dispatch({ t: "dock", open: true })}
-                          title="Reopen the provenance slot">[?] provenance</button>
+                  {SLOT_LABEL.map(([s, label]) => (
+                    <button key={s} className="ghost"
+                            title={`Open the ${s} slot`}
+                            onClick={() => dispatch({ t: "dock", slot: s })}>
+                      {label}
+                    </button>
+                  ))}
                 </aside>
               )}
             </div>

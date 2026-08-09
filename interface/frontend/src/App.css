@@ -2397,3 +2397,100 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
   border: 1px solid var(--panel-line); padding: 0 4px; margin-right: 6px;
   vertical-align: 1px;
 }
+
+/* --- the dock's four slots (study S4/S5) --------------------------------- */
+.wb-slots {
+  display: flex; gap: 6px; align-items: center; flex: none;
+  border-bottom: 1px solid var(--panel-line-dim); padding-bottom: 8px; margin-bottom: 8px;
+}
+.wb-slots button {
+  background: none; border: 1px solid var(--panel-line-dim); color: var(--ink-2);
+  font: 400 10.5px/1.5 var(--mono); padding: 2px 8px; cursor: pointer;
+}
+.wb-slots button.active { border-color: var(--accent); color: var(--ink); }
+.wb-slots button:hover { color: var(--ink); }
+.wb-slot-x { margin-left: auto; border: none !important; }
+/* The slot bodies scroll inside the dock; the dock itself becomes a column. */
+.wb-dock { display: flex; flex-direction: column; min-height: 0; }
+.wb-slotbody { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; }
+.wb-dock-closed { gap: 6px; flex-direction: row; }
+
+/* the work pad and the sandbox editor — bordered, monospace, never filled */
+.wb-work { display: flex; flex-direction: column; }
+.wb-editor {
+  flex: 1 1 auto; min-height: 120px; resize: none; width: 100%;
+  background: none; border: 1px solid var(--panel-line-dim); color: var(--ink);
+  font: 400 12px/1.6 var(--mono); padding: 8px 10px;
+}
+.wb-editor:focus { outline: none; border-color: var(--accent); }
+
+/* --- the code sandbox (study S4) ----------------------------------------- */
+.wb-code { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.wb-codebar { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+.wb-codebar .active { border-color: var(--accent); color: var(--accent); }
+.wb-codenote { font: 400 10px/1.5 var(--mono); margin-right: auto; }
+.wb-code .wb-editor { min-height: 110px; flex: none; height: 32%; }
+.wb-codeout { flex: 1 1 auto; min-height: 0; overflow-y: auto; margin-top: 6px; }
+.wb-out {
+  font: 400 11.5px/1.6 var(--mono); color: var(--ink);
+  border: 1px solid var(--panel-line-dim); padding: 6px 10px; margin: 6px 0;
+  overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+/* A failure is amber text in its own box — a failure, never a shrug. */
+.wb-outerr { color: var(--amber); border-color: rgb(var(--amber-rgb) / 0.45); }
+.wb-res { font: 400 12px/1.6 var(--mono); color: var(--add); margin: 4px 0; }
+.wb-sqltab { border-collapse: collapse; font: 400 11.5px/1.6 var(--mono); margin: 6px 0; }
+.wb-sqltab th, .wb-sqltab td {
+  border: 1px solid var(--panel-line-dim); padding: 2px 8px; text-align: left;
+}
+.wb-sqltab th { color: var(--ink-2); font-weight: 400; }
+
+/* --- the tutor slot (study S5) ------------------------------------------- */
+.wb-tutor { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.wb-modes { display: flex; gap: 6px; margin-bottom: 6px; }
+.wb-modes button {
+  background: none; border: 1px solid var(--panel-line-dim); color: var(--ink-2);
+  font: 400 10.5px/1.5 var(--mono); letter-spacing: 0.06em; padding: 2px 9px;
+  cursor: pointer;
+}
+.wb-modes button.active { border-color: var(--accent); color: var(--accent); }
+.wb-pin { font: 400 10.5px/1.5 var(--mono); margin: 0 0 6px; overflow-wrap: anywhere; }
+/* Held is a word plus amber, never colour alone — the palette's own rule. */
+.wb-hold { color: var(--amber); font: 400 11.5px/1.6 var(--mono); border: 1px solid rgb(var(--amber-rgb) / 0.45); padding: 4px 8px; }
+.wb-turns { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.wb-turn { margin: 8px 0; }
+.wb-turn-q { color: var(--ink-2); font-size: 12px; margin: 2px 0; }
+.wb-turn-q::before { content: "› "; color: var(--muted); }
+.wb-turn-trail { font: 400 10.5px/1.5 var(--mono); margin: 2px 0; overflow-wrap: anywhere; }
+.wb-turn-a p { margin: 4px 0; font-size: 12.5px; line-height: 1.55; }
+.wb-turn-a pre {
+  font: 400 11.5px/1.6 var(--mono); border: 1px solid var(--panel-line-dim);
+  padding: 6px 10px; margin: 6px 0; overflow-x: auto;
+}
+.wb-proposal {
+  font-size: 12px; border: 1px solid var(--panel-line); border-left: 2px solid var(--accent);
+  padding: 4px 8px; margin: 4px 0;
+}
+.wb-tutorform { display: flex; gap: 6px; margin-top: 8px; flex: none; }
+.wb-tutorform input {
+  flex: 1 1 auto; background: none; border: 1px solid var(--panel-line-dim);
+  color: var(--ink); font: 400 12px/1.6 var(--mono); padding: 3px 8px;
+}
+.wb-tutorform input:focus { outline: none; border-color: var(--accent); }
+
+/* --- exam mode's third panel (study S6) ---------------------------------- */
+.miss-list { list-style: none; margin: 0; padding: 0; }
+.miss-course { border: 1px solid var(--panel-line-dim); padding: 6px 12px; margin: 8px 0; }
+.miss-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.miss-n { color: var(--amber); }
+.miss-topics { list-style: none; margin: 6px 0; padding: 0; }
+.miss-topics li {
+  display: flex; gap: 10px; align-items: baseline;
+  font-size: 12.5px; padding: 1px 0;
+}
+.miss-topics li b { font-family: var(--mono); color: var(--amber); }
+.miss-sessions { list-style: none; margin: 2px 0 6px; padding: 0; }
+.miss-sessions li {
+  font: 400 11px/1.7 var(--mono); color: var(--ink-2); overflow-wrap: anywhere;
+}
+.miss-course .sub a { color: var(--accent); text-decoration: none; }

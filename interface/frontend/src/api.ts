@@ -266,7 +266,20 @@ export type CourseCoverage = {
   by_folder: { folder: string; total: number; covered: number }[];
   uncovered_sample: string[]; uncovered_more: number;
 };
-export type Study = { exams: ExamUnit[]; coverage: CourseCoverage[] };
+/** Exam mode's third panel (study S6): what was actually missed, per course.
+ *  `by_topic` is the machine-local attempt log; `sessions` are the durable
+ *  digest rows the rollup spliced into the study log. A course with neither
+ *  is omitted — the panel shows records or nothing, never a guess. */
+export type MissTopic = { topic: string; wrong: number; last: string };
+export type PracticeHistory = {
+  course: string; attempts: number; answered: number; wrong: number;
+  last: string | null;
+  by_topic: MissTopic[];
+  sessions: string[]; sessions_more: number;
+};
+export type Study = {
+  exams: ExamUnit[]; coverage: CourseCoverage[]; practice: PracticeHistory[];
+};
 
 /** Study mode S1: a guide module, parsed by runtime/lesson.py. The workbench
  *  renders exactly what the one grammar owner hands over — problems non-empty
@@ -288,6 +301,9 @@ export type Lesson = {
   title: string; estimate: number | null; verified: string | null; tags: string;
   sources: string[]; preamble: string; segments: LessonSegment[];
   problems: string[]; file: string;
+  /** Set only on a checkpoint payload (GET /api/checkpoint/...): the same
+   *  parse with practice-only segments, plus which modules it assesses. */
+  checkpoint?: number | null; covers?: number[]; date?: string | null;
   /** The sidecar's resume state, riding along so a reopened module lands where
    *  it was. Loosely typed on purpose — the workbench validates on hydrate. */
   state: LessonState | null;
@@ -297,7 +313,16 @@ export type LessonListRow = {
   estimate: number | null; file: string; segments: number; practice: number;
   problems: string[];
 };
-export type LessonList = { modules: LessonListRow[] };
+/** A checkpoint in the lesson list — openable from a chain row exactly like a
+ *  module, keyed by its own number (study S6). */
+export type CheckpointListRow = {
+  course: string; checkpoint: number | null; covers: number[];
+  date: string | null; title: string; file: string;
+  segments: number; practice: number; problems: string[];
+};
+export type LessonList = {
+  modules: LessonListRow[]; checkpoints: CheckpointListRow[];
+};
 
 /** What the workbench posts to /api/lesson/state — machine-local view state,
  *  never a commit. JSON object keys are strings, so the depth map is keyed by
@@ -305,6 +330,8 @@ export type LessonList = { modules: LessonListRow[] };
 export type LessonState = {
   depth?: Record<string, string>;
   fallback?: string;
+  /** The work pad's text (study S4) — machine-local like every other field. */
+  scratch?: string;
   practice?: Record<string, {
     hints?: number; revealed?: boolean;
     result?: "correct" | "wrong" | "skipped" | null; given?: string;

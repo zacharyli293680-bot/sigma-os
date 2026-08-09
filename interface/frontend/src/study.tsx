@@ -4,11 +4,13 @@
  * `dashboard-vision` asks for "everything for one exam in one place: what is
  * covered, what you have not practised, what you got wrong last time."
  *
- * The first two are here. **The third is deliberately absent**: nothing in the
- * vault records a wrong answer, so a "weak areas" panel would be a confident
- * guess wearing the costume of data. Saying the number does not exist is more
- * useful than inventing it, and the view says so out loud rather than quietly
- * omitting a third of what was asked for.
+ * All three are here now. The third was deliberately absent until study S6:
+ * with no real record of a wrong answer, a "weak areas" panel would have been
+ * a confident guess wearing the costume of data. The practice engine (S3)
+ * changed that — every resolution lands in the attempt log, and each session
+ * rollup splices a durable digest row into the course's study log — so the
+ * panel renders those records, names which source each half comes from, and
+ * still says "nothing recorded" when that is the truth. It never guesses.
  *
  * "Not practised" means *no note embeds this source*. Intake writes
  * `> Source: ![[file]]` into everything it produces and hand-written notes use
@@ -17,7 +19,7 @@
  */
 import { useEffect, useState } from "react";
 import { get, obsidianHref } from "./api";
-import type { CourseCoverage, Study } from "./api";
+import type { CourseCoverage, PracticeHistory, Study } from "./api";
 
 function Bar({ covered, total }: { covered: number; total: number }) {
   const pct = total ? Math.round((covered / total) * 100) : 0;
@@ -62,6 +64,46 @@ function Course({ c, vault }: { c: CourseCoverage; vault: string }) {
                 <p className="dim">+{c.uncovered_more} more — the list caps at 12.</p>
               )}
             </>
+          )}
+        </>
+      )}
+    </li>
+  );
+}
+
+function Misses({ p, vault }: { p: PracticeHistory; vault: string }) {
+  return (
+    <li className="miss-course">
+      <div className="miss-head">
+        <span className="cov-name">{p.course}</span>
+        <span className="dim">
+          {p.answered} answered · <b className={p.wrong ? "miss-n" : ""}>{p.wrong} missed</b>
+          {p.last ? ` · last ${p.last}` : ""}
+        </span>
+      </div>
+      {p.by_topic.length > 0 && (
+        <ul className="miss-topics">
+          {p.by_topic.map(t => (
+            <li key={t.topic}>
+              <span>{t.topic}</span>
+              <b>×{t.wrong}</b>
+              <span className="dim">{t.last}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {p.sessions.length > 0 && (
+        <>
+          <p className="dim sub">
+            sessions, from <a href={obsidianHref(vault,
+              `02-Areas/Academics/${p.course}/${p.course.toLowerCase()}-study-log`)}>
+              the study log</a>
+          </p>
+          <ul className="miss-sessions">
+            {p.sessions.map((s, i) => <li key={i}>{s}</li>)}
+          </ul>
+          {p.sessions_more > 0 && (
+            <p className="dim">+{p.sessions_more} more in the note.</p>
           )}
         </>
       )}
@@ -140,11 +182,24 @@ export default function StudyView({ open, vault, onClose, onWorkbench }: {
             </ul>
 
             <h3>What you got wrong last time</h3>
-            <p className="dim study-note">
-              Not built, deliberately. Nothing in the vault records a wrong answer,
-              so any "weak areas" figure here would be invented. It needs a real
-              source first — graded work, or a practice log.
-            </p>
+            {d.practice.length === 0 ? (
+              <p className="dim study-note">
+                Nothing recorded yet. Practising in the workbench writes the
+                attempt log this panel reads, and each session's rollup leaves a
+                durable digest row in the course's study log — records, never
+                guesses.
+              </p>
+            ) : (
+              <>
+                <p className="dim study-note">
+                  Topics from this machine's attempt log; session rows from the
+                  study log note — the digest that survives a sidecar wipe.
+                </p>
+                <ul className="miss-list">
+                  {d.practice.map(p => <Misses key={p.course} p={p} vault={vault} />)}
+                </ul>
+              </>
+            )}
           </div>
         )}
       </div>
