@@ -123,9 +123,12 @@ export type QueueTask = {
   parts: ScoreParts; score: number;
   overdue: boolean; archived: boolean; snoozed: boolean;
 };
-/** One course or project, with its whole chain in document order. */
+/** One sequence document (or a parent's flat remainder), in document order.
+ *  A parent can hold several groups since study S2 — one per chain file plus
+ *  the flat tasks; `file` names the chain document, null for the flat group. */
 export type QueueGroup = {
-  parent: string; label: string; open: number; chain: QueueTask[];
+  parent: string; label: string; file: string | null;
+  open: number; chain: QueueTask[];
 };
 export type QueueSection = {
   key: string; title: string;

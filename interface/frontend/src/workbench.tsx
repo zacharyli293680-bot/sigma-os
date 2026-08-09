@@ -164,8 +164,14 @@ function mcqLetters(prompt: string): string[] {
   return [...new Set([...prompt.matchAll(/\(([a-h])\)/g)].map(m => m[1]))];
 }
 
-function mcqAnswer(answer: string): string {
-  return (answer || "").trim().toLowerCase().replace(/[()]/g, "").slice(0, 1);
+/** The mcq answer as a gradeable letter, or null when the answer:: text is
+ *  not exactly one option letter. The grammar only requires answer:: to be
+ *  non-empty, so a prose answer ("The moment doubles, so (b)") is legal —
+ *  and taking its first character would auto-grade every click wrong. Null
+ *  degrades the item to the self-assessed path instead of faking a grade. */
+function mcqAnswer(answer: string): string | null {
+  const m = (answer || "").trim().toLowerCase().match(/^\(?([a-h])\)?$/);
+  return m ? m[1] : null;
 }
 
 /** One practice item, live. Auto-checked where the decision list allows
@@ -179,8 +185,13 @@ function PracticeBox({ it, st, onHint, onReveal, onGiven, onResolve }: {
 }) {
   const expected = it.kind === "numeric" ? parseNumeric(it.answer ?? "") : null;
   const letters = it.kind === "mcq" ? mcqLetters(it.prompt) : [];
+  const ans = it.kind === "mcq" ? mcqAnswer(it.answer ?? "") : null;
   const autoNumeric = it.kind === "numeric" && expected !== null;
-  const autoMcq = it.kind === "mcq" && letters.length >= 2 && !!mcqAnswer(it.answer ?? "");
+  // Auto-grade only when the answer is one letter AND that letter is among
+  // the prompt's own options — an answer of (e) against options (a)–(d)
+  // would make every click wrong, which is a broken grader, not a grade.
+  const autoMcq = it.kind === "mcq" && letters.length >= 2
+    && ans !== null && letters.includes(ans);
   const auto = autoNumeric || autoMcq;
   const done = st.result !== null;
 
@@ -235,7 +246,7 @@ function PracticeBox({ it, st, onHint, onReveal, onGiven, onResolve }: {
             <button key={l} className="ghost wb-mcq"
                     onClick={() => {
                       onGiven(l);
-                      onResolve(l === mcqAnswer(it.answer ?? "") ? "correct" : "wrong", l);
+                      onResolve(l === ans ? "correct" : "wrong", l);
                     }}>
               ({l})
             </button>

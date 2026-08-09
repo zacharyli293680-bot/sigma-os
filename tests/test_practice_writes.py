@@ -148,6 +148,22 @@ class TestSkip(PracticeWritesBase):
         r = self.skip(file="sealed/s.md", line=1, raw="- [ ] hidden")
         self.assertEqual(r.status_code, 403)
 
+    def test_a_model_exempt_gitignored_path_is_still_refused(self):
+        """Exemption governs what the model may see, never what may be
+        written: a skip committed nowhere would be the only ledger row in
+        Sigma with no undo behind it. The pre-mutex sealed_paths() check
+        passes exempted paths — the inside-the-mutex check must not."""
+        saved = privacy.model_allow_prefixes
+        privacy.model_allow_prefixes = lambda: ("sealed",)
+        try:
+            r = self.skip(file="sealed/s.md", line=1, raw="- [ ] hidden")
+            self.assertEqual(r.status_code, 403)
+            self.assertIn("- [ ] hidden",
+                          (self.vault / "sealed" / "s.md")
+                          .read_text(encoding="utf-8"))
+        finally:
+            privacy.model_allow_prefixes = saved
+
     def test_the_skip_is_revertible_from_the_ledger(self):
         sha = self.skip().json()["sha"]
         r = self.client.post("/api/activity/revert", json={"sha": sha})
@@ -266,6 +282,43 @@ class TestSessionEnd(PracticeWritesBase):
         r = self.end().json()
         self.assertTrue(r["wrote"])
         self.assertEqual(r["digest"], "Topic 1 ×1")
+
+    def test_a_lost_watermark_is_repaired_from_the_note_not_rewritten(self):
+        """The content half of the idempotency: a watermark that failed to
+        save (or a race past the same read) must not mean the same digest row
+        twice. The next call finds the identical row in the note, advances
+        the watermark, and writes nothing."""
+        self.attempt(qid="q-1-4", result="wrong")
+        first = self.end().json()
+        self.assertTrue(first["wrote"])
+        st = ln.load_state()
+        st["rollup"] = {}                      # simulate the lost save
+        self.assertTrue(ln.save_state(st))
+        second = self.end().json()
+        self.assertFalse(second["wrote"])
+        text = (self.course / "test-101-study-log.md").read_text(encoding="utf-8")
+        self.assertEqual(text.count("Topic 2 ×1"), 1)
+        # and the watermark is back — a third call is the cheap path again
+        self.assertTrue((ln.load_state()["rollup"] or {}).get("TEST-101"))
+
+    def test_an_unwritable_sidecar_is_a_warning_never_a_duplicate(self):
+        """save_state failing must be said out loud, and the note-side check
+        keeps even repeated calls to one row while it stays unwritable."""
+        self.attempt(qid="q-1-4", result="wrong")
+        good = ln.STATE_PATH
+        broken = Path(self.tmp.name) / "state-as-dir"
+        broken.mkdir()
+        ln.STATE_PATH = broken                 # save_state -> OSError -> False
+        try:
+            first = self.end().json()
+            self.assertTrue(first["wrote"])
+            self.assertIn("warning", first)
+            second = self.end().json()
+            self.assertFalse(second["wrote"])
+            text = (self.course / "test-101-study-log.md").read_text(encoding="utf-8")
+            self.assertEqual(text.count("Topic 2 ×1"), 1)
+        finally:
+            ln.STATE_PATH = good
 
 
 if __name__ == "__main__":

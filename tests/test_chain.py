@@ -189,6 +189,26 @@ class TestFrontier(ChainBase):
         self.assertEqual(kinds["T2 read day three"], "timeline")
         self.assertEqual(kinds["M03 · Forces"], "guide")
 
+    def test_groups_split_per_sequence_document(self):
+        """One group per chain file: concatenating a course's two chains
+        rendered the timeline's real frontier as 'waiting on the one above'
+        and handed the guide head the timeline's 'next:' sub-line."""
+        (self.vault / "02-Areas" / "Academics" / "AA-210" / "tasks.md").write_text(
+            "- [ ] email the TA\n", encoding="utf-8")
+        s = self.courses()
+        aa = [g for g in s["groups"] if g["parent"] == "AA-210"]
+        files = sorted(g["file"] or "(flat)" for g in aa)
+        self.assertEqual(files, ["(flat)",
+                                 "02-Areas/Academics/AA-210/aa-210-guide.md",
+                                 "02-Areas/Academics/AA-210/aa-210-timeline.md"])
+        for g in aa:
+            if g["file"]:
+                self.assertTrue(all(t["file"] == g["file"] for t in g["chain"]))
+            else:
+                self.assertTrue(all(not t["chain"] for t in g["chain"]))
+        math = [g for g in s["groups"] if g["parent"] == "MATH-208"]
+        self.assertEqual(len(math), 1)
+
     def test_an_archived_head_no_longer_parks_its_chain(self):
         """The /api/queue/meta deadlock the skip state replaces: archiving
         used to hide the head while its followers stayed blocked behind it."""

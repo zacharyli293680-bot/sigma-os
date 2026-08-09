@@ -486,12 +486,23 @@ def scan(vault: Path, split=None) -> list[dict]:
         if str(fm.get("type") or "").strip() != "module":
             continue
         d = parse(text)
+        problems = validate(text, vault=vault)
+        # The contract's naming rule is one string: the `course:` field equals
+        # the folder name (CLAUDE.md §Naming). A drifted field would key this
+        # module's attempts under a course the rollup can never find — the
+        # digest would quietly never land — so the drift is a held problem
+        # here, where doctor and the renderer both see it.
+        folder = p.parents[1].name
+        if d["course"] and d["course"] != folder:
+            problems.append(f"course field says {d['course']!r} but the note "
+                            f"lives in {folder}/ — the naming rule is one "
+                            f"string, and attempts are keyed by the field")
         out.append({
             "course": d["course"], "module": d["module"], "unit": d["unit"],
             "title": d["title"], "estimate": d["estimate"], "file": rel,
             "segments": len(d["segments"]),
             "practice": sum(len(s["practice"]) for s in d["segments"]),
-            "problems": validate(text, vault=vault),
+            "problems": problems,
         })
     out.sort(key=lambda r: (r["course"], r["module"] if r["module"] is not None else 0))
 
@@ -525,9 +536,11 @@ def load(vault: Path, course: str, module_no: int, split=None) -> dict | None:
             d = parse(text)
             d["file"] = row["file"]
             # Single-file validation, plus what only the whole-course scan can
-            # see (a duplicate module number) — held either way.
+            # see (a duplicate module number, a course field that drifted from
+            # its folder) — held either way.
             d["problems"] = validate(text, vault=vault) + [
-                p_ for p_ in row["problems"] if p_.startswith("duplicate module")]
+                p_ for p_ in row["problems"]
+                if p_.startswith(("duplicate module", "course field"))]
             return d
     return None
 

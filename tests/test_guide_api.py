@@ -136,6 +136,20 @@ class TestGuide(GuideApiBase):
         self.assertEqual(self.client.get("/api/guide/test-101").status_code, 404)
 
 
+class TestCourseFieldDrift(GuideApiBase):
+    def test_a_course_field_that_drifted_from_its_folder_is_held(self):
+        """The naming rule is one string (CLAUDE.md §Naming), and the rollup
+        keys attempts by the field — a drifted field would file practice under
+        a course session-end can never find, silently."""
+        p = (self.course / "guide" / "test-101-m01-test-module.md")
+        p.write_text(_valid().replace("course: TEST-101", "course: OTHER-999"),
+                     encoding="utf-8")
+        panels._cache.clear()
+        mods = self.client.get("/api/lesson").json()["modules"]
+        self.assertTrue(any("course field" in x for m in mods
+                            for x in m["problems"]))
+
+
 class TestCourses(GuideApiBase):
     def test_every_active_course_reports_its_study_surface(self):
         r = self.client.get("/api/courses")

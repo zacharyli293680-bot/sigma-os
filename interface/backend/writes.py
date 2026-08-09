@@ -167,8 +167,6 @@ def api_skip(req: SkipReq):
     rel = _vault_rel(req.file)
     if rel is None:
         return _err(400, "bad path")
-    if rel in sealed_paths(VAULT, [rel]):
-        return _err(403, "sealed path")
     dest = VAULT / rel
 
     skipped = td.skip_line(req.raw, datetime.date.today().isoformat())
@@ -178,6 +176,15 @@ def api_skip(req: SkipReq):
 
     try:
         with gitops.vault_write(VAULT) as w:
+            # Inside the mutex and after the pull, refusing whether or not the
+            # path is model_allow-exempt — the calendar writes' pattern, not
+            # the toggle's pre-mutex sealed_paths(): exemption governs what
+            # the model may see, never what may be written, and a gitignored
+            # path would hand this the only ledger row in Sigma with no
+            # commit behind it and no undo.
+            sealed = _sealed_inside_mutex(rel)
+            if sealed:
+                return _err(403, "sealed path", detail=sealed)
             try:
                 body = dest.read_text(encoding="utf-8")
             except OSError:
@@ -187,6 +194,12 @@ def api_skip(req: SkipReq):
                 return _err(409, "stale", detail="the line changed underneath you")
             write_note(dest, out)
             res = w.commit(rel, f"zach (dashboard): skip task in {rel}")
+            if not res["sha"]:
+                # The line is flipped on disk but no commit exists (an
+                # obsidian-git index.lock, most likely) — say so rather than
+                # ledger a row that /api/activity/revert can never match.
+                return _err(500, "commit failed",
+                            detail=res["note"] or "no commit was created")
     except gitops.GitBusy:
         return _err(409, "busy", detail="another Sigma write is in progress — retry")
 
@@ -1097,12 +1110,19 @@ def api_lesson_session_end(req: SessionEnd):
     """Roll the session up: one digest row spliced into `<code>-study-log.md`,
     one commit, one ledger row (§8).
 
-    Idempotent through the rollup watermark — the close handler and the
-    explicit button can both fire, and the second call finds nothing to cover.
-    The watermark advances only after the commit exists, so a failed write
-    leaves the session uncovered and the next session-end retries it. Both
-    sidecars are gitignored; this row's digest is the trace that survives a
-    wipe, which is the whole reason it exists."""
+    Idempotent twice over, because the two layers fail in different
+    directions. The rollup *watermark* makes the common case cheap: the close
+    handler and the explicit button can both fire, and the second call finds
+    nothing to cover. The *content check* — an identical row already in the
+    note, judged inside the mutex — covers everything the watermark cannot:
+    two calls racing past the same watermark read, a watermark whose sidecar
+    save failed, a commit that failed after the row was written. In every one
+    of those, the next call finds the row above, advances the watermark, and
+    writes nothing — never the same digest twice. The watermark advances only
+    once the row provably exists in the note (committed, or found already
+    there); a failed commit refuses loudly instead. Both sidecars are
+    gitignored; this row's digest is the trace that survives a wipe, which is
+    the whole reason it exists."""
     folder = ln.course_folder(VAULT, (req.course or "").strip())
     if folder is None:
         return _err(404, "no such course", detail=req.course or "(blank)")
@@ -1139,6 +1159,7 @@ def api_lesson_session_end(req: SessionEnd):
         bits.append(ln.digest(wrong))
     line = " · ".join(bits)
 
+    wrote, sha, saved = False, None, True
     try:
         with gitops.vault_write(VAULT) as w:
             sealed = _sealed_inside_mutex(rel)
@@ -1148,26 +1169,51 @@ def api_lesson_session_end(req: SessionEnd):
                 body = dest.read_text(encoding="utf-8")
             except OSError:
                 return _err(409, "stale", detail="the note is gone or unreadable")
-            before = len(_CHECKBOX.findall(body))
-            out = td.splice(body, SESSIONS_HEADING, line)
-            if len(_CHECKBOX.findall(out)) != before:
-                return _err(400, "checkbox",
-                            detail="a rollup row may not add a checkbox")
-            write_note(dest, out)
-            res = w.commit(rel, f"zach (dashboard): study session rollup in {rel}")
+
+            # The content half of the idempotency (see the docstring): an
+            # identical row already in the note means these attempts are
+            # covered — repair the watermark, write nothing.
+            already = any(ln_.rstrip("\r") == line for ln_ in body.split("\n"))
+            if not already:
+                before = len(_CHECKBOX.findall(body))
+                out = td.splice(body, SESSIONS_HEADING, line)
+                if len(_CHECKBOX.findall(out)) != before:
+                    return _err(400, "checkbox",
+                                detail="a rollup row may not add a checkbox")
+                write_note(dest, out)
+                res = w.commit(rel,
+                               f"zach (dashboard): study session rollup in {rel}")
+                if not res["sha"]:
+                    # The row is in the note but no commit exists (an
+                    # obsidian-git index.lock, most likely). Refuse without
+                    # advancing the watermark — the next call finds the row
+                    # above and repairs.
+                    return _err(500, "commit failed",
+                                detail=res["note"] or "no commit was created")
+                wrote, sha = True, res["sha"]
+
+            # Re-read the sidecar *inside* the mutex before advancing: two
+            # session-ends serialise here, and advancing over a state loaded
+            # before the other's save would silently drop its watermark.
+            st = ln.load_state()
+            st.setdefault("rollup", {})[course] = max(str(r.get("ts") or "")
+                                                      for r in rows)
+            saved = ln.save_state(st)
     except gitops.GitBusy as e:
         return _err(409, "busy", detail=f"another Sigma write is in progress ({e})")
     except OSError as e:
         return _err(500, "write failed", detail=str(e))
 
-    st.setdefault("rollup", {})[course] = max(str(r.get("ts") or "") for r in rows)
-    ln.save_state(st)
-
-    ledger.record("zach", "append", rel, res["sha"],
-                  f"study session: {course} {mod_label} — {len(answered)} "
-                  f"answered, {len(wrong)} missed")
-    return {"ok": True, "rows": len(rows), "wrote": True, "file": rel,
-            "raw": line, "sha": res["sha"], "digest": ln.digest(wrong)}
+    if wrote:
+        ledger.record("zach", "append", rel, sha,
+                      f"study session: {course} {mod_label} — {len(answered)} "
+                      f"answered, {len(wrong)} missed")
+    resp = {"ok": True, "rows": len(rows), "wrote": wrote, "file": rel,
+            "raw": line, "sha": sha, "digest": ln.digest(wrong)}
+    if not saved:
+        resp["warning"] = ("the watermark could not be saved — the next "
+                           "rollup finds this row in the note and repairs it")
+    return resp
 
 
 @router.get("/activity")

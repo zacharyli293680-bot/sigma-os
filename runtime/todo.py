@@ -977,11 +977,28 @@ def build(vault=None, index_path=None, today=None, split=None,
         groups = []
         if key in PER_PARENT:
             for name, label in parents[key].items():
-                chain = [t for t in mine if t["parent"] == name]
-                chain.sort(key=lambda t: (t["file"], t["order"]))
-                if chain:
-                    groups.append({"parent": name, "label": label,
-                                   "open": len(chain), "chain": chain})
+                mine_p = [t for t in mine if t["parent"] == name]
+                # One group per *sequence document*, plus one for the flat
+                # remainder. A course can now run two chains at once
+                # (timeline + guide, study S2), and the old one-list-per-
+                # parent group concatenated them — which rendered the
+                # timeline's real frontier as "waiting on the one above"
+                # and handed the guide head the timeline's "next:" line.
+                # `file` says which document a chain group describes, so the
+                # UI can match a head to its own sequence and nothing else.
+                chain_files = sorted({t["file"] for t in mine_p if t["chain"]})
+                buckets = ([[t for t in mine_p if t["file"] == f]
+                            for f in chain_files]
+                           + [[t for t in mine_p if not t["chain"]]])
+                for bucket in buckets:
+                    if not bucket:
+                        continue
+                    bucket.sort(key=lambda t: (t["file"], t["order"]))
+                    groups.append({
+                        "parent": name, "label": label,
+                        "file": bucket[0]["file"] if bucket[0]["chain"] else None,
+                        "open": len(bucket), "chain": bucket,
+                    })
 
         sections[key] = {
             "key": key, "title": SECTION_TITLE[key],

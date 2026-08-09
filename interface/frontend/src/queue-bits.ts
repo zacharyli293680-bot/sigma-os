@@ -70,7 +70,12 @@ export function breakdown(t: QueueTask): string {
 
 /** "Block 3 of 10 · next: strong induction notes" for a course or project head. */
 export function progressOf(s: QueueSection, t: QueueTask): string | null {
-  const g = s.groups.find(x => x.parent === t.parent);
+  // File-aware since study S2: a course can hold several groups (timeline
+  // chain, guide chain, flat tasks), and the old first-by-parent match handed
+  // the guide head the timeline's "next:" line. A head whose own file is in
+  // no group has no sequence to report progress in.
+  const g = s.groups.find(x => x.parent === t.parent
+    && x.chain.some(c => c.file === t.file));
   if (!g) return null;
   if (s.key === "projects") {
     const behind = g.open - 1;
