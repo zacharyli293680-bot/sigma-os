@@ -12,6 +12,8 @@ Five endpoints, all read-only, all serving panels in the web dashboard:
     GET /api/nosync      the audit view: everything that never leaves this machine
     GET /api/lesson      study mode S1: every guide module, with its problems
     GET /api/lesson/{course}/{module}   one parsed module for the workbench
+    GET /api/courses     study mode S2: active courses with guide progress
+    GET /api/guide/{course}             one course's chain + blueprint status
 
 Nothing here writes, and nothing here calls a model. Two boundaries hold:
 
@@ -78,7 +80,10 @@ _cache: dict = {}
 # Deliberately not a blanket invalidate-everything: `graph` is cached for 300s
 # because rebuilding it is expensive, and a new graph identity relays the sky —
 # ticking a box must not do that.
-TASK_PANELS = ("tasks", "queue")
+#
+# `courses` joined in S2: its progress counts are read off the same checkbox
+# state, so a completed or skipped module must reach it in the same breath.
+TASK_PANELS = ("tasks", "queue", "courses")
 
 
 def drop_task_caches(*extra):
@@ -877,7 +882,54 @@ def api_lesson(course: str, module_no: int):
     if d is None:
         return JSONResponse({"error": "no such module",
                              "detail": f"{course} M{module_no}"}, status_code=404)
+    # The sidecar's view state rides along so a reopened module resumes where
+    # it was — keyed on the note's own course spelling, which is what the
+    # state write stores under.
+    d["state"] = ln.load_state()["modules"].get(f"{d['course']}/{module_no}")
     return d
+
+
+# --------------------------------------------------------------------------
+# study mode S2 — the course dashboard's two reads
+# --------------------------------------------------------------------------
+
+def _scan_courses() -> dict:
+    """Every active course with its guide presence, progress and frontier —
+    GET /api/courses (study plan §10). 'Active' is todo.active_courses'
+    answer, the same one the queue gives, never a second definition."""
+    modules = ln.scan(VAULT, split=_lesson_split)
+    out = []
+    for code, name in td.active_courses(VAULT).items():
+        folder = VAULT / "02-Areas" / "Academics" / code
+        g = ln.guide(VAULT, code, split=_lesson_split)
+        if g is not None:
+            g = {k: v for k, v in g.items() if k != "rows"}
+        mine = [m for m in modules if m["course"].lower() == code.lower()]
+        out.append({
+            "course": code, "name": name,
+            "timeline": (folder / f"{code.lower()}-timeline.md").is_file(),
+            "modules": len(mine),
+            "held": sum(1 for m in mine if m["problems"]),
+            "guide": g,
+        })
+    return {"courses": out}
+
+
+@router.get("/courses")
+def api_courses():
+    return _cached("courses", 30, _scan_courses)
+
+
+@router.get("/guide/{course}")
+def api_guide(course: str):
+    # Fresh on every call, like the lesson detail: completing or skipping a
+    # row must render on the very next fetch, and a chain is one small file.
+    g = ln.guide(VAULT, course, split=_lesson_split)
+    if g is None:
+        return JSONResponse({"error": "no guide chain",
+                             "detail": f"{course} has no <code>-guide.md"},
+                            status_code=404)
+    return g
 
 
 # --------------------------------------------------------------------------

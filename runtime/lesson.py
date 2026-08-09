@@ -24,10 +24,18 @@ depending on who imported first. This codebase has paid for that three times
 (todo/queue, retro/review, agenda/calendar). `lesson` shadows nothing — not
 stdlib, not the venv, not the backend.
 
-Nothing here writes to the vault — parsing and validating is all it does.
+Nothing here writes to the vault — parsing and validating is all it does. S3
+added the practice sidecars (`study.state.json`, `study.jsonl`), and they are
+machine-local files under runtime/, the same split todo.py made for its index:
+what a checkbox cannot express lives beside the code, gitignored, and the one
+durable trace (the session rollup's digest) goes through writes.py's git path
+into the study log, never from here.
 """
 import argparse
+import datetime
+import hashlib
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -522,6 +530,238 @@ def load(vault: Path, course: str, module_no: int, split=None) -> dict | None:
                 p_ for p_ in row["problems"] if p_.startswith("duplicate module")]
             return d
     return None
+
+
+# --------------------------------------------------------------------------
+# the chain grammar — one checkbox row per module in <code>-guide.md (§5.2)
+# --------------------------------------------------------------------------
+# The chain and the module are the guide family's two grammars, and this file
+# owns both for the same one-implementation reason. `[-]` is in the row regex
+# on purpose: todo.py's TASK_RE deliberately cannot see a skipped row (that is
+# what advances the frontier past a skip), but the renderer must show it
+# dimmed rather than gone, so the chain reads its own note here.
+
+CHAIN_ROW_RE = re.compile(r"^\s*[-*]\s+\[( |x|X|-)\]\s+(.*\S)\s*$")
+WIKILINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]")
+SKIPPED_KEY_RE = re.compile(r"skipped::(\d{4}-\d{2}-\d{2})")
+DATED_RE = re.compile(r"📅\s*(\d{4}-\d{2}-\d{2})")
+
+
+def parse_chain(text: str) -> list[dict]:
+    """Every checkbox row of a chain note, skipped rows included, in document
+    order — which is the frontier's order (todo.py sorts (file, order), no
+    date consulted). Fence-guarded like every other scanner."""
+    rows = []
+    in_fence = False
+    for i, line in enumerate(text.splitlines(), 1):
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        m = CHAIN_ROW_RE.match(line)
+        if not m:
+            continue
+        box, body = m.group(1), m.group(2)
+        lm = WIKILINK_RE.search(body)
+        sm = SKIPPED_KEY_RE.search(body)
+        dm = DATED_RE.search(body)
+        rows.append({
+            "line": i, "raw": line,
+            "state": ("done" if box in "xX"
+                      else "skipped" if box == "-" else "open"),
+            "text": body,
+            "target": lm.group(1).strip() if lm else None,
+            "label": ((lm.group(2) or lm.group(1).split("/")[-1]).strip()
+                      if lm else None),
+            "skipped": sm.group(1) if sm else None,
+            "date": dm.group(1) if dm else None,
+        })
+    return rows
+
+
+def course_folder(vault: Path, course: str) -> Path | None:
+    """The course's folder under Academics, matched case-insensitively —
+    course codes are uppercase folder names, chain basenames are lowercase."""
+    root = vault.joinpath(*ACADEMICS)
+    if not root.is_dir():
+        return None
+    for d in sorted(root.iterdir()):
+        if d.is_dir() and d.name.lower() == course.lower():
+            return d
+    return None
+
+
+def guide(vault: Path, course: str, split=None) -> dict | None:
+    """One course's chain, progress and blueprint status — the payload behind
+    GET /api/guide/{course}. None when the course has no `<code>-guide.md`;
+    the name is fixed by the contract, so nothing is searched for."""
+    folder = course_folder(vault, course)
+    if folder is None:
+        return None
+    code = folder.name.lower()
+    p = folder / f"{code}-guide.md"
+    if not p.is_file():
+        return None
+    rel = p.relative_to(vault).as_posix()
+    sealed, _ = (split or _default_split)(vault, [rel])
+    if rel in sealed:
+        return None
+    try:
+        text = p.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return None
+    rows = parse_chain(text)
+
+    # `status: draft | approved`, read mechanically — the same field the S7
+    # applier hold will check. None when no blueprint note exists yet.
+    blueprint = None
+    bp = folder / f"{code}-guide-blueprint.md"
+    if bp.is_file():
+        try:
+            fm = frontmatter(bp.read_text(encoding="utf-8-sig", errors="replace"))
+            blueprint = str(fm.get("status") or "").strip() or None
+        except OSError:
+            blueprint = None
+
+    return {
+        "course": folder.name, "file": rel, "rows": rows,
+        "total": len(rows),
+        "done": sum(1 for r in rows if r["state"] == "done"),
+        "skipped": sum(1 for r in rows if r["state"] == "skipped"),
+        "frontier": next((r for r in rows if r["state"] == "open"), None),
+        "blueprint": blueprint,
+    }
+
+
+# --------------------------------------------------------------------------
+# the practice sidecars — machine-local state, never the vault (§8)
+# --------------------------------------------------------------------------
+# `.state.json` and `.jsonl` are both load-bearing suffixes: .gitignore already
+# excludes `runtime/*.state.json` and `runtime/*.jsonl` as one machine's
+# operating state, so neither file can reach GitHub under an existing
+# documented rule rather than a new special case — todo.state.json's reasoning,
+# inherited whole.
+
+STATE_PATH = HERE / "study.state.json"
+ATTEMPTS_PATH = HERE / "study.jsonl"
+
+
+def qhash(prompt: str) -> str:
+    """A stable handle for a practice question's *text*.
+
+    Attempt rows carry it beside the q-id because regeneration renumbers ids
+    (§5.1): the id says where the question sits today, the hash says what was
+    actually asked, and history survives a regenerated module through the
+    second. Same normalisation as todo.task_id, for the same reason."""
+    return hashlib.sha1(" ".join(prompt.split()).casefold()
+                        .encode("utf-8")).hexdigest()[:12]
+
+
+def load_state(path=None) -> dict:
+    """The fine-grained view state: depth chosen, reveals opened, per-question
+    results, and the rollup watermarks. Losable by design — everything durable
+    is in the note (completion) or the study log (the digest)."""
+    p = Path(path or STATE_PATH)
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"version": 1, "modules": {}, "rollup": {}}
+    if not isinstance(data, dict) or not isinstance(data.get("modules"), dict):
+        return {"version": 1, "modules": {}, "rollup": {}}
+    data.setdefault("version", 1)
+    data.setdefault("rollup", {})
+    return data
+
+
+def save_state(state: dict, path=None) -> bool:
+    """Atomic replace, todo.save_index's shape: losing view state costs a few
+    reveals, losing the request serving the dashboard costs the dashboard."""
+    p = Path(path or STATE_PATH)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    try:
+        tmp.write_text(json.dumps(state, indent=2, ensure_ascii=False),
+                       encoding="utf-8")
+        os.replace(tmp, p)
+        return True
+    except (OSError, TypeError):
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        return False
+
+
+def record_attempt(row: dict, path=None) -> bool:
+    """Append one attempt to the log. Append-only on purpose: an attempt is a
+    fact about what happened, and facts do not get edited."""
+    p = Path(path or ATTEMPTS_PATH)
+    try:
+        with p.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        return True
+    except OSError:
+        return False
+
+
+def attempts_for(course: str, after: str | None = None, path=None) -> list[dict]:
+    """This course's attempts, oldest first, optionally only those after an
+    ISO timestamp — which is how the rollup watermark makes session-end
+    idempotent. A torn or hand-mangled line is skipped, never fatal."""
+    p = Path(path or ATTEMPTS_PATH)
+    if not p.is_file():
+        return []
+    out = []
+    try:
+        lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("course") or "").lower() != course.lower():
+            continue
+        if after and str(row.get("ts") or "") <= after:
+            continue
+        out.append(row)
+    out.sort(key=lambda r: str(r.get("ts") or ""))
+    return out
+
+
+def digest(wrong: list[dict]) -> str:
+    """`the dot product ×2, unit vectors ×1` — the compact wrong-answer trace
+    a rollup row carries (§8). Grouped by segment title because that is the
+    unit a re-study decision is made at; sorted worst-first, then A–Z so the
+    same misses always produce the same digest."""
+    counts: dict[str, int] = {}
+    for r in wrong:
+        key = str(r.get("seg_title") or r.get("qid") or "?").strip()
+        counts[key] = counts.get(key, 0) + 1
+    ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return ", ".join(f"{k} ×{n}" for k, n in ordered)
+
+
+def find_item(d: dict, qid: str) -> tuple[dict, dict] | None:
+    """(segment, practice item) for one q-id in a parsed module — what the
+    attempt endpoint derives kind, qhash and the digest's segment title from."""
+    for seg in d["segments"]:
+        for it in seg["practice"]:
+            if it["id"] == qid:
+                return seg, it
+    return None
+
+
+def now_iso() -> str:
+    """Local wall time — the vault stores local wall time everywhere (the
+    schedule note owns the timezone). Microseconds are load-bearing, not
+    cosmetic: the rollup watermark is a strictly-greater-than comparison on
+    this string, and at seconds precision an attempt logged in the same second
+    as the last covered row would be silently swallowed by the next rollup."""
+    return datetime.datetime.now().isoformat(timespec="microseconds")
 
 
 # --------------------------------------------------------------------------

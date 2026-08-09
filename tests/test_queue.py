@@ -147,7 +147,10 @@ class QueueBase(unittest.TestCase):
     def course(self, code: str, body: str, status="active"):
         self.note(f"02-Areas/Academics/{code}/{code.lower()}.md",
                   f"---\ntype: course-index\ncourse: {code}\nstatus: {status}\n---\n")
-        self.note(f"02-Areas/Academics/{code}/timeline.md", body)
+        # `<code>-timeline.md`, the post-a84695b name — recognition requires
+        # the folder to vouch for the basename, and a fixture named the old
+        # way would be testing a chain the repaired rule correctly ignores.
+        self.note(f"02-Areas/Academics/{code}/{code.lower()}-timeline.md", body)
 
     def project(self, name: str, body: str, status="active"):
         self.note(f"03-Projects/{name}.md",
@@ -272,7 +275,8 @@ class TestChains(QueueBase):
 
     def test_a_course_folder_without_an_index_note_still_counts(self):
         """A missing manifest is missing documentation, not a dropped course."""
-        self.note("02-Areas/Academics/PHYS-121/timeline.md", "- [ ] mechanics\n")
+        self.note("02-Areas/Academics/PHYS-121/phys-121-timeline.md",
+                  "- [ ] mechanics\n")
         self.assertEqual([t["text"] for t in self.build()["sections"]["courses"]["visible"]],
                          ["mechanics"])
 

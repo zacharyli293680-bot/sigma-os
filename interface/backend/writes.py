@@ -20,6 +20,8 @@ path-scoped commit whose SHA lands in the ledger. The toggle is line-verified
 to the wrong line.
 """
 import asyncio
+import datetime
+import json
 import re
 import sys
 from pathlib import Path
@@ -37,6 +39,7 @@ if _RUNTIME not in sys.path:
 from sigma import call_model, gitops, ledger, parse_model_json, write_note  # noqa: E402
 import agenda as ag  # noqa: E402  — the calendar grammar and its serialiser
 import leetcode as lc  # noqa: E402  — the practice habit's own write path
+import lesson as ln  # noqa: E402  — the guide grammar and the practice sidecars
 import todo as td  # noqa: E402  — section inference, destinations, line grammar
 
 import commands  # noqa: E402  — the one spend-window policy, not a second copy
@@ -137,6 +140,61 @@ def api_toggle(req: ToggleReq):
     panels.drop_task_caches()
     return {"ok": True, "sha": res["sha"], "absorbed": res["absorbed"],
             "note": res["note"], "raw": flipped}
+
+
+class SkipReq(BaseModel):
+    file: str          # vault-relative posix path
+    line: int          # 1-based line number
+    raw: str           # the exact line the client saw — the staleness check
+
+
+@router.post("/tasks/skip")
+def api_skip(req: SkipReq):
+    """Skip one task line: `[ ]` becomes `[-]` plus `skipped::<date>`.
+
+    Deliberately NOT the `/api/queue/meta` archive. That write is index-only —
+    no commit, no ledger row, no undo — and an archived head used to park its
+    whole chain. This is a line edit like the toggle: one commit, one ledger
+    row, one-click undo from the activity ledger, and because TASK_RE matches
+    only ` |x|X`, a `[-]` row drops out of the scan entirely — the chain's
+    frontier advances, no open box remains, and the note keeps the record.
+    Suppression as a decision, visible, never hidden (invariant 6).
+
+    A task-line mutation any chain gets for free, not a study-specific
+    mechanism — which is why it lives here beside the toggle rather than in
+    a study module (study plan §7/§10).
+    """
+    rel = _vault_rel(req.file)
+    if rel is None:
+        return _err(400, "bad path")
+    if rel in sealed_paths(VAULT, [rel]):
+        return _err(403, "sealed path")
+    dest = VAULT / rel
+
+    skipped = td.skip_line(req.raw, datetime.date.today().isoformat())
+    if skipped is None:
+        return _err(400, "not an open task",
+                    detail="only an open checkbox line can be skipped")
+
+    try:
+        with gitops.vault_write(VAULT) as w:
+            try:
+                body = dest.read_text(encoding="utf-8")
+            except OSError:
+                return _err(409, "stale", detail="the note is gone or unreadable")
+            out = td.replace_line(body, req.line, req.raw, skipped)
+            if out is None:
+                return _err(409, "stale", detail="the line changed underneath you")
+            write_note(dest, out)
+            res = w.commit(rel, f"zach (dashboard): skip task in {rel}")
+    except gitops.GitBusy:
+        return _err(409, "busy", detail="another Sigma write is in progress — retry")
+
+    ledger.record("zach", "skip", rel, res["sha"],
+                  f"skipped a task in {rel}", extra={"line": req.line})
+    panels.drop_task_caches()
+    return {"ok": True, "sha": res["sha"], "absorbed": res["absorbed"],
+            "note": res["note"], "raw": skipped}
 
 
 class AddReq(BaseModel):
@@ -935,6 +993,181 @@ def api_agenda_except(req: RuleException):
     return {"ok": True, "file": src, "raw": rule_line, "sha": res["sha"],
             "moved": moving, "event": event_line, "event_file": dst,
             "note": res["note"]}
+
+
+# --------------------------------------------------------------------------
+# study mode S3 — the practice engine's write half
+# --------------------------------------------------------------------------
+# Three endpoints, three different weights, and the split is the design (§8):
+#
+#   POST /api/lesson/state        sidecar only — never commits, never ledgered
+#   POST /api/lesson/attempt      appends one fact to the machine-local log
+#   POST /api/lesson/session-end  the one durable write: a digest row spliced
+#                                 into <code>-study-log.md, one commit
+#
+# The state and attempt writes are deliberately outside git for todo.py's
+# sidecar reason: they hold what a note cannot say, and losing them costs a
+# few reveals — the digest is what survives, and it goes through the same
+# mutex → splice → verify → commit → ledger machinery as every other vault
+# write here.
+
+RESULTS = ("correct", "wrong", "skipped")
+SESSIONS_HEADING = "## Sessions"     # the study-log schema's one section
+
+
+class LessonState(BaseModel):
+    course: str
+    module: int
+    state: dict
+
+
+@router.post("/lesson/state")
+def api_lesson_state(req: LessonState):
+    """Depth chosen, reveals opened, per-question results — resume state.
+
+    Not in the ledger for /api/queue/meta's reason: the ledger indexes commits
+    so they can be reverted, and there is no commit here. Undo is clicking it
+    back."""
+    course = (req.course or "").strip()
+    if not course:
+        return _err(400, "no course")
+    try:
+        blob = json.dumps(req.state)
+    except (TypeError, ValueError):
+        return _err(400, "bad state")
+    if len(blob) > 20_000:
+        return _err(413, "too large",
+                    detail="view state is a few flags, not a document")
+    st = ln.load_state()
+    st["modules"][f"{course}/{req.module}"] = req.state
+    if not ln.save_state(st):
+        return _err(500, "write failed", detail="the sidecar could not be written")
+    return {"ok": True}
+
+
+class AttemptReq(BaseModel):
+    course: str
+    module: int
+    qid: str
+    result: str                    # correct | wrong | skipped
+    hints: int = 0                 # how many hints were open when it resolved
+    revealed: bool = False         # the solution was shown before resolving
+    answer: str | None = None      # what was typed, for the record
+
+
+@router.post("/lesson/attempt")
+def api_lesson_attempt(req: AttemptReq):
+    """Append one row to the attempt log (§8/§10).
+
+    The kind, the segment title and the question-text hash are derived from
+    the parsed module here, never trusted from the client — the digest groups
+    by segment title, and history surviving a regenerated module depends on
+    the hash being the hash of what was actually asked."""
+    if req.result not in RESULTS:
+        return _err(400, "bad result", detail="correct | wrong | skipped")
+    d = ln.load(VAULT, req.course, req.module, split=panels._lesson_split)
+    if d is None:
+        return _err(404, "no such module", detail=f"{req.course} M{req.module}")
+    hit = ln.find_item(d, req.qid)
+    if hit is None:
+        return _err(404, "no such question", detail=req.qid)
+    seg, item = hit
+
+    row = {
+        "ts": ln.now_iso(), "course": d["course"], "module": d["module"],
+        "qid": req.qid, "qhash": ln.qhash(item["prompt"]),
+        "kind": item["kind"], "seg": seg["n"], "seg_title": seg["title"],
+        "result": req.result, "hints": max(0, req.hints),
+        "revealed": bool(req.revealed),
+    }
+    if req.answer:
+        row["answer"] = " ".join(req.answer.split())[:200]
+    if not ln.record_attempt(row):
+        return _err(500, "write failed",
+                    detail="the attempt log could not be written")
+    return {"ok": True, "row": row}
+
+
+class SessionEnd(BaseModel):
+    course: str
+
+
+@router.post("/lesson/session-end")
+def api_lesson_session_end(req: SessionEnd):
+    """Roll the session up: one digest row spliced into `<code>-study-log.md`,
+    one commit, one ledger row (§8).
+
+    Idempotent through the rollup watermark — the close handler and the
+    explicit button can both fire, and the second call finds nothing to cover.
+    The watermark advances only after the commit exists, so a failed write
+    leaves the session uncovered and the next session-end retries it. Both
+    sidecars are gitignored; this row's digest is the trace that survives a
+    wipe, which is the whole reason it exists."""
+    folder = ln.course_folder(VAULT, (req.course or "").strip())
+    if folder is None:
+        return _err(404, "no such course", detail=req.course or "(blank)")
+    course = folder.name
+    rel = f"02-Areas/Academics/{course}/{course.lower()}-study-log.md"
+    if _vault_rel(rel) != rel:
+        return _err(400, "bad path")
+    if rel in sealed_paths(VAULT, [rel]):
+        return _err(403, "sealed path")
+    dest = VAULT / rel
+    if not dest.exists():
+        return _err(404, "no study log note",
+                    detail=f"{rel} does not exist — create it first")
+
+    st = ln.load_state()
+    rows = ln.attempts_for(course, after=(st.get("rollup") or {}).get(course))
+    if not rows:
+        return {"ok": True, "rows": 0, "wrote": False}
+
+    answered = [r for r in rows if r.get("result") in ("correct", "wrong")]
+    correct = [r for r in answered if r["result"] == "correct"]
+    wrong = [r for r in answered if r["result"] == "wrong"]
+    skipped = [r for r in rows if r.get("result") == "skipped"]
+    mods = sorted({int(r["module"]) for r in rows
+                   if isinstance(r.get("module"), int)})
+    mod_label = "+".join(f"M{m:02d}" for m in mods) or "M?"
+
+    bits = [f"- {datetime.date.today().isoformat()} · {mod_label}",
+            f"{len(answered)} answered, {len(correct)} correct"]
+    if skipped:
+        bits.append(f"skipped {len(skipped)}")
+    bits.append(f"missed {len(wrong)}")
+    if wrong:
+        bits.append(ln.digest(wrong))
+    line = " · ".join(bits)
+
+    try:
+        with gitops.vault_write(VAULT) as w:
+            sealed = _sealed_inside_mutex(rel)
+            if sealed:
+                return _err(403, "sealed path", detail=sealed)
+            try:
+                body = dest.read_text(encoding="utf-8")
+            except OSError:
+                return _err(409, "stale", detail="the note is gone or unreadable")
+            before = len(_CHECKBOX.findall(body))
+            out = td.splice(body, SESSIONS_HEADING, line)
+            if len(_CHECKBOX.findall(out)) != before:
+                return _err(400, "checkbox",
+                            detail="a rollup row may not add a checkbox")
+            write_note(dest, out)
+            res = w.commit(rel, f"zach (dashboard): study session rollup in {rel}")
+    except gitops.GitBusy as e:
+        return _err(409, "busy", detail=f"another Sigma write is in progress ({e})")
+    except OSError as e:
+        return _err(500, "write failed", detail=str(e))
+
+    st.setdefault("rollup", {})[course] = max(str(r.get("ts") or "") for r in rows)
+    ln.save_state(st)
+
+    ledger.record("zach", "append", rel, res["sha"],
+                  f"study session: {course} {mod_label} — {len(answered)} "
+                  f"answered, {len(wrong)} missed")
+    return {"ok": True, "rows": len(rows), "wrote": True, "file": rel,
+            "raw": line, "sha": res["sha"], "digest": ln.digest(wrong)}
 
 
 @router.get("/activity")

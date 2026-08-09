@@ -110,13 +110,25 @@ PRUNE_DAYS = 30
 
 # A chain is a *document that is a sequence*, not a section.
 #
-# `timeline.md` says so in its own title ("AA 210 — 60-Day Timeline"), its blocks
-# are dated in order, and you genuinely cannot do Day 5 before Day 4. A project
-# hub's task list and a course's ad-hoc list are todo lists: marking their second
-# entry "blocked by" the first would be a claim about dependency that nothing in
-# the note supports. This started as a per-section rule and quick-add exposed it —
-# every task added to a course would have been buried behind a 51-item timeline.
-CHAIN_FILES = ("timeline.md",)
+# A timeline says so in its own title ("AA 210 — 60-Day Timeline"), its blocks
+# are dated in order, and you genuinely cannot do Day 5 before Day 4. A study
+# guide's chain (`<code>-guide.md`, study plan §5.2) is the same claim made
+# structurally: module n+1 is blocked by module n. A project hub's task list and
+# a course's ad-hoc list are todo lists: marking their second entry "blocked by"
+# the first would be a claim about dependency that nothing in the note supports.
+# This started as a per-section rule and quick-add exposed it — every task added
+# to a course would have been buried behind a 51-item timeline.
+#
+# Recognition is the basename matching its own folder: `AA-210/aa-210-timeline.md`,
+# `AA-210/aa-210-guide.md`. It was an exact match on `timeline.md` until commit
+# a84695b (2026-08-09) renamed every timeline to `<code>-timeline.md` for the
+# unique-basename invariant — after which recognition matched nothing, vault-wide,
+# and every timeline silently went flat. A bare suffix match is not the repair:
+# the vault holds `exam-1-study-guide.md` and `workbook-guide.md`, real notes
+# whose checkboxes must never be sequenced behind a head. The folder has to vouch
+# for the name, which is the contract's own naming rule — `<code>-guide.md` sits
+# at the root of the `<COURSE>` folder it is named for.
+CHAIN_SUFFIXES = ("-timeline.md", "-guide.md")
 
 SECTIONS = ("courses", "procertus", "projects", "misc")
 SECTION_TITLE = {"courses": "Courses", "procertus": "ProCertus",
@@ -400,6 +412,32 @@ def replace_line(body: str, line_no: int, raw: str, new: str) -> str | None:
         return None
     lines[i] = new + ("\r" if had_cr else "")
     return "\n".join(lines)
+
+
+SKIPPED_RE = re.compile(r"skipped::\d{4}-\d{2}-\d{2}")
+
+
+def skip_line(raw: str, date: str) -> str | None:
+    """`- [ ] …` -> `- [-] … skipped::<date> …`, or None if this line cannot
+    be skipped — not an open checkbox, or skipped already.
+
+    The calendar's `cancelled::` grammar, reused: a status the line carries,
+    never a removal. The marker lands immediately before the first wikilink,
+    so a chain row reads `M04 · skipped::2026-08-09 [[module|title]]` — the
+    shape CLAUDE.md's guide section documents — and at the end of a line with
+    no link. `[-]` is invisible to TASK_RE, which is the whole mechanism: the
+    scan's frontier advances past the row while the note keeps the record,
+    and the guide renderer shows it dimmed rather than gone.
+    """
+    m = re.match(r"^(\s*[-*]\s+)\[ \](.*)$", raw)
+    if m is None or SKIPPED_RE.search(raw):
+        return None
+    head, body = m.group(1), m.group(2)
+    marker = f"skipped::{date}"
+    at = body.find("[[")
+    if at >= 0:
+        return f"{head}[-]{body[:at]}{marker} {body[at:]}"
+    return f"{head}[-]{body.rstrip()} {marker}"
 
 
 def splice(body: str, heading: str, line: str) -> str:
@@ -801,6 +839,7 @@ def _merge(f: dict, e: dict, today: str) -> dict:
     # a sequence as a sequence — rank is meaningless inside a fixed order — and
     # a todo list as a ranked list, so it has to be able to tell them apart.
     t["chain"] = is_chain_file(f["file"])
+    t["chain_kind"] = chain_kind(f["file"])
     t["overdue"] = bool(f["deadline"] and f["deadline"] < today)
     t["archived"] = e.get("status") == "archived"
     t["snoozed"] = bool(t["snoozed_until"] and t["snoozed_until"] > today)
@@ -808,7 +847,24 @@ def _merge(f: dict, e: dict, today: str) -> dict:
 
 
 def is_chain_file(rel: str) -> bool:
-    return rel.rsplit("/", 1)[-1] in CHAIN_FILES
+    parts = rel.split("/")
+    if len(parts) < 2:
+        return False
+    name, folder = parts[-1], parts[-2].lower()
+    return any(name == f"{folder}{suffix}" for suffix in CHAIN_SUFFIXES)
+
+
+def chain_kind(rel: str) -> str | None:
+    """"timeline" | "guide" for a chain file, None for everything else.
+
+    The two kinds share the blocking semantics but not a window slot: the
+    work view renders a guide head distinctly, and build() keys a course's
+    guide head into its own slot so the study frontier and the course's real
+    deadline work never displace each other (study plan §7).
+    """
+    if not is_chain_file(rel):
+        return None
+    return "guide" if rel.endswith("-guide.md") else "timeline"
 
 
 def _chain(tasks: list) -> list:
@@ -821,12 +877,19 @@ def _chain(tasks: list) -> list:
     can be honoured later without a migration.
 
     Everything else in a chain *section* stays flat and fully eligible — see
-    CHAIN_FILES for why the distinction is the file rather than the section.
+    CHAIN_SUFFIXES for why the distinction is the file rather than the section.
     """
     ordered = sorted(tasks, key=lambda t: (t["file"], t["order"]))
     head = {}
     for t in ordered:
         if not is_chain_file(t["file"]):
+            continue
+        if t["archived"]:
+            # A suppressed head must not park its chain. build() filters
+            # archived tasks out *after* heads are picked here, so counting
+            # one as the head would block every follower behind a task
+            # nobody can see — the exact deadlock the study plan's skip
+            # state (`[-]`, invisible to TASK_RE) exists to avoid.
             continue
         h = head.get(t["file"])
         if h is None:
@@ -881,11 +944,22 @@ def build(vault=None, index_path=None, today=None, split=None,
         if key in PER_PARENT:
             known = parents[key]
             visible, rest = [], []
+
+            # One slot per parent — except that a *guide* chain head takes a
+            # slot of its own beside the course's other work (study plan §7):
+            # the study frontier must never displace a problem-set deadline,
+            # and must never be displaced by one. A course with one chain
+            # still shows one row; only a course running both a timeline and
+            # a guide shows two, distinguished by `chain_kind` in the UI.
+            def _slot(t):
+                return "guide" if t["chain_kind"] == "guide" else "main"
+
             for t in eligible:
                 # An inactive course or archived project keeps its tasks in the
                 # queue but never spends a window slot on them.
                 if t["parent"] in known and not any(
-                        v["parent"] == t["parent"] for v in visible):
+                        v["parent"] == t["parent"] and _slot(v) == _slot(t)
+                        for v in visible):
                     visible.append(t)
                 else:
                     rest.append(t)

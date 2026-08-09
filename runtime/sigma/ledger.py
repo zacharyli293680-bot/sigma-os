@@ -20,7 +20,10 @@ from pathlib import Path
 RUNTIME = Path(__file__).resolve().parents[1]
 LEDGER_PATH = RUNTIME / "ledger.jsonl"
 
-ACTIONS = ("create", "update", "toggle", "revert", "append")
+# "skip" joined in study S2: flipping a chain row to `[-]` is neither a toggle
+# (no completion happened) nor an update (nothing was reworded), and collapsing
+# it to "update" would make the morning ledger read as if the row was edited.
+ACTIONS = ("create", "update", "toggle", "revert", "append", "skip")
 
 
 def record(actor: str, action: str, target: str, sha: str | None,

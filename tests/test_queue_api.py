@@ -96,7 +96,8 @@ class TestQueueEndpoint(QueueApiBase):
     def test_a_chain_section_names_what_its_window_counts(self):
         self.note("02-Areas/Academics/AA-210/aa-210.md",
                   "---\ntype: course-index\nstatus: active\n---\n")
-        self.note("02-Areas/Academics/AA-210/timeline.md", "- [ ] day 2\n- [ ] day 3\n")
+        self.note("02-Areas/Academics/AA-210/aa-210-timeline.md",
+                  "- [ ] day 2\n- [ ] day 3\n")
         s = panels.api_queue()["sections"]["courses"]
         self.assertEqual((s["kind"], s["parent_noun"], s["window"]), ("chain", "course", 1))
         self.assertEqual(len(s["visible"]), 1)
@@ -216,7 +217,8 @@ class TestCompletionPromotes(QueueApiBase):
         self.assertEqual(entry["completed_at"], todo.datetime.date.today().isoformat())
 
     def test_unticking_puts_it_back_at_the_head_of_its_chain(self):
-        self.note("02-Areas/Academics/AA-210/timeline.md", "- [ ] day 2\n- [ ] day 3\n")
+        self.note("02-Areas/Academics/AA-210/aa-210-timeline.md",
+                  "- [ ] day 2\n- [ ] day 3\n")
         _git(self.vault, "add", "-A")
         _git(self.vault, "commit", "-m", "timeline")
 
@@ -277,15 +279,24 @@ class TestQuickAdd(QueueApiBase):
     def test_a_course_task_goes_beside_the_timeline_not_into_it(self):
         self.note("02-Areas/Academics/CSE-311/cse-311.md",
                   "---\ntype: course-index\nstatus: active\n---\n")
-        self.note("02-Areas/Academics/CSE-311/timeline.md", "- [ ] week 1\n- [ ] week 2\n")
+        self.note("02-Areas/Academics/CSE-311/cse-311-timeline.md",
+                  "- [ ] week 1\n- [ ] week 2\n")
         _git(self.vault, "add", "-A")
         _git(self.vault, "commit", "-m", "course")
 
         r = self.add(text="email the 311 TA")
         self.assertEqual(r["file"], "02-Areas/Academics/CSE-311/tasks.md")
-        # eligible immediately, rather than behind the rest of the term
+        # Eligible immediately, rather than behind the rest of the term. The
+        # claim is *not blocked* — an unmarked add ties with the timeline head
+        # on score, and which of the two takes the course's one slot falls to
+        # the filename tie-break (this assertion once said "visible" only
+        # because `tasks.md` happened to sort before the pre-a84695b name
+        # `timeline.md`). Deadlined course work outranking the head is pinned
+        # by test_queue's ad-hoc-list test, with a 📅 doing the outranking.
         s = panels.api_queue()["sections"]["courses"]
-        self.assertIn("email the 311 TA", [t["text"] for t in s["visible"]])
+        eligible = [t["text"] for t in s["visible"]] + [t["text"] for t in s["queue"]]
+        self.assertIn("email the 311 TA", eligible)
+        self.assertNotIn("email the 311 TA", [t["text"] for t in s["blocked"]])
 
     def test_an_explicit_section_overrides_the_guess(self):
         r = self.add(text="push the ProCertus repo", section="misc")
@@ -554,7 +565,8 @@ class TestSerialisable(QueueApiBase):
         """FastAPI will serialise this; a stray set or Path fails at runtime in
         the browser rather than here."""
         self.note("02-Areas/ProCertus/Todo.md", "- [ ] a 📅 2026-08-02\n")
-        self.note("02-Areas/Academics/AA-210/timeline.md", "## Block 1\n- [ ] b\n- [ ] c\n")
+        self.note("02-Areas/Academics/AA-210/aa-210-timeline.md",
+                  "## Block 1\n- [ ] b\n- [ ] c\n")
         blob = json.dumps(panels.api_queue())
         self.assertIn("procertus", blob)
         self.assertIn("Block 1", blob)

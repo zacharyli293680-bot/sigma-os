@@ -235,7 +235,8 @@ class TestDayFacts(ReviewBase):
         three active courses without one could not move the score at all."""
         self.note("02-Areas/Academics/AA-210/aa-210.md",
                   "---\ntype: course-index\nstatus: active\n---\n")
-        tl = self.note("02-Areas/Academics/AA-210/timeline.md", "- [ ] day 2\n- [ ] day 3\n")
+        tl = self.note("02-Areas/Academics/AA-210/aa-210-timeline.md",
+                       "- [ ] day 2\n- [ ] day 3\n")
         tasks = self.note("02-Areas/Academics/AA-210/tasks.md", "- [ ] email the TA\n")
         self.adopt()
 
