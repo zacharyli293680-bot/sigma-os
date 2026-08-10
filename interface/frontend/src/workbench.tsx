@@ -706,6 +706,10 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
       setGenNote(null);            // "started —" must not outlive the run
       void fetchGuide(course);
       get<Courses>("courses").then(setCourses).catch(() => {});
+      // The chain rows' openable-join reads the lesson list — without this
+      // refetch the just-authored notes kept their "not written yet" chips
+      // (found driving the first live run).
+      get<LessonList>("lesson").then(setList).catch(() => {});
     }
     prevGenState.current = s;
   }, [open, course, guideProg]);
