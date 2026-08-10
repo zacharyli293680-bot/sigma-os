@@ -360,11 +360,27 @@ export type Guide = {
    *  the generate affordance's arithmetic. Null without a blueprint. */
   planned: number | null; missing: number | null;
 };
+/** How long study actually takes against what the modules estimate (study S8).
+ *  `multiplier` is **null until it has been measured** — `basis` says whether
+ *  the number came from this course, from the vault's whole pool, or from
+ *  nothing yet. Rendering a null as 1.0 would be exactly the assumed number
+ *  the measurement exists to replace. */
+export type Pace = {
+  course: string | null; basis: "course" | "vault" | null;
+  n: number; estimate: number; actual: number; multiplier: number | null;
+};
+/** What finishing the guide is projected to cost. `minutes` is null whenever
+ *  the pace is unmeasured — the written `estimate` is still there to show. */
+export type Projected = {
+  open: number; estimate: number; unestimated: number; minutes: number | null;
+};
 /** GET /api/courses — every active course's study surface at a glance. */
 export type CourseRow = {
   course: string; name: string; timeline: boolean;
   modules: number; held: number;
   guide: Omit<Guide, "rows"> | null;
+  pace: Pace; projected: Projected;
+  recall: { open: number; cap: number; file: string | null };
 };
 export type Courses = { courses: CourseRow[] };
 /** What POST /api/lesson/session-end answers with. `wrote: false` is the
@@ -372,6 +388,10 @@ export type Courses = { courses: CourseRow[] };
 export type Rollup = {
   ok: true; rows: number; wrote: boolean;
   file?: string; raw?: string; sha?: string; digest?: string;
+  /** The active minutes the row recorded, null when nothing was measured. */
+  minutes?: number | null;
+  /** Cards raised from this session's misses, if any changed (study S8). */
+  recall?: { file: string; raised: number; expired: number; withheld: number } | null;
 };
 
 /** Repo awareness (Phase 6). `root` is derived from where hubs point. */

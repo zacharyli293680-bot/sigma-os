@@ -2325,6 +2325,17 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
 .wb-roll code { color: var(--accent); }
 .wb-roll.err { color: var(--red); }
 
+/* The measured pace (study S8). Deliberately the accent colour rather than
+   dim: a number that came from what actually happened should not read like a
+   caption beside the estimate it corrects. */
+.wb-pace { color: var(--accent); }
+.wb-pacebar {
+  font-family: var(--mono); font-size: 10.5px;
+  padding: 2px 0 0; margin: 0;
+}
+.wb-pacebar a { color: inherit; text-decoration: underline dotted; }
+.wb-pacebar a:hover { color: var(--accent); }
+
 /* --- the chain view (study S2 — the course dashboard) -------------------- */
 .wb-chain { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .wb-chainbody { padding: 2px 18px 14px; }

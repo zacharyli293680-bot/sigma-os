@@ -62,6 +62,12 @@ const SLOT_LABEL: [Slot, string][] = [
 type Lang = "python" | "sql";
 const SCRATCH_MAX = 4000;
 
+// The study clock (S8). Five minutes of no pointer and no key is a coffee, not
+// study; fifteen seconds is fine granularity for a number that gets rounded to
+// minutes, and cheap enough to run for hours.
+const IDLE_MS = 5 * 60_000;
+const TICK_MS = 15_000;
+
 type WbState = {
   seg: number;                       // index into segments
   depth: Record<number, Depth>;      // per-segment and sticky…
@@ -652,6 +658,16 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
   // nothing renders from it except the end-session button's presence, and the
   // close path reads it during cleanup when state is already torn down.
   const touched = useRef<Set<string>>(new Set());
+  // ------------------------------------------------------------ the clock (S8)
+  // Every `estimate:` in a guide is a guess until something measures it. This
+  // is the something: active seconds per course, accrued while the workbench is
+  // open on a lesson and *paused* when the tab is hidden or nothing has been
+  // touched for IDLE_MS. Wall clock from open to close would measure how long
+  // the tab was open, which is the assumed number wearing a stopwatch.
+  const spent = useRef<Map<string, number>>(new Map());
+  const lastAct = useRef<number>(Date.now());
+  const clockCourse = useRef<string | null>(null);
+  const secondsFor = (c: string) => Math.round(spent.current.get(c) ?? 0);
 
   useEffect(() => {
     if (!open) return;
@@ -672,13 +688,47 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
     // The Set object itself is stable (only its contents change), so capturing
     // it here reads its contents as they are at close time.
     const pending = touched.current;
+    const clock = spent.current;
+    clock.clear();
     return () => {
       for (const c of pending) {
-        void post("lesson/session-end", { course: c }).catch(() => {});
+        void post("lesson/session-end",
+                  { course: c, seconds: Math.round(clock.get(c) ?? 0) })
+          .catch(() => {});
       }
       pending.clear();
+      clock.clear();
     };
   }, [open]);
+
+  // One interval for the whole open workbench, reading the current course from
+  // a ref rather than keying on it: an interval that restarted on every module
+  // switch would drop up to a tick each time, and the measurement would be
+  // biased low exactly in the sessions that covered the most ground.
+  useEffect(() => {
+    if (!open) return;
+    const bump = () => { lastAct.current = Date.now(); };
+    const id = window.setInterval(() => {
+      const c = clockCourse.current;
+      if (!c || document.visibilityState !== "visible") return;
+      if (Date.now() - lastAct.current > IDLE_MS) return;
+      spent.current.set(c, (spent.current.get(c) ?? 0) + TICK_MS / 1000);
+    }, TICK_MS);
+    window.addEventListener("pointerdown", bump);
+    window.addEventListener("keydown", bump);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener("pointerdown", bump);
+      window.removeEventListener("keydown", bump);
+    };
+  }, [open]);
+
+  // Opening a module is itself activity, and it is what puts a course on the
+  // clock — the chain view and the course picker are navigation, not study.
+  useEffect(() => {
+    clockCourse.current = lesson?.course ?? null;
+    if (lesson) lastAct.current = Date.now();
+  }, [lesson]);
 
   const fetchGuide = (c: string) =>
     get<Guide>(`guide/${c}`).then(setGuide).catch(() => setGuide(null));
@@ -943,11 +993,19 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
     try {
       let shown: Rollup | null = null;
       for (const c of targets) {
-        const r = await post<Rollup>("lesson/session-end", { course: c });
-        if (r.wrote) touched.current.delete(c);
+        const r = await post<Rollup>("lesson/session-end",
+                                     { course: c, seconds: secondsFor(c) });
+        // The clock resets only with the row that recorded it. A rollup that
+        // wrote nothing has not spent those minutes yet, and dropping them
+        // would silently shorten the very session being measured.
+        if (r.wrote) { touched.current.delete(c); spent.current.delete(c); }
         if (!shown || r.wrote) shown = r;
       }
       setRollup(shown);
+      // Cards may have landed and the pace may have moved — both live in the
+      // courses payload, which is otherwise fetched only when the workbench
+      // opens.
+      get<Courses>("courses").then(setCourses).catch(() => {});
     } catch (e) {
       setRollup(e instanceof ApiError
         ? `${e.code}${e.detail ? ` — ${e.detail}` : ""}` : "rollup failed");
@@ -1054,6 +1112,13 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
     ? `${lesson.course} ${unitLabel}${seg ? ` · S${seg.n} ${seg.title}` : ""}`
       + (st.lastQid ? ` · ${st.lastQid}` : "")
     : "";
+  // The estimate, corrected by what studying this course has actually cost.
+  // Rendered only when `multiplier` is non-null: an unmeasured pace shows the
+  // written estimate alone rather than an ×1.0 that looks like a measurement.
+  const paceOf = courses?.courses.find(
+    c => c.course === (lesson?.course ?? course))?.pace ?? null;
+  const atPace = paceOf?.multiplier && lesson?.estimate
+    ? Math.round(lesson.estimate * paceOf.multiplier) : null;
 
   return (
     <div className="palette-backdrop" onClick={onClose}>
@@ -1065,7 +1130,18 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
             {inLesson && lesson
               ? ` · ${lesson.course} ${unitLabel} — ${lesson.title}` : ""}
             {inLesson && lesson?.estimate
-              ? <span className="dim"> · {lesson.estimate} min</span> : null}
+              ? <span className="dim"> · {lesson.estimate} min
+                  {atPace ? (
+                    <span className="wb-pace"
+                          title={`measured: ${paceOf!.actual} min actually spent `
+                                 + `against ${paceOf!.estimate} min estimated over `
+                                 + `${paceOf!.n} finished module(s), `
+                                 + `${paceOf!.basis === "vault"
+                                      ? "vault-wide" : "this course"}`}>
+                      {" "}→ ~{atPace} min at your pace
+                    </span>
+                  ) : null}
+                </span> : null}
             {inLesson && lesson && lesson.checkpoint != null && (lesson.covers?.length ?? 0) > 0
               ? <span className="dim"> · covers {lesson.covers!.map(m => `M${String(m).padStart(2, "0")}`).join(", ")}</span>
               : null}
@@ -1175,6 +1251,40 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
  runs against the approved blueprint">no chain yet</span>
                   )}
                 </p>
+                {/* What the rest of this chain is going to cost, and what is
+                    waiting to be recalled (S8). The projection is the written
+                    estimate when the pace is unmeasured and says so — the
+                    number agenda P7 will consume, never a silent ×1.0. */}
+                {row && (row.projected.open > 0 || row.recall.open > 0) && (
+                  <p className="wb-pacebar dim">
+                    {row.projected.open > 0 && (
+                      <span title={row.pace.multiplier
+                        ? `${row.projected.estimate} min estimated × ${row.pace.multiplier} measured`
+                          + ` over ${row.pace.n} finished module(s)`
+                        : "estimated by the modules themselves — not enough finished"
+                          + " modules to measure your pace yet"}>
+                        {row.projected.open} open ·{" "}
+                        {row.projected.minutes
+                          ? `~${(row.projected.minutes / 60).toFixed(1)} h at your pace`
+                          : `${(row.projected.estimate / 60).toFixed(1)} h estimated`}
+                        {row.projected.unestimated
+                          ? ` (+${row.projected.unestimated} unwritten)` : ""}
+                      </span>
+                    )}
+                    {row.recall.open > 0 && (
+                      <span>
+                        {row.projected.open > 0 ? " · " : ""}
+                        {row.recall.file ? (
+                          <a href={obsidianHref(vault, row.recall.file)}
+                             title="cards raised from what you missed — they queue under Courses, low priority, and retire themselves after two weeks">
+                            {row.recall.open} recall card{row.recall.open === 1 ? "" : "s"}
+                          </a>
+                        ) : `${row.recall.open} recall cards`}
+                        {row.recall.open >= row.recall.cap ? " (at cap)" : ""}
+                      </span>
+                    )}
+                  </p>
+                )}
                 {(() => {
                   const gen = guideProg && guideProg.course === course ? guideProg : null;
                   const age = gen?.updated ? Date.now() - Date.parse(gen.updated) : NaN;
@@ -1444,6 +1554,15 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
               {rollup.wrote
                 ? <>rolled up · {rollup.raw?.replace(/^- /, "")} · <code>{rollup.sha?.slice(0, 7)}</code></>
                 : "nothing to roll up"}
+              {/* Cards are part of the same commit, so they are reported beside
+                  it — including what the cap withheld, because a cap that
+                  drops evidence silently is indistinguishable from a bug. */}
+              {rollup.recall && rollup.recall.raised > 0 && (
+                <> · {rollup.recall.raised} recall card
+                  {rollup.recall.raised === 1 ? "" : "s"} raised
+                  {rollup.recall.withheld
+                    ? ` (${rollup.recall.withheld} withheld — at cap)` : ""}</>
+              )}
             </span>
           )}
           {typeof rollup === "string" && rollup !== "busy" && (
