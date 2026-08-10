@@ -130,6 +130,15 @@ PRUNE_DAYS = 30
 # at the root of the `<COURSE>` folder it is named for.
 CHAIN_SUFFIXES = ("-timeline.md", "-guide.md")
 
+# A course's recall cards (`AA-210/aa-210-recall.md`, study S8) — recognised by
+# the same folder-vouches-for-the-name rule, for the same reason: `recall.md`
+# alone would sweep up any note somebody named that. Not a chain — cards are
+# independent of each other, and sequencing them would park four behind one.
+# What the recognition buys is a window slot of their own (see build): a card is
+# five minutes of review and must neither displace a problem set nor be
+# permanently displaced by one.
+RECALL_SUFFIX = "-recall.md"
+
 SECTIONS = ("courses", "procertus", "projects", "misc")
 SECTION_TITLE = {"courses": "Courses", "procertus": "ProCertus",
                  "projects": "Projects", "misc": "Misc"}
@@ -840,6 +849,7 @@ def _merge(f: dict, e: dict, today: str) -> dict:
     # a todo list as a ranked list, so it has to be able to tell them apart.
     t["chain"] = is_chain_file(f["file"])
     t["chain_kind"] = chain_kind(f["file"])
+    t["recall"] = is_recall_file(f["file"])
     t["overdue"] = bool(f["deadline"] and f["deadline"] < today)
     t["archived"] = e.get("status") == "archived"
     t["snoozed"] = bool(t["snoozed_until"] and t["snoozed_until"] > today)
@@ -852,6 +862,13 @@ def is_chain_file(rel: str) -> bool:
         return False
     name, folder = parts[-1], parts[-2].lower()
     return any(name == f"{folder}{suffix}" for suffix in CHAIN_SUFFIXES)
+
+
+def is_recall_file(rel: str) -> bool:
+    parts = rel.split("/")
+    if len(parts) < 2:
+        return False
+    return parts[-1] == f"{parts[-2].lower()}{RECALL_SUFFIX}"
 
 
 def chain_kind(rel: str) -> str | None:
@@ -951,8 +968,16 @@ def build(vault=None, index_path=None, today=None, split=None,
             # and must never be displaced by one. A course with one chain
             # still shows one row; only a course running both a timeline and
             # a guide shows two, distinguished by `chain_kind` in the UI.
+            #
+            # A recall card (S8) takes a third, for the same argument run the
+            # other way. Scoring already guarantees a card cannot *displace*
+            # anything — 🔽 plus a capped age keeps it under 12 against any
+            # unmarked task's 15 (recall.py) — so without a slot of its own a
+            # card would simply never surface while a course had any other
+            # work, which for an active course is always.
             def _slot(t):
-                return "guide" if t["chain_kind"] == "guide" else "main"
+                return ("recall" if t.get("recall")
+                        else "guide" if t["chain_kind"] == "guide" else "main")
 
             for t in eligible:
                 # An inactive course or archived project keeps its tasks in the

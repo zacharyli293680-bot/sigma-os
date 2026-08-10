@@ -28,6 +28,7 @@ from fastapi.testclient import TestClient      # noqa: E402
 import lesson as ln                            # noqa: E402
 import panels                                  # noqa: E402
 import privacy                                 # noqa: E402
+import todo as td                              # noqa: E402
 import writes                                  # noqa: E402
 from sigma import gitops, ledger               # noqa: E402
 from test_checkpoint import _valid_cp          # noqa: E402
@@ -82,13 +83,18 @@ class PracticeWritesBase(unittest.TestCase):
         _run(self.vault, "commit", "-m", "seed")
 
         self._saved = (writes.VAULT, panels.VAULT, gitops.MUTEX_PATH,
-                       ledger.LEDGER_PATH, ln.STATE_PATH, ln.ATTEMPTS_PATH)
+                       ledger.LEDGER_PATH, ln.STATE_PATH, ln.ATTEMPTS_PATH,
+                       td.INDEX_PATH)
         writes.VAULT = self.vault
         panels.VAULT = self.vault          # writes leans on panels' split
         gitops.MUTEX_PATH = root / "git.lock"
         ledger.LEDGER_PATH = root / "ledger.jsonl"
         ln.STATE_PATH = root / "study.state.json"
         ln.ATTEMPTS_PATH = root / "study.jsonl"
+        # Since S8 the rollup snoozes freshly-raised recall cards through the
+        # queue's sidecar, so this suite now writes there too — and a test that
+        # wrote the developer's real task index would age or defer real tasks.
+        td.INDEX_PATH = root / "todo.state.json"
         panels._cache.clear()
         privacy.VaultPrivacy._git_ignored.cache_clear()
 
@@ -99,7 +105,8 @@ class PracticeWritesBase(unittest.TestCase):
 
     def tearDown(self):
         (writes.VAULT, panels.VAULT, gitops.MUTEX_PATH,
-         ledger.LEDGER_PATH, ln.STATE_PATH, ln.ATTEMPTS_PATH) = self._saved
+         ledger.LEDGER_PATH, ln.STATE_PATH, ln.ATTEMPTS_PATH,
+         td.INDEX_PATH) = self._saved
         panels._cache.clear()
         self.tmp.cleanup()
 

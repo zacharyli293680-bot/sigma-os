@@ -56,6 +56,7 @@ import agenda as ag         # noqa: E402  — the calendar resolver
 import fleet as fl          # noqa: E402
 import leetcode as lc       # noqa: E402  — the daily-practice habit
 import lesson as ln         # noqa: E402  — the study-guide module grammar
+import recall as rc         # noqa: E402  — recall cards and the measured pace
 import reflect as rf        # noqa: E402
 import retro                # noqa: E402  — the 06:00 review; NOT backend/review.py
 import specialists as sp    # noqa: E402
@@ -1031,12 +1032,31 @@ def _scan_courses() -> dict:
         if g is not None:
             g = {k: v for k, v in g.items() if k != "rows"}
         mine = [m for m in modules if m["course"].lower() == code.lower()]
+        # S8: what studying this course has actually cost, and what finishing it
+        # is projected to cost at that measured rate. `pace.multiplier` is None
+        # until enough modules are finished — the payload reports unmeasured
+        # rather than 1.0, so no renderer can show an assumption as a fact.
+        measured = rc.pace(VAULT, code, split=_lesson_split)
+        cards = VAULT / rc.rel_for(code)
+        open_cards = 0
+        if cards.is_file():
+            try:
+                open_cards = sum(
+                    1 for c in rc.parse_cards(
+                        cards.read_text(encoding="utf-8-sig", errors="replace"))
+                    if c["state"] == "open")
+            except OSError:
+                open_cards = 0
         out.append({
             "course": code, "name": name,
             "timeline": (folder / f"{code.lower()}-timeline.md").is_file(),
             "modules": len(mine),
             "held": sum(1 for m in mine if m["problems"]),
             "guide": g,
+            "pace": measured,
+            "projected": rc.projected(VAULT, code, measured, split=_lesson_split),
+            "recall": {"open": open_cards, "cap": rc.CAP,
+                       "file": rc.rel_for(code) if cards.is_file() else None},
         })
     return {"courses": out}
 

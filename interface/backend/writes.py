@@ -40,6 +40,7 @@ from sigma import call_model, gitops, ledger, parse_model_json, write_note  # no
 import agenda as ag  # noqa: E402  — the calendar grammar and its serialiser
 import leetcode as lc  # noqa: E402  — the practice habit's own write path
 import lesson as ln  # noqa: E402  — the guide grammar and the practice sidecars
+import recall as rc  # noqa: E402  — the card grammar and the measured pace
 import todo as td  # noqa: E402  — section inference, destinations, line grammar
 
 import commands  # noqa: E402  — the one spend-window policy, not a second copy
@@ -1132,6 +1133,80 @@ def api_lesson_attempt(req: AttemptReq):
 
 class SessionEnd(BaseModel):
     course: str
+    seconds: int = 0    # active study time, measured by the workbench (S8)
+
+
+# Six hours of one sitting is not a study session, it is a tab. The workbench
+# already pauses its accumulator when the tab is hidden or nothing has been
+# touched for five minutes; this is the server-side floor and ceiling, because
+# the one number the pace multiplier is computed from must not be a client's
+# word alone.
+MIN_SESSION_SECONDS = 30
+MAX_SESSION_MINUTES = 360
+
+
+def _row_signature(line: str) -> str:
+    """A rollup row without its `⏱` field.
+
+    The content check compares whole rows to catch a duplicate the watermark
+    missed, and the measured minutes are the one field that can legitimately
+    differ between two calls covering the same attempts — a retry a minute later
+    measures a minute more. Comparing the rows whole would let that retry write
+    the digest twice, which is the exact failure the check exists to prevent.
+    Stripping it restores precisely the pre-S8 comparison.
+    """
+    return " ".join(rc.ROW_TIME_RE.sub("", line).split())
+
+
+def _recall_write(course: str, wrong: list, today: str) -> dict:
+    """Raise cards for this session's misses, retire what has gone stale.
+
+    Called *inside* the vault mutex and deliberately does not commit: the cards
+    and the study-log row are one session's record, so they land in one commit
+    with one undo. Returns what changed; `changed=False` means there is nothing
+    to add to the caller's path list.
+    """
+    out = {"changed": False, "file": None, "raised": [], "expired": 0,
+           "withheld": 0, "created": False, "index": None}
+    rel = rc.rel_for(course)
+    if _vault_rel(rel) != rel:
+        return out
+    if _sealed_inside_mutex(rel):
+        return out                     # a sealed course keeps its cards to itself
+    p = VAULT / rel
+    existed = p.is_file()
+    try:
+        text = (p.read_text(encoding="utf-8-sig", errors="replace") if existed
+                else rc.note_text(course, today))
+    except OSError:
+        return out
+    units = rc.units_for(VAULT, course, split=panels._lesson_split)
+    res = rc.reconcile(text, rc.wanted_from(wrong, units), today)
+    # A course that missed nothing does not get an empty note minted for it.
+    if not existed and not res["raised"]:
+        return out
+    if res["text"] == text and existed:
+        return out
+    write_note(p, res["text"])
+    # A brand-new note gets linked from the course index in the same breath.
+    # Only on creation: after that the link is there, and re-checking a manifest
+    # on every session would be a write path looking for work.
+    index_rel = None
+    if not existed:
+        ip = VAULT / f"02-Areas/Academics/{course}/{course.lower()}.md"
+        if ip.is_file() and not _sealed_inside_mutex(
+                ip.relative_to(VAULT).as_posix()):
+            try:
+                itext = ip.read_text(encoding="utf-8-sig", errors="replace")
+                linked = rc.link_in_index(itext, course)
+            except OSError:
+                linked = None
+            if linked:
+                write_note(ip, linked)
+                index_rel = ip.relative_to(VAULT).as_posix()
+    return {"changed": True, "file": rel, "raised": res["raised"],
+            "expired": len(res["expired"]), "withheld": res["withheld"],
+            "created": not existed, "index": index_rel}
 
 
 @router.post("/lesson/session-end")
@@ -1182,8 +1257,18 @@ def api_lesson_session_end(req: SessionEnd):
     mod_label = "+".join([f"M{m:02d}" for m in mods]
                          + [f"CP{c}" for c in cps]) or "M?"
 
-    bits = [f"- {datetime.date.today().isoformat()} · {mod_label}",
-            f"{len(answered)} answered, {len(correct)} correct"]
+    today = datetime.date.today().isoformat()
+    # Active minutes, and only when something was actually measured: a session
+    # with no clock writes the pre-S8 row unchanged, and `recall.pace` counts
+    # what was measured rather than back-filling what was not.
+    minutes = None
+    if req.seconds and req.seconds >= MIN_SESSION_SECONDS:
+        minutes = max(1, min(MAX_SESSION_MINUTES, round(req.seconds / 60)))
+
+    bits = [f"- {today} · {mod_label}"]
+    if minutes:
+        bits.append(f"⏱ {minutes} min")
+    bits.append(f"{len(answered)} answered, {len(correct)} correct")
     if skipped:
         bits.append(f"skipped {len(skipped)}")
     bits.append(f"missed {len(wrong)}")
@@ -1191,7 +1276,7 @@ def api_lesson_session_end(req: SessionEnd):
         bits.append(ln.digest(wrong))
     line = " · ".join(bits)
 
-    wrote, sha, saved = False, None, True
+    wrote, sha, saved, cards = False, None, True, None
     try:
         with gitops.vault_write(VAULT) as w:
             sealed = _sealed_inside_mutex(rel)
@@ -1205,7 +1290,10 @@ def api_lesson_session_end(req: SessionEnd):
             # The content half of the idempotency (see the docstring): an
             # identical row already in the note means these attempts are
             # covered — repair the watermark, write nothing.
-            already = any(ln_.rstrip("\r") == line for ln_ in body.split("\n"))
+            sig = _row_signature(line)
+            already = any(_row_signature(ln_) == sig for ln_ in body.split("\n")
+                          if ln_.strip())
+            paths = []
             if not already:
                 before = len(_CHECKBOX.findall(body))
                 out = td.splice(body, SESSIONS_HEADING, line)
@@ -1213,8 +1301,25 @@ def api_lesson_session_end(req: SessionEnd):
                     return _err(400, "checkbox",
                                 detail="a rollup row may not add a checkbox")
                 write_note(dest, out)
-                res = w.commit(rel,
-                               f"zach (dashboard): study session rollup in {rel}")
+                paths.append(rel)
+
+            # The same misses become recall cards, in the same commit — one
+            # session, one record, one undo (S8). A failure here must never
+            # cost the digest, which is the durable half.
+            try:
+                cards = _recall_write(course, wrong, today)
+            except OSError:
+                cards = None
+            if cards and cards["changed"]:
+                paths.append(cards["file"])
+                if cards["index"]:
+                    paths.append(cards["index"])
+
+            if paths:
+                said = f"study session rollup in {rel}"
+                if cards and cards["changed"]:
+                    said += f" + {len(cards['raised'])} recall card(s)"
+                res = w.commit(paths, f"zach (dashboard): {said}")
                 if not res["sha"]:
                     # The row is in the note but no commit exists (an
                     # obsidian-git index.lock, most likely). Refuse without
@@ -1222,7 +1327,7 @@ def api_lesson_session_end(req: SessionEnd):
                     # above and repairs.
                     return _err(500, "commit failed",
                                 detail=res["note"] or "no commit was created")
-                wrote, sha = True, res["sha"]
+                wrote, sha = not already, res["sha"]
 
             # Re-read the sidecar *inside* the mutex before advancing: two
             # session-ends serialise here, and advancing over a state loaded
@@ -1239,14 +1344,50 @@ def api_lesson_session_end(req: SessionEnd):
     if wrote:
         ledger.record("zach", "append", rel, sha,
                       f"study session: {course} {mod_label} — {len(answered)} "
-                      f"answered, {len(wrong)} missed")
+                      f"answered, {len(wrong)} missed"
+                      + (f", {minutes} min" if minutes else ""))
         panels._cache.pop("study", None)   # the panel now renders this row
+    if cards and cards["changed"]:
+        if not wrote:
+            # Cards landed without a new digest row (a repaired watermark).
+            # They are still a commit, so they are still one click to undo.
+            ledger.record("recall", "update" if not cards["created"] else "create",
+                          cards["file"], sha,
+                          f"{len(cards['raised'])} recall card(s) in {course}")
+        # A card is a task, and the queue and the course card both count them.
+        panels.drop_task_caches("courses")
+        _snooze_new_cards(cards)
     resp = {"ok": True, "rows": len(rows), "wrote": wrote, "file": rel,
-            "raw": line, "sha": sha, "digest": ln.digest(wrong)}
+            "raw": line, "sha": sha, "digest": ln.digest(wrong),
+            "minutes": minutes,
+            "recall": ({"file": cards["file"], "raised": len(cards["raised"]),
+                        "expired": cards["expired"], "withheld": cards["withheld"]}
+                       if cards and cards["changed"] else None)}
     if not saved:
         resp["warning"] = ("the watermark could not be saved — the next "
                            "rollup finds this row in the note and repairs it")
     return resp
+
+
+def _snooze_new_cards(cards: dict):
+    """A fresh card sleeps one night.
+
+    The review is never the same sitting as the mistake — that is the whole
+    "spaced" in spaced recall — and the deferral goes in the queue's own snooze
+    field rather than into the line, because a `📅` on a card would become a
+    deadline in the adherence scan and the note has no other way to say "not
+    yet". Losing the sidecar costs a day of spacing and nothing else, which is
+    the right failure direction for state that is not the record.
+    """
+    when = (datetime.date.today() + datetime.timedelta(
+        days=rc.FIRST_REVIEW_DAYS)).isoformat()
+    updates = {}
+    for card in cards["raised"]:
+        tid = rc.card_task_id(cards["file"], card["raw"])
+        if tid:
+            updates[tid] = {"snoozed_until": when}
+    if updates:
+        td.set_meta(updates)
 
 
 @router.get("/activity")

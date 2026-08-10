@@ -55,6 +55,7 @@ INTAKE = HERE / "intake.py"
 DEVLOG = HERE / "devlog.py"
 MAPPER = HERE / "mapper.py"
 GUIDE = HERE / "guide.py"
+RECALL = HERE / "recall.py"
 SCAFFOLD = HERE / "scaffold.py"
 HOOKS = HERE / "install_hooks.py"
 TODO = HERE / "todo.py"
@@ -254,6 +255,15 @@ def cmd_guide(a):
     # guide.py's model surface is `claude -p` via sigma.call_model — the
     # reflect/retro path, so the SDK interpreter is not demanded.
     return run(GUIDE, a.course)
+
+
+def cmd_recall(a):
+    """Cards and the measured pace. `sweep` writes (it retires expired cards);
+    bare `sigma recall` only reports — the same free-to-report rule the spending
+    verbs follow, even though this one spends no window."""
+    if a.recall_cmd == "sweep":
+        return run(RECALL, "sweep", *(["--course", a.course] if a.course else []))
+    return run(RECALL, "status")
 
 
 def cmd_devlog(a):
@@ -499,6 +509,12 @@ def build_parser():
                                      "approved blueprint still misses")
     gdr.add_argument("course", help="course code, e.g. AA-210")
 
+    rc_ = sub.add_parser("recall", help="the S8 recall cards and the measured pace")
+    rcs = rc_.add_subparsers(dest="recall_cmd")
+    rcs.add_parser("status", help="open cards and the pace multiplier, per course")
+    rcw = rcs.add_parser("sweep", help="retire cards that have sat open too long")
+    rcw.add_argument("--course", default="", help="limit to one course")
+
     mp = sub.add_parser("map", help="turn a project's codebase into architecture notes")
     ms = mp.add_subparsers(dest="map_cmd")
     mss = ms.add_parser("status", help="which projects have no architecture notes")
@@ -597,6 +613,7 @@ def main(argv=None):
         "status": cmd_status, "doctor": cmd_doctor, "fleet": cmd_fleet,
         "reflect": cmd_reflect, "capture": cmd_capture, "intake": cmd_intake,
         "devlog": cmd_devlog, "map": cmd_map, "guide": cmd_guide, "new": cmd_new,
+        "recall": cmd_recall,
         "todo": cmd_todo, "review": cmd_review, "leetcode": cmd_leetcode,
         "install": cmd_install, "ui": cmd_ui,
     }[a.cmd](a)

@@ -543,6 +543,15 @@ def reconcile_index(vault: Path, course: str, bp: dict, run_id: str) -> dict | N
 
     wanted = [(f"{code}-guide", "the module chain"),
               (f"{code}-guide-blueprint", "the approved plan generation runs against")]
+    # The two notes study mode writes *outside* the plan. Linked only once they
+    # exist, unlike the planned modules below: a planned module is a promise the
+    # blueprint made, while these two appear the first time a session is rolled
+    # up, and a link waiting for a note that may never be written is the
+    # dangling graph node the contract's linking rules forbid.
+    for base, label in ((f"{code}-study-log", "the study sessions"),
+                        (f"{code}-recall", "recall cards raised from misses")):
+        if (folder / f"{base}.md").is_file():
+            wanted.append((base, label))
     for r in bp["rows"]:
         if r["kind"] == "module":
             wanted.append((module_basename(code, r["n"], r["title"]),

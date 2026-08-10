@@ -64,6 +64,7 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 import leetcode as lc                                    # noqa: E402
+import recall as rc                                      # noqa: E402
 import todo as td                                        # noqa: E402
 from sigma import (DEFAULT_VAULT, call_model, gitops, ledger,  # noqa: E402
                    make_logger, write_note)
@@ -80,6 +81,13 @@ MODEL = "haiku"
 # where errands live. These are the one genuinely arbitrary numbers in the file
 # and the place to start if a score ever feels wrong.
 WEIGHT = {"procertus": 1.5, "courses": 1.2, "projects": 1.0, "misc": 0.5}
+# A recall card is course work by folder and five minutes of review by content,
+# so it is weighted for what it is rather than for where it lives (study S8).
+# The number matters more than it looks: cards are the only tasks in this vault
+# that Sigma *raises itself*, and at the courses weight a slow evening of five
+# cards would out-score finishing a problem set. A system that can inflate its
+# own score by giving itself more homework is not measuring anything.
+RECALL_WEIGHT = 0.25
 # These deliberately sum to 1.15 rather than 1.0. `score_of` renormalises over
 # the components that are present, so adding P was a pure addition: every day
 # that predates the LeetCode log still divides 0.40/0.35/0.25 by 1.00 and scores
@@ -119,15 +127,21 @@ def day_facts(date: str, vault=None, index_path=None, split=None) -> dict:
     adopted = index.get("adopted")
     covered = bool(adopted) and date >= adopted
 
-    done, by_section = [], {k: 0 for k in td.SECTIONS}
+    done, by_section, weight_sum, cards = [], {k: 0 for k in td.SECTIONS}, 0.0, 0
     for tid, e in tasks.items():
         if e.get("completed_at") != date:
             continue
         sec = e.get("section") or td.section_of(e.get("file") or "")[0]
+        # Weighted per task rather than per section, which is the whole reason
+        # this loop accumulates instead of multiplying counts afterwards: two
+        # completions in the same section can now be worth different amounts.
+        card = td.is_recall_file(e.get("file") or "")
         by_section[sec] = by_section.get(sec, 0) + 1
+        cards += 1 if card else 0
+        weight_sum += RECALL_WEIGHT if card else WEIGHT.get(sec, 0.5)
         done.append({"id": tid, "text": e.get("text", ""), "section": sec,
-                     "file": e.get("file", "")})
-    weighted = round(sum(WEIGHT.get(s, 0.5) * n for s, n in by_section.items()), 2)
+                     "file": e.get("file", ""), "recall": card})
+    weighted = round(weight_sum, 2)
 
     # Deadlines that came due on the day, met or not. A task is met if it was
     # completed on or before its own due date — finishing Monday's task on
@@ -157,7 +171,14 @@ def day_facts(date: str, vault=None, index_path=None, split=None) -> dict:
         if e.get("completed_at") != date:
             continue
         parts = (e.get("file") or "").split("/")
-        if len(parts) >= 4 and parts[1] == "Academics" and parts[2] in courses:
+        # A recall card does not count as showing up for the course. The policy
+        # this measures is Zach's — one task from each course, every day — and a
+        # card is work Sigma issued to itself from a miss it recorded. Letting
+        # machine-raised tasks satisfy the standing goal would mean the score
+        # could be moved by raising more cards, which is the same failure the
+        # low weight above avoids, one component over.
+        if (len(parts) >= 4 and parts[1] == "Academics" and parts[2] in courses
+                and not td.is_recall_file(e["file"])):
             advanced.add(parts[2])
             # The frontier distinction survives, in the narrative rather than in
             # the arithmetic: "emailed the TA" and "finished the next timeline
@@ -188,6 +209,7 @@ def day_facts(date: str, vault=None, index_path=None, split=None) -> dict:
     return {"date": date, "index_ok": readable,
             "adopted": adopted, "covered": covered,
             "done": done, "by_section": by_section, "weighted": weighted,
+            "recall_done": cards,
             "deadlines_due": due, "deadlines_met": met, "missed": missed,
             "active_courses": sorted(courses),
             "advanced": sorted(advanced),
@@ -348,8 +370,12 @@ def note_text(facts: dict, parts: dict, score, said: str) -> str:
         "T": ("throughput", parts.get("T")), "A": ("adherence", parts.get("A")),
         "M": ("momentum", parts.get("M")),
         "P": ("practice", parts.get("P"))}.items() if v is not None]
+    # "recall" rather than "courses" for a card, because the completions list is
+    # where a reader checks the weighted number against reality, and a card
+    # labelled like a problem set makes that arithmetic unreadable.
     done = "\n".join(
-        f"- {d['section']} — {d['text'][:90]}" for d in facts["done"]) or "- nothing"
+        f"- {'recall' if d.get('recall') else d['section']} — {d['text'][:90]}"
+        for d in facts["done"]) or "- nothing"
     starved = "\n".join(
         f"- {s['text'][:80]} — {s['section']}, {s['days']}d untouched"
         for s in facts["starved"])
@@ -476,6 +502,21 @@ def run(date: str | None = None, vault=None, dry_run: bool = False,
     ledger.record("review", "create", rel, sha,
                   f"review {date}: {stars(score)} ({facts['weighted']} weighted)")
     append_row(row_of(facts, parts, score), rows_path)
+
+    # The recall expiry sweep rides the one job that runs whether or not anyone
+    # studied — which is exactly the case it exists for: session-end reconciles
+    # the course you just practised, and nothing else would ever retire the
+    # cards of the course you stopped. Deliberately *after* the review is
+    # written and scored, so a stuck vault mutex can cost the sweep a day and
+    # never costs the day its score.
+    try:
+        swept = rc.sweep(vault)
+        if swept["expired"]:
+            log(f"recall: retired {swept['expired']} card(s)")
+        for problem in swept["problems"]:
+            log(f"recall sweep: {problem}")
+    except Exception as e:                       # noqa: BLE001 - never fatal
+        log(f"recall sweep failed: {e}")
     log(f"{date}: {stars(score)} - {facts['weighted']} weighted, "
         f"{facts['deadlines_met']}/{facts['deadlines_due']} deadlines")
     return {"ok": True, "date": date, "score": score, "components": parts,
