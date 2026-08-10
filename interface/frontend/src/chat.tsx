@@ -5,9 +5,14 @@
  * same SSE reader over POST /api/ask, the same React-nodes-only Markdown subset
  * (no dangerouslySetInnerHTML anywhere — a vault note containing a stray
  * <script> must render as text, never run).
+ *
+ * That Markdown subset now lives in `answer.tsx` with the rest of §4's answer
+ * grammar, and this file is what it says on the tin again: the SSE reader, the
+ * turn list, and the composer.
  */
 import { useEffect, useRef, useState } from "react";
-import { API, obsidianHref } from "./api";
+import { API } from "./api";
+import Answer from "./answer";
 
 type Tool = { name: string; detail: string };
 type Turn = {
@@ -15,57 +20,22 @@ type Turn = {
   a: string;
   tools: Tool[];
   blocked: string[];
+  /** Where the answer proper begins in `a`.
+   *
+   *  An agentic turn narrates: "I'll check the vault's structure", a Read, "now
+   *  let me look for overdue work", a Grep, and only then the answer. Those
+   *  remarks arrive as ordinary token deltas and app.py joins them into one
+   *  string with a blank line between, so `a` is preamble + preamble + answer —
+   *  and §4's claim, which is the first paragraph, would have been "I'll check
+   *  the vault's structure." promoted to a headline.
+   *
+   *  The boundary is knowable without a backend change: text written *before*
+   *  the last lookup is narration about the lookups. Recorded on every `tool`
+   *  event, so it ends up at the last one. */
+  answerAt?: number;
   stats?: { turns: number; cost: number | null };
   error?: string;
 };
-
-function inline(text: string, vault: string, key: string) {
-  const parts = text.split(/(\[\[[^\]]+\]\]|\*\*[^*]+\*\*|`[^`]+`)/g);
-  return parts.filter(Boolean).map((p, i) => {
-    const k = `${key}-${i}`;
-    if (p.startsWith("[[") && p.endsWith("]]")) {
-      const [target, label] = p.slice(2, -2).split("|");
-      return (
-        <a key={k} className="wikilink" href={obsidianHref(vault, target)}
-           title={`Open ${target} in Obsidian`}>
-          {label || target}
-        </a>
-      );
-    }
-    if (p.startsWith("**") && p.endsWith("**")) return <strong key={k}>{p.slice(2, -2)}</strong>;
-    if (p.startsWith("`") && p.endsWith("`")) return <code key={k}>{p.slice(1, -1)}</code>;
-    return <span key={k}>{p}</span>;
-  });
-}
-
-function Markdown({ text, vault }: { text: string; vault: string }) {
-  const blocks: React.ReactNode[] = [];
-  let list: React.ReactNode[] = [];
-  const flush = () => {
-    if (list.length) {
-      blocks.push(<ul key={`ul-${blocks.length}`}>{list}</ul>);
-      list = [];
-    }
-  };
-
-  text.split("\n").forEach((line, i) => {
-    const heading = /^(#{1,4})\s+(.*)$/.exec(line);
-    const bullet = /^\s*[-*]\s+(.*)$/.exec(line);
-    if (heading) {
-      flush();
-      blocks.push(<h3 key={i}>{inline(heading[2], vault, `h${i}`)}</h3>);
-    } else if (bullet) {
-      list.push(<li key={i}>{inline(bullet[1], vault, `li${i}`)}</li>);
-    } else if (line.trim() === "") {
-      flush();
-    } else {
-      flush();
-      blocks.push(<p key={i}>{inline(line, vault, `p${i}`)}</p>);
-    }
-  });
-  flush();
-  return <>{blocks}</>;
-}
 
 export default function ChatDrawer({ open, vault, onClose, onTool }: {
   open: boolean; vault: string; onClose: () => void;
@@ -117,7 +87,8 @@ export default function ChatDrawer({ open, vault, onClose, onTool }: {
           try { e = JSON.parse(line.slice(6)); } catch { continue; }  // skip a torn frame, keep the stream
           if (e.type === "token") patch(t => ({ ...t, a: t.a + e.text }));
           else if (e.type === "tool") {
-            patch(t => ({ ...t, tools: [...t.tools, { name: e.name, detail: e.detail }] }));
+            patch(t => ({ ...t, answerAt: t.a.length,
+                          tools: [...t.tools, { name: e.name, detail: e.detail }] }));
             if (e.detail) onTool?.(e.detail);
           }
           else if (e.type === "denied")
@@ -192,12 +163,18 @@ export default function ChatDrawer({ open, vault, onClose, onTool }: {
           </div>
         )}
 
-        {turns.map((t, i) => (
+        {turns.map((t, i) => {
+          const live = busy && i === turns.length - 1;
+          return (
           <article key={i}>
             <div className="q">{t.q}</div>
 
-            {t.tools.length > 0 && (
-              <details className="trail">
+            {/* While the answer is being written, the trail *is* the content —
+                it is the only sign anything is happening. Once the answer
+                exists the same facts render below it as provenance (§4), so
+                keeping both would be saying it twice. */}
+            {live && t.tools.length > 0 && (
+              <details className="trail" open>
                 <summary>{t.tools.length} lookup{t.tools.length > 1 ? "s" : ""}</summary>
                 {t.tools.map((x, j) => (
                   <div key={j} className="step">
@@ -207,17 +184,11 @@ export default function ChatDrawer({ open, vault, onClose, onTool }: {
               </details>
             )}
 
-            {t.blocked.map((b, j) => (
-              <div key={j} className="blocked"
-                   title="This path is gitignored, so it is never sent to the model.">
-                <span>🔒</span> {b}
-              </div>
-            ))}
-
             <div className="a">
               {t.a ? (
-                <Markdown text={t.a} vault={vault} />
-              ) : busy && i === turns.length - 1 ? (
+                <Answer text={t.a} answerAt={t.answerAt} tools={t.tools}
+                        blocked={t.blocked} vault={vault} streaming={live} />
+              ) : live ? (
                 <span className="thinking">thinking…</span>
               ) : null}
             </div>
@@ -230,7 +201,8 @@ export default function ChatDrawer({ open, vault, onClose, onTool }: {
               </div>
             )}
           </article>
-        ))}
+          );
+        })}
         <div ref={endRef} />
       </main>
 

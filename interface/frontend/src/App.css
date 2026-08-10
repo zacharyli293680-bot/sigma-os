@@ -742,6 +742,78 @@ kbd {
 .trail .tool { color: var(--ink-2); }
 .blocked { color: var(--bronze); font-size: 12.5px; margin: 4px 0; }
 .error { color: var(--red); font-family: var(--mono); font-size: 12.5px; margin-top: 6px; }
+
+/* --- the answer grammar (reference language §4) --------------------------- */
+
+/* Eyebrow · claim · elaboration · confidence · provenance, in that order and
+   never another, so a reader who has seen one answer knows where to look in
+   every other one. */
+.ans-eyebrow {
+  display: block; font: 500 9.5px/1.6 var(--mono);
+  letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-2);
+  margin-bottom: 3px;
+}
+/* §2.3: the headline IS the finding. §2.4: the level above body text is a size
+   jump, not a bold — nothing here is heavier than the paragraph under it. */
+.ans-claim {
+  margin: 0 0 8px; font: 400 15.5px/1.45 var(--sans); color: var(--ink);
+}
+.ans-body p:first-child { margin-top: 0; }
+
+/* §4: confidence is never colour alone. Three dots, the word, and a sentence
+   saying what the word means for THIS answer — the sentence is the element,
+   the dots are only how you find it. */
+.ans-conf {
+  display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap;
+  margin: 12px 0 0; padding-top: 8px;
+  border-top: 1px solid var(--panel-line-dim);
+  font-size: 12px; color: var(--ink-2);
+}
+.ans-dots { font-family: var(--mono); letter-spacing: 0.12em; flex: none; }
+.ans-dots.c-high { color: var(--add); }
+.ans-dots.c-medium { color: var(--amber); }
+.ans-dots.c-low { color: var(--red); }
+.ans-conf b { color: var(--ink); font-weight: 500; }
+.ans-why { flex: 1 1 16ch; min-width: 0; }
+
+/* Provenance sits IN the answer, under it — §4's rule, and the thing chat had
+   backwards: the sources were above the answer, collapsed, behind a count of
+   tool calls rather than of notes. */
+.prov { margin-top: 12px; }
+.prov h4 {
+  display: flex; align-items: baseline; gap: 8px;
+  margin: 0 0 5px; font: 500 9.5px/1.6 var(--mono);
+  letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-2);
+}
+/* A number never appears without its unit and its noun (§8). */
+.prov-count {
+  margin-left: auto; flex: none; letter-spacing: 0.04em;
+  text-transform: none; color: var(--muted);
+}
+.prov-list { list-style: none; margin: 0; padding: 0; font-size: 11.5px; }
+.prov-list li {
+  display: flex; align-items: baseline; gap: 8px;
+  margin: 2px 0; min-width: 0;
+}
+.prov-list a {
+  color: var(--ink); text-decoration: none; flex: none;
+  border-bottom: 1px solid transparent; font-family: var(--mono);
+}
+.prov-list a:hover { border-bottom-color: var(--ink); }
+/* No `direction: rtl` here, however tempting. It clips from the left and keeps
+   the leaf folder, which is the disambiguating half — but every vault path
+   starts with a bucket number, and bidi reordering moves that neutral run to
+   the other end: `02-Areas/Academics` rendered as `Areas/Academics-02`. Plain
+   ltr truncation shows a real path or a real prefix of one. */
+.prov-where {
+  color: var(--muted); font-family: var(--mono); font-size: 10.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Bronze, because this is the no-sync boundary and nothing else may wear it. */
+.prov-sealed { color: var(--bronze); font-size: 11.5px; margin: 4px 0 0; }
+/* An answer with no note behind it is a fact about the answer, said out loud
+   rather than left as an absence the reader has to notice. */
+.prov-none { color: var(--amber); font-size: 11.5px; margin: 2px 0 0; }
 .stats { color: var(--muted); font-family: var(--mono); font-size: 11px; margin-top: 6px; }
 
 .drawer-form {
@@ -1250,10 +1322,16 @@ button.waiting-row:hover { border-color: var(--panel-line-dim); color: var(--ink
 }
 .review-meta a { color: var(--ink-2); text-decoration: none; }
 .review-meta a:hover { color: var(--ink); }
-/* Says what the buttons will really do, before you press one. */
+/* Says what the buttons will really do, before you press one — which makes it
+   §4's *claim* for this dialog, and it was set at 11.5px in --ink-2: the most
+   consequential sentence on the screen, rendered smaller and fainter than the
+   metadata above it. §2.4 puts the hierarchy in the size, so it gets the size.
+   `.warn` keeps its amber because a staged apply is a different outcome from a
+   direct one, and the sentence says which. */
 .review-note {
-  margin: 0; padding: 9px 14px; font-size: 11.5px; line-height: 1.5;
-  color: var(--ink-2); border-bottom: 1px solid var(--panel-line-dim);
+  margin: 0; padding: 11px 14px; font-size: 13.5px; line-height: 1.5;
+  color: var(--ink); border-bottom: 1px solid var(--panel-line-dim);
+  max-width: 78ch;
 }
 .review-note.warn { color: var(--amber); }
 
