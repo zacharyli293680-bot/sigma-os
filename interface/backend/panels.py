@@ -1025,6 +1025,14 @@ def _scan_courses() -> dict:
     GET /api/courses (study plan §10). 'Active' is todo.active_courses'
     answer, the same one the queue gives, never a second definition."""
     modules = ln.scan(VAULT, split=_lesson_split)
+    # One scan and one pool cache for the whole payload. The pace question falls
+    # back to the vault-wide pool for any course with fewer than three measured
+    # modules — true of every course until study mode has been used for a while
+    # — so asking it once per course used to mean N pools per course, each
+    # re-scanning every module note in the vault. Handing both in makes the
+    # endpoint linear, which matters now that the course grid is the study
+    # dashboard's landing view and this is its only fetch.
+    pools: dict = {}
     out = []
     for code, name in td.active_courses(VAULT).items():
         folder = VAULT / "02-Areas" / "Academics" / code
@@ -1036,7 +1044,8 @@ def _scan_courses() -> dict:
         # is projected to cost at that measured rate. `pace.multiplier` is None
         # until enough modules are finished — the payload reports unmeasured
         # rather than 1.0, so no renderer can show an assumption as a fact.
-        measured = rc.pace(VAULT, code, split=_lesson_split)
+        measured = rc.pace(VAULT, code, split=_lesson_split,
+                           scan=modules, pools=pools)
         cards = VAULT / rc.rel_for(code)
         open_cards = 0
         if cards.is_file():
@@ -1054,7 +1063,8 @@ def _scan_courses() -> dict:
             "held": sum(1 for m in mine if m["problems"]),
             "guide": g,
             "pace": measured,
-            "projected": rc.projected(VAULT, code, measured, split=_lesson_split),
+            "projected": rc.projected(VAULT, code, measured,
+                                      split=_lesson_split, scan=modules),
             "recall": {"open": open_cards, "cap": rc.CAP,
                        "file": rc.rel_for(code) if cards.is_file() else None},
         })

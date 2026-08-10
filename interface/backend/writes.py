@@ -1423,6 +1423,148 @@ def api_revert(req: RevertReq):
 
 
 # --------------------------------------------------------------------------
+# POST /api/courses — start a course from the dashboard
+# --------------------------------------------------------------------------
+# A course has always been a *folder on disk*: `todo.active_courses` counts any
+# directory under 02-Areas/Academics/, and study intake refuses a drop folder
+# whose course does not exist rather than creating one. That left the one thing
+# you cannot do from the interface as the one thing you have to do in Explorer
+# — and the study dashboard's empty state, "no active courses", a dead end.
+#
+# **The index note lands in the same commit as the folder, never after.**
+# `active_courses` reads a folder with no course-index note as *active* (the
+# manifest is documentation, not the enrolment record — todo.py:263), so a
+# folder created now and described later is a course that exists, is enrolled
+# in, and has no name, in every queue and every review between the two writes.
+#
+# **`status: active` is written out rather than left blank.** Blank also reads
+# as active, and a field that means something by being empty is exactly the
+# drift this contract keeps closing.
+#
+# The three subfolders are a local convenience and are *not* in the commit —
+# git does not track empty directories, and nothing needs them: applier.py
+# mkdirs on demand for every note it writes. They exist so that dropping a PDF
+# into the right place is possible the moment the course is made.
+
+COURSE_RE = re.compile(r"^[A-Z]{2,4}-\d{3}$")
+
+# Composed here rather than templated, following todo.NEW_NOTE and
+# scaffold.hub_note: 99-Meta/Templates/ deliberately has no course-index
+# template, and scaffold.py records that its project.md template had already
+# gone stale against what the code writes. Shape taken from cse-312.md /
+# cse-344.md, the two freshest hand-written indexes.
+COURSE_NOTE = """---
+type: course-index
+course: {code}
+name: {name}
+status: active
+term: {term}
+tags: [course, moc]
+---
+
+# {dept} {num}{dash}{name}
+
+> {blurb}
+
+## Notes
+
+> Written from the source files below by the study intake process or by hand
+> during the course. These are the ones to read; the *Materials* manifest
+> underneath is what they were made from.
+
+*(To be filled during the term: lectures, assignments, exam-prep, and resources
+as they are created.)*
+
+## Materials
+
+### lectures (0 files) · assignments (0 files) · exams (0 files)
+- *(empty — fill during the term; drop lecture slides, homeworks and exams into
+  the folders above, or into `00-Inbox/intake/{code}/` for `sigma intake run`)*
+
+## Related
+- Groupings: [[academics|Academics MOC]]
+"""
+
+COURSE_SUBFOLDERS = ("lectures", "assignments", "exams")
+
+
+class CourseAdd(BaseModel):
+    code: str            # "CSE-421" — <DEPT>-<NUMBER>, the contract's naming rule
+    name: str = ""       # "Software Design and Implementation"
+    term: str = ""       # free text; every existing index carries this blank
+
+
+@router.post("/courses")
+def api_course_add(req: CourseAdd):
+    """Create a course folder and its index note — one commit, one ledger row.
+
+    The code is validated here because nothing else in this codebase validates
+    one: `active_courses` accepts any directory name, `course_folder` matches
+    case-insensitively, and intake keys off the folder name. A typo would
+    therefore become a real course rather than a refusal, and the fix would be
+    a rename plus every inbound link.
+    """
+    code = " ".join((req.code or "").split()).upper()
+    if not COURSE_RE.match(code):
+        return _err(400, "bad code",
+                    detail="a course code is <DEPT>-<NUMBER>, e.g. CSE-421")
+    name = " ".join((req.name or "").split())
+    term = " ".join((req.term or "").split())
+    if len(name) > 120 or len(term) > 40:
+        return _err(400, "too long",
+                    detail="a course name is a title, not a description")
+
+    rel = f"02-Areas/Academics/{code}/{code.lower()}.md"
+    if _vault_rel(rel) != rel:
+        return _err(400, "bad path")
+    folder = VAULT / "02-Areas" / "Academics" / code
+    dept, _, num = code.partition("-")
+    note = COURSE_NOTE.format(
+        code=code, name=name, term=term, dept=dept, num=num,
+        dash=" — " if name else "",
+        blurb=(f"Course index for {code}. Added from the dashboard — fill this "
+               f"line in with what the course actually covers."))
+
+    try:
+        with gitops.vault_write(VAULT) as w:
+            sealed = _sealed_inside_mutex(rel)
+            if sealed:
+                return _err(403, "sealed path", detail=sealed)
+            # Judged inside the mutex, after the pull: a course someone added on
+            # another machine five minutes ago is a course that exists.
+            if folder.exists():
+                return _err(409, "exists",
+                            detail=f"{code} already has a folder — open it "
+                                   f"rather than making a second one")
+            for sub in COURSE_SUBFOLDERS:
+                (folder / sub).mkdir(parents=True, exist_ok=True)
+            write_note(VAULT / rel, note)
+            res = w.commit(rel, f"zach (dashboard): add course {code}"
+                                + (f" - {name}" if name else ""))
+            if not res["sha"]:
+                return _err(500, "commit failed",
+                            detail=res["note"] or "no commit was created")
+    except gitops.GitBusy as e:
+        return _err(409, "busy", detail=f"another Sigma write is in progress ({e})")
+    except OSError as e:
+        return _err(500, "write failed", detail=str(e))
+
+    ledger.record("zach", "create", rel, res["sha"],
+                  f"added course {code}" + (f" — {name}" if name else ""))
+    # A new note is a new graph node, and a new course changes the Courses
+    # queue's denominator as well as the study dashboard.
+    panels.drop_task_caches("graph", "courses", "study")
+    return {"ok": True, "course": code, "file": rel, "sha": res["sha"],
+            "note": res["note"],
+            "subfolders": list(COURSE_SUBFOLDERS),
+            # academics.md's two Dataview tables pick this up on their own; its
+            # `## Groupings & sequences` block does not, and should not — it
+            # encodes prerequisite chains nothing here can infer.
+            "groupings": "academics.md lists it automatically; add it to the "
+                         "department grouping by hand if it belongs to a sequence"}
+
+
+# --------------------------------------------------------------------------
 # POST /api/capture — quick capture (Phase 6)
 # --------------------------------------------------------------------------
 # [[dashboard-vision]]: "an idea, a task, a link, a screenshot → the inbox,

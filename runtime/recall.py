@@ -354,7 +354,18 @@ def study_rows(vault: Path, course: str) -> list[dict]:
     return out
 
 
-def _pool(vault: Path, course: str, split=None) -> dict:
+def _scanned(vault: Path, split=None, scan=None) -> list:
+    """Every module note, scanned once per caller rather than once per question.
+
+    `ln.scan` globs, reads, parses and *validates* every module note in the
+    vault. Nothing here needs a second copy of that within one request, and the
+    courses payload asks the pace question once per course — so callers that ask
+    repeatedly pass the list they already have (see `panels._scan_courses`).
+    """
+    return ln.scan(vault, split=split) if scan is None else scan
+
+
+def _pool(vault: Path, course: str, split=None, scan=None) -> dict:
     """(estimated, actual, n) over this course's *finished* modules.
 
     Finished, because a multiplier compares a whole module's estimate against
@@ -367,7 +378,7 @@ def _pool(vault: Path, course: str, split=None) -> dict:
     and inventing a division would put a made-up number into the one measurement
     S8 exists to make honest.
     """
-    modules = {m["module"]: m for m in ln.scan(vault, split=split)
+    modules = {m["module"]: m for m in _scanned(vault, split, scan)
                if _norm(m["course"]) == _norm(course)
                and isinstance(m["module"], int)}
     minutes: dict = {}
@@ -409,7 +420,8 @@ def _pool(vault: Path, course: str, split=None) -> dict:
             "modules": measured}
 
 
-def pace(vault=None, course: str | None = None, split=None) -> dict:
+def pace(vault=None, course: str | None = None, split=None, scan=None,
+         pools=None) -> dict:
     """How long study actually takes, as a multiplier on the written estimate.
 
     `basis` says where the number came from and is never omitted: "course" when
@@ -417,9 +429,23 @@ def pace(vault=None, course: str | None = None, split=None) -> dict:
     the whole vault's pool, and None when nothing has been measured yet — in
     which case `multiplier` is None rather than 1.0. A dashboard that cannot
     tell an unmeasured pace from an average one will print the average.
+
+    `scan` and `pools` are the caller's scratch space, and asking for both is
+    what keeps this linear. The vault-wide fallback runs whenever a course has
+    fewer than three measured modules — which is every course until study mode
+    has been used for a while — so a caller asking per course was doing N pools
+    per course, each with its own full scan of every module note in the vault.
+    Handing in one `{}` for the whole payload makes each pool cost once.
     """
     vault = Path(vault or DEFAULT_VAULT)
-    own = (_pool(vault, course, split=split) if course
+    seen = pools if pools is not None else {}
+
+    def pool(code: str) -> dict:
+        if code not in seen:
+            seen[code] = _pool(vault, code, split=split, scan=scan)
+        return seen[code]
+
+    own = (pool(course) if course
            else {"estimate": 0, "actual": 0, "n": 0, "modules": []})
     if course and own["n"] >= MIN_MODULES:
         return {"course": course, "basis": "course", "n": own["n"],
@@ -428,7 +454,7 @@ def pace(vault=None, course: str | None = None, split=None) -> dict:
 
     est = act = n = 0
     for code in td.active_courses(vault):
-        p = _pool(vault, code, split=split)
+        p = pool(code)
         est, act, n = est + p["estimate"], act + p["actual"], n + p["n"]
     if n >= MIN_MODULES and est:
         return {"course": course, "basis": "vault", "n": n,
@@ -440,7 +466,7 @@ def pace(vault=None, course: str | None = None, split=None) -> dict:
 
 
 def projected(vault: Path, course: str, measured: dict | None = None,
-              split=None) -> dict:
+              split=None, scan=None) -> dict:
     """What finishing this course's guide is going to cost, in minutes.
 
     The estimate is the written one; `minutes` applies the measured multiplier
@@ -451,10 +477,10 @@ def projected(vault: Path, course: str, measured: dict | None = None,
     own docstring refuses to invent any.
     """
     vault = Path(vault)
-    measured = measured or pace(vault, course, split=split)
+    measured = measured or pace(vault, course, split=split, scan=scan)
     g = ln.guide(vault, course, split=split)
     modules = {Path(m["file"]).stem.casefold(): m
-               for m in ln.scan(vault, split=split)
+               for m in _scanned(vault, split, scan)
                if _norm(m["course"]) == _norm(course)}
     left, est, unknown = 0, 0, 0
     for row in (g or {}).get("rows") or []:
