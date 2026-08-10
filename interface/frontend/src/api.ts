@@ -349,11 +349,16 @@ export type GuideRow = {
   skipped: string | null; date: string | null;
 };
 export type Guide = {
-  course: string; file: string; rows: GuideRow[];
+  /** `file` is null for a course with a blueprint but no chain yet — the
+   *  drafted-awaiting-approval state S7's gate creates. */
+  course: string; file: string | null; rows: GuideRow[];
   total: number; done: number; skipped: number;
   frontier: GuideRow | null;
   /** The blueprint note's `status:` — draft | approved — or null without one. */
   blueprint: string | null;
+  /** Rows the blueprint plans, and how many have no note on disk yet —
+   *  the generate affordance's arithmetic. Null without a blueprint. */
+  planned: number | null; missing: number | null;
 };
 /** GET /api/courses — every active course's study surface at a glance. */
 export type CourseRow = {
@@ -408,10 +413,13 @@ export type Window_ = {
 
 export type LedgerEntry = {
   ts: string; actor: string;
-  action: "create" | "update" | "toggle" | "revert" | "append";
+  action: "create" | "update" | "toggle" | "revert" | "append" | "skip";
   target: string; sha: string | null; summary: string;
   reverted: boolean;
-  extra?: { proposal?: string; reverts?: string; line?: number; absorbed?: boolean };
+  /** `run` groups one generation run's commits into a single expandable
+   *  ledger entry (study S7). */
+  extra?: { proposal?: string; reverts?: string; line?: number;
+            absorbed?: boolean; run?: string };
 };
 export type Activity = { entries: LedgerEntry[] };
 
@@ -460,6 +468,22 @@ export type Progress = {
   updated: string;
   degraded?: boolean;       // running on Haiku — the arcs render hollow
   resume_at?: string | null;
+};
+
+/** The S7 generation pipeline's live record, streamed by /api/guide/progress
+ *  the way the fleet's is. Job labels are "M04" / "CP1". */
+export type GuideJobResult = {
+  ok: boolean; action: string | null; note: string | null; seconds: number;
+};
+export type GuideProgress = {
+  state: "running" | "paused" | "done" | "failed" | "blocked";
+  course: string;
+  run_id?: string; phase?: string;
+  queue: string[]; current: string | null;
+  current_started?: string | null; run_started?: string;
+  results: Record<string, GuideJobResult>;
+  note: string | null; resume_at?: string | null;
+  finished?: string | null; updated?: string;
 };
 
 export async function get<T>(path: string): Promise<T> {

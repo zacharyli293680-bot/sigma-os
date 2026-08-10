@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./App.css";
 import { API, get } from "./api";
-import type { Agenda, Fire, Fleet, Graph, Health, Job, NoSync, Progress, Projects, Proposals, Queue, Tasks, Window_ } from "./api";
+import type { Agenda, Fire, Fleet, Graph, GuideProgress, Health, Job, NoSync, Progress, Projects, Proposals, Queue, Tasks, Window_ } from "./api";
 import Brain, { VaultHud } from "./brain";
 import ChatDrawer from "./chat";
 import Ledger from "./ledger";
@@ -95,6 +95,7 @@ export default function App() {
   // Fetched once for the rail's count badge; the view refetches on open.
   const [noSync, setNoSync] = useState<NoSync | null>(null);
   const [job, setJob] = useState<Job | null>(null);
+  const [guideProg, setGuideProg] = useState<GuideProgress | null>(null);
   const fireRef = useRef<((detail: string) => void) | null>(null);
   const clock = useClock();
 
@@ -152,6 +153,18 @@ export default function App() {
     return () => es.close();
   }, []);
 
+  // The generation pipeline's feed (study S7) — the same file-poll SSE shape
+  // as the fleet's, and the same reason: a run started from the CLI must
+  // render here all the same.
+  useEffect(() => {
+    const es = new EventSource(`${API}/api/guide/progress`);
+    es.onmessage = e => {
+      try { setGuideProg(JSON.parse(e.data)); } catch { /* torn event */ }
+    };
+    es.onerror = () => setGuideProg(null);
+    return () => es.close();
+  }, []);
+
   // The fleet's own tool calls, so an unattended run lights the notes it reads
   // instead of being represented by four arcs and nothing else. Separate from
   // the chat drawer's trail on purpose: that one rides the /api/ask stream and
@@ -176,6 +189,15 @@ export default function App() {
         (progress?.state === "done" || progress?.state === "paused")) refresh();
     prevRunState.current = progress?.state ?? null;
   }, [progress, refresh]);
+
+  // Same settle→refetch for a generation run: when it stops, new notes have
+  // just landed (or been held) and the panels are stale.
+  const prevGuideState = useRef<string | null>(null);
+  useEffect(() => {
+    if (prevGuideState.current === "running" && guideProg &&
+        guideProg.state !== "running") refresh();
+    prevGuideState.current = guideProg?.state ?? null;
+  }, [guideProg, refresh]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -323,7 +345,8 @@ export default function App() {
         <h2>FLEET</h2>
         <Brain graph={graph} vault={vault} fireRef={fireRef} filter={brainFilter} />
         <div className="core-scrim" aria-hidden="true" />
-        <Reactor fleet={fleet ?? null} progress={progress} waitingCount={waitingCount} />
+        <Reactor fleet={fleet ?? null} progress={progress} waitingCount={waitingCount}
+                 guide={guideProg} />
         <VaultHud graph={graph} filter={brainFilter} onFilter={setBrainFilter} />
       </section>
       <div className="right">
@@ -353,7 +376,8 @@ export default function App() {
       <StudyView open={studyOpen} vault={vault} onClose={() => setStudyOpen(false)}
                  onWorkbench={() => { setStudyOpen(false); setWorkbenchOpen(true); }} />
       <WorkbenchView open={workbenchOpen} vault={vault}
-                     onClose={() => setWorkbenchOpen(false)} />
+                     onClose={() => setWorkbenchOpen(false)}
+                     guideProg={guideProg} />
       <BuildView open={buildOpen} vault={vault} onClose={() => setBuildOpen(false)} />
       <WorkView open={workOpen} vault={vault} onClose={() => setWorkOpen(false)}
                 onMutate={refresh} />

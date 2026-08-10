@@ -34,7 +34,7 @@ import { useEffect, useReducer, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { API, get, obsidianHref, post, ApiError } from "./api";
 import type {
-  Courses, Guide, GuideRow, Lesson, LessonList,
+  Courses, Guide, GuideProgress, GuideRow, Lesson, LessonList,
   LessonSegment, PracticeItem, Rollup,
 } from "./api";
 import { pythonReady, resetSql, runPython, runSql, warmPython } from "./sandbox";
@@ -607,8 +607,9 @@ type Openable = {
   course: string; num: number; file: string; title: string;
 };
 
-export default function WorkbenchView({ open, vault, onClose }: {
+export default function WorkbenchView({ open, vault, onClose, guideProg }: {
   open: boolean; vault: string; onClose: () => void;
+  guideProg?: GuideProgress | null;
 }) {
   const [list, setList] = useState<LessonList | null | undefined>(undefined);
   const [courses, setCourses] = useState<Courses | null | undefined>(undefined);
@@ -619,6 +620,7 @@ export default function WorkbenchView({ open, vault, onClose }: {
   const [st, dispatch] = useReducer(reduce, START);
   const [busy, setBusy] = useState(false);
   const [chainErr, setChainErr] = useState<string | null>(null);
+  const [genNote, setGenNote] = useState<string | null>(null);
   const [last, setLast] = useState<{ sha: string; what: string } | null>(null);
   const [rollup, setRollup] = useState<Rollup | "busy" | string | null>(null);
   // The tutor conversation lives up here, not in the slot component — switching
@@ -684,8 +686,40 @@ export default function WorkbenchView({ open, vault, onClose }: {
   useEffect(() => {
     if (!open || !course) return;
     setGuide(undefined);
+    setGenNote(null);
     void fetchGuide(course);
   }, [open, course]);
+
+  // When a generation run for the open course settles, its notes just landed
+  // (or were held) — refetch the chain rather than waiting for a reopen.
+  const prevGenState = useRef<string | null>(null);
+  useEffect(() => {
+    const s = guideProg?.state ?? null;
+    if (open && course && guideProg?.course === course &&
+        prevGenState.current === "running" && s !== "running") {
+      void fetchGuide(course);
+      get<Courses>("courses").then(setCourses).catch(() => {});
+    }
+    prevGenState.current = s;
+  }, [open, course, guideProg]);
+
+  // POST /api/guide/generate — the palette POST's own policy answers: a 409
+  // is the window hold or the busy slot doing its job, shown as a notice.
+  async function generate() {
+    if (!course || busy) return;
+    setGenNote(null);
+    try {
+      await post("guide/generate", { course });
+      setGenNote("started — the reactor narrates; notes land as one commit each");
+    } catch (err) {
+      if (err instanceof ApiError) {
+        const b = err.body as { reason?: string; running?: string } | undefined;
+        setGenNote(err.code === "window" ? (b?.reason ?? "window held")
+          : err.code === "busy" ? `busy — ${b?.running ?? "another job"} is running`
+          : (err.detail || err.code));
+      } else setGenNote("backend unreachable");
+    }
+  }
 
   useEffect(() => {
     if (!open || !picked) return;
@@ -1080,6 +1114,14 @@ export default function WorkbenchView({ open, vault, onClose }: {
                   a <code>{course.toLowerCase()}-guide.md</code> note at the
                   course root, one checkbox row per module
                 </p>
+                <p className="wb-gen">
+                  <button className="ghost" disabled={busy}
+                          onClick={() => void generate()}
+                          title="one model call — plans modules from the course notes as a draft blueprint; nothing else runs until you approve it">
+                    ✎ draft blueprint
+                  </button>
+                </p>
+                {genNote && <p className="wb-gen dim">{genNote}</p>}
                 {row && row.modules > 0 && list && (
                   <>
                     <p className="dim">authored modules, unchained:</p>
@@ -1107,12 +1149,61 @@ export default function WorkbenchView({ open, vault, onClose }: {
                     {guide.done} done · {guide.skipped} skipped
                     · {guide.total - guide.done - guide.skipped} open
                     {guide.blueprint ? ` · blueprint ${guide.blueprint}` : ""}
+                    {guide.planned != null
+                      ? ` · ${guide.planned} planned · ${guide.missing} missing`
+                      : ""}
                   </span>
-                  <a href={obsidianHref(vault, guide.file)}
-                     title="the chain note — markdown is the truth">
-                    {guide.file.split("/").pop()}
-                  </a>
+                  {guide.file ? (
+                    <a href={obsidianHref(vault, guide.file)}
+                       title="the chain note — markdown is the truth">
+                      {guide.file.split("/").pop()}
+                    </a>
+                  ) : (
+                    <span className="dim"
+                          title="the chain note is created the moment generation
+ runs against the approved blueprint">no chain yet</span>
+                  )}
                 </p>
+                {(() => {
+                  const gen = guideProg && guideProg.course === course ? guideProg : null;
+                  const age = gen?.updated ? Date.now() - Date.parse(gen.updated) : NaN;
+                  const genRunning = gen?.state === "running" &&
+                    !isNaN(age) && age < 30 * 60_000 ? gen : null;
+                  if (genRunning) {
+                    const total = genRunning.queue?.length ?? 0;
+                    const done = Object.keys(genRunning.results ?? {}).length;
+                    return <p className="wb-gen live">▣ generating —
+                      {" "}{genRunning.current ?? "…"}
+                      {total ? ` · ${Math.min(done + 1, total)} of ${total}` : ""}</p>;
+                  }
+                  if (guide.blueprint === "draft") {
+                    return <p className="wb-gen dim">blueprint drafted — edit{" "}
+                      <code>{course?.toLowerCase()}-guide-blueprint.md</code>, set{" "}
+                      <code>status: approved</code>; generation only runs against
+                      an approved plan</p>;
+                  }
+                  if (guide.blueprint === "approved" && (guide.missing ?? 0) > 0) {
+                    return <p className="wb-gen">
+                      <button className="ghost" disabled={busy}
+                              onClick={() => void generate()}
+                              title="authors the plan's missing notes — one revertible commit each; anything held surfaces in WAITING ON YOU">
+                        ▶ generate {guide.missing} missing
+                        {gen?.state === "paused" ? " (resume)" : ""}
+                      </button>
+                    </p>;
+                  }
+                  if (!guide.blueprint) {
+                    return <p className="wb-gen">
+                      <button className="ghost" disabled={busy}
+                              onClick={() => void generate()}
+                              title="one model call — plans modules from the course notes as a draft blueprint; nothing else runs until you approve it">
+                        ✎ draft blueprint
+                      </button>
+                    </p>;
+                  }
+                  return null;
+                })()}
+                {genNote && <p className="wb-gen dim">{genNote}</p>}
                 {last && (
                   <p className="wb-last">
                     ✓ {last.what} · <code>{last.sha.slice(0, 7)}</code>
@@ -1177,7 +1268,7 @@ export default function WorkbenchView({ open, vault, onClose }: {
                     );
                   })}
                 </ul>
-                {!guide.frontier && (
+                {!guide.frontier && guide.file && (
                   <p className="dim pad">no open module — the chain is complete</p>
                 )}
               </div>

@@ -27,7 +27,7 @@
  * in here: hover or focus an arc and its full row replaces the summary line.
  */
 import { useEffect, useState } from "react";
-import type { Fleet, Progress } from "./api";
+import type { Fleet, GuideProgress, Progress } from "./api";
 import { rel } from "./api";
 
 type ArcState = "idle" | "queued" | "running" | "ok" | "held" | "fault" | "degraded";
@@ -90,10 +90,45 @@ const TICKS = Array.from({ length: 72 }, (_, i) => {
   return { key: i, x1, y1, x2, y2, major };
 });
 
-export default function Reactor({ fleet, progress, waitingCount }: {
+/** The generation pipeline's line (study S7) — same freshness discipline as
+ *  the fleet's record: a crashed run leaves "running" on disk forever, so the
+ *  heartbeat decides whether to believe it. */
+function GuideLine({ guide }: { guide: GuideProgress | null }) {
+  const age = guide?.updated ? Date.now() - Date.parse(guide.updated) : NaN;
+  const fresh = !isNaN(age) && age < 30 * 60_000;
+  const running = guide?.state === "running" && fresh;
+  const elapsed = useElapsed(running ? (guide!.current_started ?? null) : null);
+  if (!guide) return null;
+  const total = guide.queue?.length ?? 0;
+  const done = Object.keys(guide.results ?? {}).length;
+  const recent = !isNaN(age) && age < 6 * 3600_000;
+  if (running) {
+    return <p className="guide-line live">▣ guide — {guide.course} · {guide.current ?? "…"}
+      {total ? ` · ${Math.min(done + 1, total)} of ${total}` : ""}
+      {elapsed != null ? ` · ${elapsed}s` : ""}</p>;
+  }
+  if (guide.state === "running" && !fresh && recent) {
+    return <p className="warn-line">a generation run went quiet mid-flight — check guide.log</p>;
+  }
+  if (guide.state === "paused") {
+    return <p className="warn-line">▣ guide paused — window exhausted
+      {guide.resume_at ? ` · resumes ~${guide.resume_at.slice(11, 16)}` : ""};
+      re-run to continue</p>;
+  }
+  if (guide.state === "failed" && recent) {
+    return <p className="warn-line">▣ guide — {guide.course}: {guide.note ?? "failed"}</p>;
+  }
+  if ((guide.state === "done" || guide.state === "blocked") && recent && guide.note) {
+    return <p className="dim center-note">▣ guide — {guide.course}: {guide.note}</p>;
+  }
+  return null;
+}
+
+export default function Reactor({ fleet, progress, waitingCount, guide }: {
   fleet: Fleet | null;
   progress: Progress | null;
   waitingCount: number;
+  guide?: GuideProgress | null;
 }) {
   const [probed, setProbed] = useState<string | null>(null);
   const fresh = progressFresh(progress);
@@ -239,6 +274,7 @@ export default function Reactor({ fleet, progress, waitingCount }: {
         {!paused && fleet.stopped_early_at && (
           <p className="warn-line">last run stopped early on a rate limit ({rel(fleet.stopped_early_at)} ago)</p>
         )}
+        <GuideLine guide={guide ?? null} />
     </div>
   );
 }
