@@ -332,18 +332,17 @@ async def run_one(spec, timeout_s: int = 420, model_override: str | None = None,
               "ok": False, "proposals": 0, "attempts": 0, "denials": 0,
               "cost_usd": None, "summary": "", "error": None, "model": model}
 
-    # Ground truth for "what did this specialist actually raise". Counting
-    # `propose_change` *calls* instead would count refused ones too — and a run
-    # that reports two proposals when one file exists is the same defect this
-    # project already fixed in --dry-run: the line you read after a silent
-    # failure must not overstate what happened.
-    def _seen():
-        try:
-            return {p.name for p in rf.PROPOSALS.glob("*.md")}
-        except Exception:
-            return set()
-
-    before = _seen()
+    # Ground truth for "what did this specialist actually raise": the propose
+    # tool's own in-process record, sliced around this run. Counting
+    # `propose_change` *calls* instead would count refused ones too — and the
+    # previous approach, a directory diff before/after the conversation, swept
+    # in every file that merely APPEARED in the window: a tutor- or
+    # chat-raised proposal from the dashboard's process, a file arriving via
+    # git pull — which apply_run then auto-applied under this specialist's
+    # name. The registry only gains a name when write_proposal returned, in
+    # this process, so it can neither overstate nor cross-attribute.
+    import propose
+    before_n = len(propose.WRITTEN)
 
     async def _stream(text):
         yield {"type": "user", "message": {"role": "user", "content": text},
@@ -441,7 +440,7 @@ async def run_one(spec, timeout_s: int = 420, model_override: str | None = None,
     # failed silently. Cosmetic noise on the happy path has a real cost.
     await asyncio.sleep(0.3)
 
-    written = sorted(_seen() - before)
+    written = sorted(propose.WRITTEN[before_n:])
     result["proposals"] = len(written)
     result["files"] = written
     # A refused call is not a failure of the run, but it is worth seeing: it

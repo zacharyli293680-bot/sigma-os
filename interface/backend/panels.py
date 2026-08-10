@@ -789,7 +789,10 @@ def _scan_study() -> dict:
     root = VAULT / "02-Areas" / "Academics"
     exams, coverage = [], []
     if not root.is_dir():
-        return {"exams": [], "coverage": []}
+        # Same shape as the full payload — study.tsx reads practice.length
+        # unguarded, and a key that exists only on the happy path is a crash
+        # in the one vault state (no Academics folder) no test naturally has.
+        return {"exams": [], "coverage": [], "practice": []}
 
     today = datetime.date.today()
     for folder in sorted(p for p in root.iterdir() if p.is_dir()):
@@ -868,6 +871,16 @@ def _practice_history() -> list:
         return out
     for folder in sorted(p for p in root.iterdir() if p.is_dir()):
         course = folder.name
+        # A sealed course stays sealed even in derived data: the attempt log
+        # outlives a later carve-out of its source notes (the ProCertus
+        # pattern), and segment titles copied into it at attempt time would
+        # otherwise keep rendering here forever. The study log's sealing
+        # stands in for the course's — a carved-out course folder seals every
+        # file in it, this one included, whether or not it exists yet.
+        rel = _rel(folder / f"{course.lower()}-study-log.md")
+        sealed, _ = _split([rel])
+        if rel in sealed:
+            continue
         rows = ln.attempts_for(course)
         answered = [r for r in rows if r.get("result") in ("correct", "wrong")]
         wrong = [r for r in rows if r.get("result") == "wrong"]
@@ -880,9 +893,7 @@ def _practice_history() -> list:
 
         sessions = []
         log_p = folder / f"{course.lower()}-study-log.md"
-        rel = _rel(log_p)
-        sealed, _ = _split([rel])
-        if log_p.is_file() and rel not in sealed:
+        if log_p.is_file():          # its sealing was judged above, for the course
             try:
                 text = log_p.read_text(encoding="utf-8", errors="replace")
             except OSError:

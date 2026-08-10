@@ -44,6 +44,17 @@ import reflect as rf  # noqa: E402
 KINDS = rf.KINDS
 SCOPES = rf.SCOPES
 
+# Every proposal THIS PROCESS wrote, in order — the fleet's attribution record.
+# The fleet used to attribute proposals to a specialist by diffing the
+# proposals directory before/after its conversation, which swept in anything
+# that appeared in the window: a tutor- or chat-raised proposal from the
+# dashboard process, even a file arriving via git pull — and apply_run would
+# then auto-apply a kind:note nobody's run had raised, under the wrong actor.
+# This list only ever gains a name when write_proposal actually returned, so
+# slicing it around a run can neither overstate nor cross-attribute: the
+# interface's writes happen in the uvicorn process and are invisible here.
+WRITTEN: list = []
+
 
 def _clean(value, allowed, default):
     v = str(value or "").strip().lower()
@@ -146,6 +157,7 @@ async def propose_change(args: dict) -> dict:
                                      f"{type(e).__name__}: {e}"}],
                 "is_error": True}
 
+    WRITTEN.append(path.name)
     rel = path.name
     return {"content": [{"type": "text",
                          "text": (f"Wrote proposal [[{path.stem}]] "

@@ -275,6 +275,29 @@ class TestCheckpointPractice(PracticeWritesBase):
         self.assertIn("· M01+CP1 ·", body["raw"])
         self.assertEqual(body["digest"], "Topic A ×1")
 
+    def test_a_checkpoint_only_session_labels_cp_not_a_question_mark(self):
+        """The normal way a checkpoint is used — no module rows at all. The
+        durable study-log row must say which unit was studied, not 'M?'."""
+        self.attempt(module=None, checkpoint=1, qid="q-cp1-1", result="correct")
+        body = self.client.post("/api/lesson/session-end",
+                                json={"course": "TEST-101"}).json()
+        self.assertTrue(body["wrote"])
+        self.assertIn("· CP1 ·", body["raw"])
+        self.assertNotIn("M?", body["raw"])
+
+    def test_practice_writes_drop_the_study_panel_cache(self):
+        """/api/study renders the attempt log and the study log now — a 60s
+        stale 'nothing recorded yet' right after a recorded miss is the
+        write-then-stale-panel bug the task caches exist for."""
+        panels._cache["study"] = (0, {"stale": True})
+        self.attempt(result="wrong")
+        self.assertNotIn("study", panels._cache)
+        panels._cache["study"] = (0, {"stale": True})
+        body = self.client.post("/api/lesson/session-end",
+                                json={"course": "TEST-101"}).json()
+        self.assertTrue(body["wrote"])
+        self.assertNotIn("study", panels._cache)
+
 
 class TestSessionEnd(PracticeWritesBase):
     def end(self):

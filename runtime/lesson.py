@@ -660,11 +660,31 @@ CP_QID_RE = re.compile(r"^q-cp(\d+)-(\d+)$")
 
 
 def _fm_covers(text: str) -> list[int]:
-    """The `covers:` list — `[2, 3]` inline in the frontmatter, read
-    mechanically. Digits are the grammar; anything else in the value is
-    someone's prose and not this parser's business."""
+    """The `covers:` list, in either YAML spelling. Inline `[2, 3]` is what
+    the schema writes, but Obsidian's Properties panel rewrites inline lists
+    into block form the moment it touches the note — `sources:` has
+    _fm_sources for exactly this, and a covers reader that only knew the
+    inline form held a conforming note every time Obsidian saved it. Digits
+    are the grammar; anything else in a value is prose, not this parser's
+    business. `covers` deliberately is NOT cross-checked against authored
+    modules: it may name planned ones (the pilot's CP1 covers M03 before the
+    note exists); checking it against the approved blueprint is S7's job."""
     fm = frontmatter(text) or {}
-    return [int(m) for m in re.findall(r"\d+", str(fm.get("covers") or ""))]
+    inline = [int(m) for m in re.findall(r"\d+", str(fm.get("covers") or ""))]
+    if inline:
+        return inline
+    out, in_covers = [], False
+    for line in _fm_block(text):
+        if re.match(r"^covers:\s*$", line):
+            in_covers = True
+            continue
+        if in_covers:
+            m = re.match(r"^\s+-\s+(\d+)\s*$", line)
+            if m:
+                out.append(int(m.group(1)))
+                continue
+            in_covers = False
+    return out
 
 
 def validate_checkpoint(text: str, vault: Path | None = None) -> list[str]:
@@ -709,14 +729,26 @@ def validate_checkpoint(text: str, vault: Path | None = None) -> list[str]:
         seen_numbers.add(s["n"])
         if not s["sources"]:
             out.append(f"{tag}: no source:: line — unverified content is held")
-        for depth, label in (("summary", "Summary"), ("normal", "Normal"),
-                             ("in_depth", "In depth")):
-            if s[depth]:
-                out.append(f"{tag}: has '### {label}' — a checkpoint carries "
-                           f"practice only, never depth levels (§5.4)")
         if s["example"] is not None:
             out.append(f"{tag}: has '### Example' — a checkpoint carries "
                        f"practice only")
+
+    # Depth headings are found by scanning the text, not by truthiness on the
+    # parsed buckets: parse() renders a present-but-EMPTY '### Summary' as ""
+    # — indistinguishable from absent — so a module stripped down to bare
+    # depth headings would slip a content check. The heading itself is the
+    # violation (§5.4), with or without prose under it.
+    in_fence = False
+    for i, line in enumerate(text.splitlines(), 1):
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        dm = re.match(r"^###\s+(Summary|Normal|In depth)\s*$", line)
+        if dm:
+            out.append(f"line {i}: has '### {dm.group(1)}' — a checkpoint "
+                       f"carries practice only, never depth levels (§5.4)")
 
     items = [it for s in segs for it in s["practice"]]
     if segs and not items:
@@ -758,6 +790,18 @@ def validate_checkpoint(text: str, vault: Path | None = None) -> list[str]:
 def _h1(text: str) -> str | None:
     m = re.search(r"^#\s+(.+?)\s*$", text, re.M)
     return m.group(1) if m else None
+
+
+def validate_any(text: str, vault: Path | None = None) -> list[str]:
+    """Dispatch on the note's own `type:` — what the CLI and any generic
+    caller should use. Running the module validator over a checkpoint
+    reports ~20 wrong-grammar complaints (missing depths, segment counts)
+    that bury the one real problem; the note says which contract it claims,
+    so judge it by that one."""
+    fm = frontmatter(text) or {}
+    if str(fm.get("type") or "").strip() == "checkpoint":
+        return validate_checkpoint(text, vault=vault)
+    return validate(text, vault=vault)
 
 
 def scan_checkpoints(vault: Path, split=None) -> list[dict]:
@@ -986,7 +1030,9 @@ def main():
 
     if a.cmd == "validate":
         text = Path(a.path).read_text(encoding="utf-8-sig", errors="replace")
-        problems = validate(text, vault=Path(a.vault))
+        # Dispatch on the note's type: doctor's fix hint points here for
+        # checkpoints too, and the module validator misdiagnoses those.
+        problems = validate_any(text, vault=Path(a.vault))
         for p in problems:
             print(f"  !! {p}")
         print("valid" if not problems else f"{len(problems)} problem(s)")

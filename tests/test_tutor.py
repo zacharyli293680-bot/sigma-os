@@ -160,6 +160,65 @@ class TestHoldAndRefusals(TutorBase):
         self.assertIn("no such module", r.json()["error"])
 
 
+class TestComposition(TutorBase):
+    """The happy path, with the model call stubbed out: what actually reaches
+    the agent — the pin riding above the question, the mode's orientation,
+    proposals on, the spend actor — is the whole difference between a tutor
+    and a second chat drawer, and none of it may drift silently."""
+
+    def setUp(self):
+        super().setUp()
+        appmod.commands_mod._window_hold = lambda: None
+        self.captured: dict = {}
+        self._real = (appmod.stream_agent, appmod.build_options)
+
+        async def fake_stream(question, opts, actor):
+            self.captured.update(question=question, opts=opts, actor=actor)
+            yield "data: {\"type\": \"done\"}\n\n"
+
+        def spy_options(**kw):
+            self.captured["options_kw"] = kw
+            return self._real[1](**kw)
+
+        appmod.stream_agent = fake_stream
+        appmod.build_options = spy_options
+
+    def tearDown(self):
+        appmod.stream_agent, appmod.build_options = self._real
+        super().tearDown()
+
+    def test_the_pin_rides_above_the_question_and_the_actor_is_tutor(self):
+        r = self.client.post("/api/tutor", json={
+            "course": "TEST-101", "module": 1, "qid": "q-1-1",
+            "mode": "explain", "question": "why is that the answer?"})
+        self.assertEqual(r.status_code, 200, r.text)
+        q = self.captured["question"]
+        self.assertTrue(q.startswith("## Pinned context"), q[:60])
+        self.assertIn("pinned practice item q-1-1", q)
+        self.assertTrue(q.endswith("why is that the answer?"))
+        self.assertEqual(self.captured["actor"], "tutor")
+        kw = self.captured["options_kw"]
+        self.assertTrue(kw["allow_proposals"])
+        self.assertEqual(kw["actor"], "tutor")
+        self.assertIn(appmod.TUTOR_MODES["explain"], kw["orientation"])
+        self.assertIn("propose_change", kw["orientation"])
+
+    def test_an_unknown_mode_falls_back_to_nudge(self):
+        r = self.client.post("/api/tutor", json={
+            "course": "TEST-101", "module": 1,
+            "mode": "spoiler", "question": "just tell me"})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertIn(appmod.TUTOR_MODES["nudge"],
+                      self.captured["options_kw"]["orientation"])
+
+    def test_a_session_id_reaches_resume(self):
+        r = self.client.post("/api/tutor", json={
+            "course": "TEST-101", "module": 1, "question": "hi",
+            "session_id": "sess-123"})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(self.captured["opts"].resume, "sess-123")
+
+
 class TestOrientation(TutorBase):
     def test_the_three_modes_exist_and_default_holds(self):
         self.assertEqual(set(appmod.TUTOR_MODES), {"nudge", "explain", "solve"})

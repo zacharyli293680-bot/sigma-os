@@ -1123,6 +1123,10 @@ def api_lesson_attempt(req: AttemptReq):
     if not ln.record_attempt(row):
         return _err(500, "write failed",
                     detail="the attempt log could not be written")
+    # /api/study's third panel renders this log — a 60s-stale "nothing
+    # recorded yet" right after a recorded miss is the write-then-stale-panel
+    # bug class the task caches already exist for.
+    panels._cache.pop("study", None)
     return {"ok": True, "row": row}
 
 
@@ -1236,6 +1240,7 @@ def api_lesson_session_end(req: SessionEnd):
         ledger.record("zach", "append", rel, sha,
                       f"study session: {course} {mod_label} — {len(answered)} "
                       f"answered, {len(wrong)} missed")
+        panels._cache.pop("study", None)   # the panel now renders this row
     resp = {"ok": True, "rows": len(rows), "wrote": wrote, "file": rel,
             "raw": line, "sha": sha, "digest": ln.digest(wrong)}
     if not saved:

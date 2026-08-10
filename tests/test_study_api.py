@@ -181,6 +181,30 @@ class TestPracticeHistory(StudyBase):
         privacy.VaultPrivacy._git_ignored.cache_clear()
         self.assertEqual(panels._scan_study()["practice"], [])
 
+    def test_a_sealed_course_hides_its_attempt_log_derivatives_too(self):
+        """Sealing outlives the data it derived: the attempt log carries
+        segment titles copied from the course's notes at attempt time, and a
+        course carved out later (the ProCertus pattern) must not keep
+        rendering them here forever."""
+        self.attempts(
+            {"ts": "2026-08-09T10:00:00", "course": "AA-210", "qid": "q-2-7",
+             "seg_title": "A now-sealed topic", "result": "wrong"})
+        (self.vault / ".gitignore").write_text(
+            "02-Areas/Academics/AA-210/\n", encoding="utf-8")
+        panels._cache.clear()
+        privacy.VaultPrivacy._git_ignored.cache_clear()
+        self.assertEqual(panels._scan_study()["practice"], [])
+
+    def test_a_vault_without_academics_still_has_the_practice_key(self):
+        """The early return must match the full payload's shape — study.tsx
+        reads practice.length unguarded, and the one vault state no test
+        naturally builds (no Academics folder) crashed the view."""
+        import shutil
+        shutil.rmtree(self.vault / "02-Areas")
+        panels._cache.clear()
+        self.assertEqual(panels._scan_study(),
+                         {"exams": [], "coverage": [], "practice": []})
+
 
 if __name__ == "__main__":
     unittest.main()

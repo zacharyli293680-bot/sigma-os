@@ -97,6 +97,32 @@ class TestCheckpointGrammar(CheckpointBase):
             "### Normal\n\nSome teaching prose.\n")
         self.assert_problem(text, "practice only, never depth levels")
 
+    def test_an_empty_depth_heading_holds_it_too(self):
+        """parse() renders a bare '### Summary' as "" — indistinguishable
+        from absent — so the hold is on the heading itself: a module
+        stripped down to its headings must not slip through on truthiness."""
+        text = _valid_cp().replace(
+            "?? q-cp1-4", "### Summary\n\n?? q-cp1-4")
+        self.assert_problem(text, "practice only, never depth levels")
+
+    def test_covers_reads_the_block_list_spelling_obsidian_writes(self):
+        """Obsidian's Properties panel rewrites `covers: [1, 2]` into block
+        form the moment it touches the note — a YAML-equivalent spelling must
+        not hold a conforming checkpoint (the _fm_sources precedent)."""
+        text = _valid_cp().replace("covers: [1, 2]", "covers:\n  - 1\n  - 2")
+        self.assertEqual(lesson.validate_checkpoint(text, vault=self.vault), [])
+        self.assertEqual(lesson._fm_covers(text), [1, 2])
+
+    def test_validate_any_dispatches_on_the_notes_own_type(self):
+        """Doctor's fix hint runs `lesson.py validate` on whatever file it
+        names; the module validator misdiagnoses a conforming checkpoint
+        (~20 wrong-grammar complaints), so the CLI dispatches on type."""
+        cp = _valid_cp()
+        self.assertEqual(lesson.validate_any(cp, vault=self.vault), [])
+        self.assertNotEqual(lesson.validate(cp, vault=self.vault), [])
+        from test_lesson import _valid
+        self.assertEqual(lesson.validate_any(_valid(), vault=self.vault), [])
+
     def test_an_example_holds_it(self):
         text = _valid_cp().replace(
             "?? q-cp1-4", "### Example\n\nWorked thing.\n\n?? q-cp1-4")
@@ -270,8 +296,12 @@ class TestCheckpointApi(CheckpointApiBase):
     def test_the_lesson_list_carries_checkpoints(self):
         body = self.client.get("/api/lesson").json()
         self.assertIn("checkpoints", body)
-        self.assertEqual(body["checkpoints"][0]["checkpoint"], 1)
-        self.assertNotIn("segments", body["checkpoints"][0].get("rows", {}))
+        row = body["checkpoints"][0]
+        self.assertEqual(row["checkpoint"], 1)
+        # Counts, never parsed bodies: the list is a glance, and full segments
+        # here would ship every answer with every poll.
+        self.assertIsInstance(row["segments"], int)
+        self.assertIsInstance(row["practice"], int)
 
     def test_a_sealed_checkpoint_is_a_404(self):
         (self.vault / ".gitignore").write_text(
@@ -286,6 +316,39 @@ class TestCheckpointApi(CheckpointApiBase):
             _valid_cp().replace("- answer:: 2\n", "", 1), encoding="utf-8")
         d = self.client.get("/api/checkpoint/test-101/1").json()
         self.assertTrue(any("answer:: is missing" in p for p in d["problems"]))
+
+
+class TestDoctorSweep(CheckpointApiBase):
+    """The commit's one doctor change: hand-edited checkpoints join the same
+    sweep as modules. A broken one must raise the ALERT — checkpoints are
+    co-writable by hand, and doctor is the net for exactly that."""
+
+    def _collect(self):
+        import doctor
+        import lesson as lm
+        saved = lm.DEFAULT_VAULT
+        lm.DEFAULT_VAULT = self.vault
+        try:
+            out = []
+            doctor.check_modules(out)
+            return out
+        finally:
+            lm.DEFAULT_VAULT = saved
+
+    def test_a_conforming_checkpoint_keeps_doctor_green(self):
+        import doctor
+        out = self._collect()
+        self.assertTrue(out, "the sweep should report on existing guide notes")
+        self.assertTrue(all(level == doctor.OK for level, _w, _f in out), out)
+
+    def test_a_broken_checkpoint_raises_the_alert(self):
+        import doctor
+        (self.course / "guide" / "test-101-checkpoint-1.md").write_text(
+            _valid_cp().replace("- answer:: 2\n", "", 1), encoding="utf-8")
+        out = self._collect()
+        self.assertTrue(any(level == doctor.ALERT
+                            and "test-101-checkpoint-1" in what
+                            for level, what, _fix in out), out)
 
 
 if __name__ == "__main__":

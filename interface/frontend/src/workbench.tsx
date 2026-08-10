@@ -31,6 +31,7 @@
  * A module whose parse reports problems is HELD and never rendered as if fine.
  */
 import { useEffect, useReducer, useRef, useState } from "react";
+import type { Dispatch, SetStateAction } from "react";
 import { API, get, obsidianHref, post, ApiError } from "./api";
 import type {
   Courses, Guide, GuideRow, Lesson, LessonList,
@@ -114,8 +115,11 @@ function reduce(st: WbState, a: WbAction): WbState {
       return { ...st, lastQid: a.qid, practice: { ...st.practice,
         [a.qid]: { ...pr(st, a.qid), revealed: true } } };
     case "given":
+      // Capped so the mirrored state blob stays far under the server's 20k
+      // guard — a pasted derivation belongs in the work pad, and a silent
+      // 413 would drop ALL resume state, not just the long answer.
       return { ...st, lastQid: a.qid, practice: { ...st.practice,
-        [a.qid]: { ...pr(st, a.qid), given: a.text } } };
+        [a.qid]: { ...pr(st, a.qid), given: a.text.slice(0, 500) } } };
     case "result":
       return { ...st, lastQid: a.qid, practice: { ...st.practice,
         [a.qid]: { ...pr(st, a.qid), result: a.r } } };
@@ -203,15 +207,24 @@ function mcqAnswer(answer: string): string | null {
 }
 
 /** The first fenced code block of a `code` practice item, for the sandbox.
+ *  Only python and sql are runnable (the §2 decision) — any other fence tag
+ *  gets a "not runnable" label instead of being fed to the wrong engine,
+ *  which would manufacture a Python SyntaxError out of perfectly good Java.
  *  No fence → the prompt itself, commented, so context rides along. */
-function fenced(prompt: string): { lang: Lang; code: string } {
+function fenced(prompt: string):
+  | { runnable: true; lang: Lang; code: string }
+  | { runnable: false; tag: string } {
   const m = prompt.match(/```(\w+)?\r?\n([\s\S]*?)```/);
   if (m) {
-    const lang: Lang = (m[1] || "").toLowerCase() === "sql" ? "sql" : "python";
-    return { lang, code: m[2].replace(/\s+$/, "") + "\n" };
+    const tag = (m[1] || "").toLowerCase();
+    if (tag === "sql")
+      return { runnable: true, lang: "sql", code: m[2].replace(/\s+$/, "") + "\n" };
+    if (tag === "" || tag === "python" || tag === "py")
+      return { runnable: true, lang: "python", code: m[2].replace(/\s+$/, "") + "\n" };
+    return { runnable: false, tag };
   }
   const commented = prompt.split("\n").map(l => (l.trim() ? `# ${l}` : "#")).join("\n");
-  return { lang: "python", code: `${commented}\n\n` };
+  return { runnable: true, lang: "python", code: `${commented}\n\n` };
 }
 
 /** One practice item, live. Auto-checked where the decision list allows
@@ -292,12 +305,20 @@ function PracticeBox({ it, st, onHint, onReveal, onGiven, onResolve, onSandbox }
               ({l})
             </button>
           ))}
-          {it.kind === "code" && onSandbox && (
-            <button className="ghost" title="load this item into the code dock"
-                    onClick={() => { const f = fenced(it.prompt); onSandbox(f.lang, f.code); }}>
-              ▸ open in sandbox
-            </button>
-          )}
+          {it.kind === "code" && onSandbox && (() => {
+            const f = fenced(it.prompt);
+            return f.runnable ? (
+              <button className="ghost" title="load this item into the code dock"
+                      onClick={() => onSandbox(f.lang, f.code)}>
+                ▸ open in sandbox
+              </button>
+            ) : (
+              <em className="wb-chip dim"
+                  title="only python and sql run in the dock — everything else renders, never runs">
+                {f.tag} — not runnable
+              </em>
+            );
+          })()}
           {!auto && !st.revealed && (
             <button className="ghost" onClick={onReveal}>reveal answer</button>
           )}
@@ -377,36 +398,40 @@ function Segment({ seg, depth, st, cp, onDepth, dispatch, onResolve, onSandbox }
 
 /* ------------------------------------------------------------------ dock */
 
+/** The sandbox's output state. It lives in WorkbenchView, not in CodeDock:
+ *  the dock unmounts on every slot switch and focus toggle, and a traceback
+ *  that vanished because the user glanced at the work pad would be a failure
+ *  silently dropped — the exact thing S4's done-when forbids. */
+type SandSt = { busy: boolean; cold: boolean; py: PyRun | null; sq: SqlRun | null };
+const SAND0: SandSt = { busy: false, cold: false, py: null, sq: null };
+
 /** The code sandbox (S4). Pyodide and sql.js, vendored and lazy — the first
  *  run pays the load, and a failure is a traceback on screen, never a shrug. */
-function CodeDock({ code, dispatch }: {
+function CodeDock({ code, sand, setSand, dispatch }: {
   code: { lang: Lang; text: string };
+  sand: SandSt;
+  setSand: Dispatch<SetStateAction<SandSt>>;
   dispatch: (a: WbAction) => void;
 }) {
-  const [busy, setBusy] = useState(false);
-  const [coldLoad, setColdLoad] = useState(false);
-  const [py, setPy] = useState<PyRun | null>(null);
-  const [sq, setSq] = useState<SqlRun | null>(null);
-
   // Opening the slot on python overlaps the ~14 MB load with typing.
   useEffect(() => {
     if (code.lang === "python") warmPython();
   }, [code.lang]);
 
   const run = async () => {
-    if (busy || !code.text.trim()) return;
-    setBusy(true);
+    if (sand.busy || !code.text.trim()) return;
     if (code.lang === "python") {
-      setColdLoad(!pythonReady());
-      setPy(await runPython(code.text));
-      setColdLoad(false);
+      setSand(s => ({ ...s, busy: true, cold: !pythonReady() }));
+      const r = await runPython(code.text);
+      setSand(s => ({ ...s, busy: false, cold: false, py: r }));
     } else {
-      setSq(await runSql(code.text));
+      setSand(s => ({ ...s, busy: true }));
+      const r = await runSql(code.text);
+      setSand(s => ({ ...s, busy: false, sq: r }));
     }
-    setBusy(false);
   };
 
-  const out = code.lang === "python" ? py : sq;
+  const out = code.lang === "python" ? sand.py : sand.sq;
   return (
     <div className="wb-code">
       <div className="wb-codebar">
@@ -415,15 +440,17 @@ function CodeDock({ code, dispatch }: {
                   onClick={() => dispatch({ t: "code", lang: l })}>{l}</button>
         ))}
         <span className="dim wb-codenote"
-              title="both engines are vendored into the build — no CDN, nothing leaves this machine">
-          runs locally
+              title="pyodide + sql.js are vendored into the build — no CDN. Code runs in this tab with the page's own powers; run only code you trust.">
+          local runtimes
         </span>
         {code.lang === "sql" && (
           <button className="ghost" title="drop the session database"
-                  onClick={() => { resetSql(); setSq(null); }}>reset db</button>
+                  onClick={() => { resetSql(); setSand(s => ({ ...s, sq: null })); }}>
+            reset db
+          </button>
         )}
-        <button className="ghost" disabled={busy || !code.text.trim()} onClick={run}>
-          {busy ? "running…" : "▶ run"}
+        <button className="ghost" disabled={sand.busy || !code.text.trim()} onClick={run}>
+          {sand.busy ? "running…" : "▶ run"}
         </button>
       </div>
       <textarea className="wb-editor" value={code.text} spellCheck={false}
@@ -436,21 +463,21 @@ function CodeDock({ code, dispatch }: {
                   if (e.key === "Enter" && e.ctrlKey) { e.preventDefault(); void run(); }
                 }} />
       <div className="wb-codeout">
-        {busy && coldLoad && (
+        {sand.busy && sand.cold && (
           <p className="dim">loading the vendored Python runtime — first run
           only, ~14 MB from this machine…</p>
         )}
-        {code.lang === "python" && py && (
+        {code.lang === "python" && sand.py && (
           <>
-            {py.stdout && <pre className="wb-out">{py.stdout}</pre>}
-            {py.result !== null && <p className="wb-res">→ {py.result}</p>}
-            {py.error && <pre className="wb-out wb-outerr">{py.error}</pre>}
-            <p className="dim">{py.ok ? "ok" : "failed"} · {py.ms} ms</p>
+            {sand.py.stdout && <pre className="wb-out">{sand.py.stdout}</pre>}
+            {sand.py.result !== null && <p className="wb-res">→ {sand.py.result}</p>}
+            {sand.py.error && <pre className="wb-out wb-outerr">{sand.py.error}</pre>}
+            <p className="dim">{sand.py.ok ? "ok" : "failed"} · {sand.py.ms} ms</p>
           </>
         )}
-        {code.lang === "sql" && sq && (
+        {code.lang === "sql" && sand.sq && (
           <>
-            {sq.tables.map((t, i) => (
+            {sand.sq.tables.map((t, i) => (
               <table key={i} className="wb-sqltab">
                 <thead><tr>{t.columns.map(c => <th key={c}>{c}</th>)}</tr></thead>
                 <tbody>
@@ -460,14 +487,14 @@ function CodeDock({ code, dispatch }: {
                 </tbody>
               </table>
             ))}
-            {sq.ok && sq.tables.length === 0 && (
+            {sand.sq.ok && sand.sq.tables.length === 0 && (
               <p className="dim">ok — no result set (statement ran)</p>
             )}
-            {sq.error && <pre className="wb-out wb-outerr">{sq.error}</pre>}
-            <p className="dim">{sq.ok ? "ok" : "failed"} · {sq.ms} ms</p>
+            {sand.sq.error && <pre className="wb-out wb-outerr">{sand.sq.error}</pre>}
+            <p className="dim">{sand.sq.ok ? "ok" : "failed"} · {sand.sq.ms} ms</p>
           </>
         )}
-        {!out && !busy && (
+        {!out && !sand.busy && (
           <p className="dim">python and sql run here; other languages render
           in lessons but are labelled not runnable. Ctrl+Enter runs.</p>
         )}
@@ -602,6 +629,23 @@ export default function WorkbenchView({ open, vault, onClose }: {
   const [tutorHold, setTutorHold] = useState<string | null>(null);
   const [tutorBusy, setTutorBusy] = useState(false);
   const tutorInFlight = useRef(false);
+  // The in-flight tutor stream, aborted on module change: an orphaned stream
+  // finishing after the reset would resurrect the OLD module's session id and
+  // the next ask would resume the wrong conversation under the new pin.
+  const tutorAbort = useRef<AbortController | null>(null);
+  // The sandbox's output — up here so a slot switch or focus toggle cannot
+  // unmount a traceback out of existence (S4: a failure is reported).
+  const [sand, setSand] = useState<SandSt>(SAND0);
+  // The latest un-posted state-mirror payload. The debounce alone would be
+  // cancelled by leaving the lesson, silently dropping everything typed since
+  // the last 600 ms pause — flushed on every exit path instead.
+  const mirrorRef = useRef<unknown | null>(null);
+  const flushMirror = () => {
+    if (mirrorRef.current) {
+      void post("lesson/state", mirrorRef.current).catch(() => {});
+      mirrorRef.current = null;
+    }
+  };
   // Which courses have un-rolled-up attempts this session. A ref, not state:
   // nothing renders from it except the end-session button's presence, and the
   // close path reads it during cleanup when state is already torn down.
@@ -648,41 +692,53 @@ export default function WorkbenchView({ open, vault, onClose }: {
     // Reset per-module view state: a surviving segment index from a longer
     // module would point past the end of a shorter one. The tutor resets too —
     // its pinned context is this module, and a conversation about the last one
-    // continuing under a new pin would be quietly wrong.
+    // continuing under a new pin would be quietly wrong — and its in-flight
+    // stream is aborted so a late `done` cannot resurrect the old session.
+    tutorAbort.current?.abort();
+    tutorAbort.current = null;
     dispatch({ t: "reset" });
     setLesson(undefined);
     setTutorTurns([]); setTutorSession(null); setTutorHold(null);
+    setSand(SAND0);
     const url = picked.kind === "checkpoint"
       ? `checkpoint/${picked.course}/${picked.num}`
       : `lesson/${picked.course}/${picked.num}`;
     get<Lesson>(url).then(l => {
       setLesson(l);
       // Resume where this module was left: the sidecar state rides on the
-      // lesson payload. Validated field by field — it is machine-local JSON
-      // a hand or an old build may have shaped differently.
-      const s = l.state;
-      if (!s) return;
-      const depth: Record<number, Depth> = {};
-      for (const [k, v] of Object.entries(s.depth ?? {})) {
-        if (DEPTHS.includes(v as Depth)) depth[Number(k)] = v as Depth;
-      }
-      const practice: Record<string, PracticeSt> = {};
-      for (const [qid, p] of Object.entries(s.practice ?? {})) {
-        practice[qid] = {
-          hints: typeof p.hints === "number" ? p.hints : 0,
-          revealed: !!p.revealed,
-          result: p.result === "correct" || p.result === "wrong"
-            || p.result === "skipped" ? p.result : null,
-          given: typeof p.given === "string" ? p.given : "",
-        };
-      }
-      dispatch({ t: "hydrate", depth,
-                 fallback: DEPTHS.includes(s.fallback as Depth)
-                   ? s.fallback as Depth : "normal",
-                 practice,
-                 scratch: typeof s.scratch === "string"
-                   ? s.scratch.slice(0, SCRATCH_MAX) : "" });
+      // lesson payload. Validated field by field, inside its own try — it is
+      // machine-local JSON a hand or an old build may have shaped
+      // differently, and a bad entry must cost the resume, never report a
+      // succeeded fetch as "backend unreachable".
+      try {
+        const s = l.state;
+        if (!s) return;
+        const depth: Record<number, Depth> = {};
+        for (const [k, v] of Object.entries(s.depth ?? {})) {
+          if (DEPTHS.includes(v as Depth)) depth[Number(k)] = v as Depth;
+        }
+        const practice: Record<string, PracticeSt> = {};
+        for (const [qid, p] of Object.entries(s.practice ?? {})) {
+          if (!p || typeof p !== "object") continue;   // a null entry is noise
+          practice[qid] = {
+            hints: typeof p.hints === "number" ? p.hints : 0,
+            revealed: !!p.revealed,
+            result: p.result === "correct" || p.result === "wrong"
+              || p.result === "skipped" ? p.result : null,
+            given: typeof p.given === "string" ? p.given : "",
+          };
+        }
+        dispatch({ t: "hydrate", depth,
+                   fallback: DEPTHS.includes(s.fallback as Depth)
+                     ? s.fallback as Depth : "normal",
+                   practice,
+                   scratch: typeof s.scratch === "string"
+                     ? s.scratch.slice(0, SCRATCH_MAX) : "" });
+      } catch { /* malformed sidecar state — render the module fresh */ }
     }).catch(() => setLesson(null));
+    // Leaving the lesson (any path) flushes the pending state mirror — the
+    // ref still holds this module's payload when the cleanup runs.
+    return () => flushMirror();
   }, [open, picked]);
 
   // Mirror view state to the sidecar, debounced — resume is the feature,
@@ -691,14 +747,17 @@ export default function WorkbenchView({ open, vault, onClose }: {
   const isCp = picked?.kind === "checkpoint";
   useEffect(() => {
     if (!open || !rendered || !lesson) return;
+    const body = {
+      course: lesson.course,
+      ...(lesson.checkpoint != null
+        ? { checkpoint: lesson.checkpoint } : { module: lesson.module }),
+      state: { depth: st.depth, fallback: st.fallback,
+               practice: st.practice, scratch: st.scratch },
+    };
+    mirrorRef.current = body;           // what flushMirror posts on exit
     const id = window.setTimeout(() => {
-      void post("lesson/state", {
-        course: lesson.course,
-        ...(lesson.checkpoint != null
-          ? { checkpoint: lesson.checkpoint } : { module: lesson.module }),
-        state: { depth: st.depth, fallback: st.fallback,
-                 practice: st.practice, scratch: st.scratch },
-      }).catch(() => {});
+      mirrorRef.current = null;
+      void post("lesson/state", body).catch(() => {});
     }, 600);
     return () => window.clearTimeout(id);
   }, [open, rendered, lesson, st.depth, st.fallback, st.practice, st.scratch]);
@@ -711,31 +770,43 @@ export default function WorkbenchView({ open, vault, onClose }: {
       .then(h => setTutorHold(h.hold)).catch(() => {});
   }, [open, st.dock]);
 
-  // Only intercept keys while a lesson body is actually rendered — the chain
-  // view owns no focus or dock, and its Esc belongs to App's ladder.
+  // Keys live for the whole lesson level — held and loading views included,
+  // so Esc always means "back toward the chain", which is what the footer
+  // promises there too. The chain view owns no focus or dock, and its Esc
+  // belongs to App's ladder.
   useEffect(() => {
-    if (!open || !rendered) return;
+    if (!open || !picked) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.repeat || e.ctrlKey || e.altKey || e.metaKey) return;
       // An overlay stacked above the workbench (Capture autofocuses its
       // textarea) must get its own keys — a capture-phase listener fires
       // before the target's handlers, so check where focus actually is.
       const el = document.activeElement as HTMLElement | null;
-      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA")) return;
-      if (e.key === "f") {
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA")) {
+        // Esc in an editor leaves the editor. Letting it fall through would
+        // reach App's ladder, which closes the whole workbench — taking the
+        // sandbox's transient code and the last debounce of scratch with it.
+        if (e.key === "Escape") {
+          el.blur();
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        return;
+      }
+      if (e.key === "f" && rendered) {
         e.preventDefault();
         dispatch({ t: "focus" });
       } else if (e.key === "Escape") {
-        if (st.focus) dispatch({ t: "focus" });
-        else if (st.dock) dispatch({ t: "dock", slot: null });
-        else { setPicked(null); setLesson(undefined); }   // module → chain view
+        if (rendered && st.focus) dispatch({ t: "focus" });
+        else if (rendered && st.dock) dispatch({ t: "dock", slot: null });
+        else { setPicked(null); setLesson(undefined); }   // lesson → chain view
         e.preventDefault();
         e.stopPropagation();
       }
     };
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
-  }, [open, rendered, st.focus, st.dock]);
+  }, [open, picked, rendered, st.focus, st.dock]);
 
   if (!open) return null;
 
@@ -806,17 +877,32 @@ export default function WorkbenchView({ open, vault, onClose }: {
 
   const toSandbox = (lang: Lang, code: string) => {
     dispatch({ t: "code", lang, text: code });
+    // The dock only renders outside focus mode — leaving focus on makes the
+    // click a silent no-op that loads code into an invisible slot.
+    if (st.focus) dispatch({ t: "focus" });
     dispatch({ t: "dock", slot: "code" });
   };
 
   const endSession = async () => {
-    const c = lesson?.course ?? course;
-    if (!c) return;
+    // Roll up what was actually studied — every touched course — never the
+    // picker's current selection: clicking end-session from another course's
+    // chain must not post that course and report "nothing to roll up" while
+    // the real attempts sit uncovered.
+    const targets = [...touched.current];
+    if (targets.length === 0) {
+      const c = lesson?.course ?? course;
+      if (!c) return;
+      targets.push(c);
+    }
     setRollup("busy");
     try {
-      const r = await post<Rollup>("lesson/session-end", { course: c });
-      setRollup(r);
-      if (r.wrote) touched.current.delete(c);
+      let shown: Rollup | null = null;
+      for (const c of targets) {
+        const r = await post<Rollup>("lesson/session-end", { course: c });
+        if (r.wrote) touched.current.delete(c);
+        if (!shown || r.wrote) shown = r;
+      }
+      setRollup(shown);
     } catch (e) {
       setRollup(e instanceof ApiError
         ? `${e.code}${e.detail ? ` — ${e.detail}` : ""}` : "rollup failed");
@@ -835,17 +921,23 @@ export default function WorkbenchView({ open, vault, onClose }: {
       setTutorTurns(ts => ts.map((t, i) => (i === ts.length - 1 ? fn(t) : t)));
     const qid = st.lastQid;
     const p = qid ? pr(st, qid) : null;
+    const ac = new AbortController();
+    tutorAbort.current = ac;
     let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
     try {
       const res = await fetch(`${API}/api/tutor`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: ac.signal,
         body: JSON.stringify({
           course: lesson.course,
           ...(lesson.checkpoint != null
             ? { checkpoint: lesson.checkpoint } : { module: lesson.module }),
           seg: seg?.n ?? null, qid,
-          given: p?.given || null, hints: p?.hints ?? 0,
+          // `|| null` would drop a legitimate attempt of "0" — a plausible
+          // numeric answer (a zero dot product IS this checkpoint's lesson).
+          given: p && p.given.trim() !== "" ? p.given : null,
+          hints: p?.hints ?? 0,
           revealed: p?.revealed ?? false,
           mode: tutorMode, question, session_id: tutorSession,
         }),
@@ -886,14 +978,21 @@ export default function WorkbenchView({ open, vault, onClose }: {
             patch(t => ({ ...t, error: e.message }));
             setTutorSession(null);
           }
-          else if (e.type === "done") setTutorSession(e.session_id);
+          // The abort guard matters here most: a stream orphaned by a module
+          // switch must not hand the OLD conversation's session id to the
+          // new module's tutor.
+          else if (e.type === "done" && !ac.signal.aborted)
+            setTutorSession(e.session_id);
         }
       }
     } catch (err) {
-      patch(t => ({ ...t, error: String(err) }));
-      setTutorSession(null);
+      if (!ac.signal.aborted) {
+        patch(t => ({ ...t, error: String(err) }));
+        setTutorSession(null);
+      }
     } finally {
       try { await reader?.cancel(); } catch { /* already closed */ }
+      if (tutorAbort.current === ac) tutorAbort.current = null;
       tutorInFlight.current = false;
       setTutorBusy(false);
     }
@@ -1196,7 +1295,8 @@ export default function WorkbenchView({ open, vault, onClose }: {
 
                   {st.dock === "code" && (
                     <div className="wb-slotbody">
-                      <CodeDock code={st.code} dispatch={dispatch} />
+                      <CodeDock code={st.code} sand={sand} setSand={setSand}
+                                dispatch={dispatch} />
                     </div>
                   )}
 

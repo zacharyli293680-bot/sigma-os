@@ -18,7 +18,12 @@
  * summarised into "something went wrong".
  */
 import type { Database, SqlJsStatic } from "sql.js";
-import sqlWasmUrl from "sql.js/dist/sql-wasm.wasm?url";
+// The BROWSER build's wasm, matching the glue `import("sql.js")` resolves to
+// through the package's browser condition (the emitted chunk is
+// sql-wasm-browser-*.js). Emscripten glue and wasm are compiled together; the
+// default build's sql-wasm.wasm is byte-identical today, which is exactly the
+// kind of coincidence a version bump breaks at runtime.
+import sqlWasmUrl from "sql.js/dist/sql-wasm-browser.wasm?url";
 
 export type PyRun = {
   ok: boolean;
@@ -69,7 +74,18 @@ async function loadPy(): Promise<Py> {
   return pyLoad;
 }
 
-export async function runPython(code: string): Promise<PyRun> {
+// Runs are serialised on the one shared interpreter: setStdout/setStderr are
+// installed per run, so two overlapping runs would capture each other's
+// output. The chain itself never rejects — every job resolves to a PyRun.
+let pyQueue: Promise<unknown> = Promise.resolve();
+
+export function runPython(code: string): Promise<PyRun> {
+  const job = pyQueue.then(() => runPythonNow(code));
+  pyQueue = job.catch(() => {});
+  return job;
+}
+
+async function runPythonNow(code: string): Promise<PyRun> {
   const t0 = performance.now();
   let py: Py;
   try {
@@ -85,10 +101,15 @@ export async function runPython(code: string): Promise<PyRun> {
     const r = await py.runPythonAsync(code);
     let result: string | null = null;
     if (r !== undefined && r !== null) {
-      result = String(r);
-      // A PyProxy leaks unless destroyed; primitives have no destroy.
+      // A PyProxy leaks unless destroyed, and its str() can itself raise —
+      // destroy in finally so the error path never leaks the proxy while the
+      // exception still surfaces verbatim below.
       const proxy = r as { destroy?: () => void };
-      if (typeof proxy.destroy === "function") proxy.destroy();
+      try {
+        result = String(r);
+      } finally {
+        if (typeof proxy.destroy === "function") proxy.destroy();
+      }
     }
     return { ok: true, stdout: lines.join("\n"), result, error: null,
              ms: Math.round(performance.now() - t0) };
