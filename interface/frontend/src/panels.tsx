@@ -82,41 +82,55 @@ export function TopStrip({ health, window: win, block, clock, onHealthClick,
 // BR is gone. It named an expand that no longer exists — the sky is bounded by
 // the centre cell and stays that size — and a rail slot for a state you cannot
 // enter is worse than no slot, because it advertises a room that was demolished.
-const RAIL: [string, string, boolean][] = [
-  ["OV", "Overview — the dashboard around it", true],
-  ["AG", "Agents — Phase 1", false],
-  ["CA", "Calendar — week, month and the 14-day list (Ctrl+')", true],
-  ["WK", "Work — the four priority queues", true],
-  ["ST", "Study — exam mode", true],
-  ["BD", "Build — repo awareness", true],
-  ["CR", "Career — Phase 6", false],
-  ["SY", "System — Phase 6", false],
+// Unbuilt slots are `soon` rather than `false`: §5.4 keeps "disabled beats
+// hidden" and adds "nothing is a dead click". They open a placeholder that says
+// what will go there and what to do instead (see soon.tsx), which is a thing a
+// disabled button cannot do — clicking one does nothing, and nothing at all is
+// indistinguishable from broken.
+const RAIL: [string, string, "live" | "soon"][] = [
+  ["OV", "Overview — the dashboard around it", "live"],
+  ["AG", "Agents — designed, not built. Click to see what will go here", "soon"],
+  ["CA", "Calendar — week, month and the 14-day list (Ctrl+')", "live"],
+  ["WK", "Work — the four priority queues", "live"],
+  ["ST", "Study — exam mode", "live"],
+  ["BD", "Build — repo awareness", "live"],
+  ["CR", "Career — designed, not built. Click to see what will go here", "soon"],
+  ["SY", "System — designed, not built. Click to see what will go here", "soon"],
 ];
 
 /** OV is the dashboard itself, so it is active whenever nothing is over it —
  *  and it is never a destination, because you are already there. */
 export function Rail({ noSyncOpen, onNoSync, noSyncCount,
                       studyOpen, onStudy, buildOpen, onBuild,
-                      workOpen, onWork, agendaOpen, onAgenda }: {
+                      workOpen, onWork, agendaOpen, onAgenda,
+                      soonSlot, onSoon }: {
   noSyncOpen: boolean; onNoSync: () => void; noSyncCount: number | null;
   studyOpen: boolean; onStudy: () => void;
   buildOpen: boolean; onBuild: () => void;
   workOpen: boolean; onWork: () => void;
   agendaOpen: boolean; onAgenda: () => void;
+  soonSlot: string | null; onSoon: (slot: string) => void;
 }) {
   return (
     <nav className="rail">
-      {RAIL.map(([k, title, live]) => {
+      {RAIL.map(([k, title, state]) => {
+        const soon = state === "soon";
         const active = k === "ST" ? studyOpen
           : k === "BD" ? buildOpen : k === "WK" ? workOpen : k === "CA" ? agendaOpen
           : k === "OV" ? !studyOpen && !buildOpen && !workOpen && !agendaOpen
+                         && soonSlot === null
+          : soon ? soonSlot === k
           : false;
         const go = k === "ST" ? onStudy : k === "BD" ? onBuild
-          : k === "WK" ? onWork : k === "CA" ? onAgenda : undefined;
+          : k === "WK" ? onWork : k === "CA" ? onAgenda
+          : soon ? () => onSoon(k) : undefined;
         return (
-          <button key={k} className={active ? "active" : ""} disabled={!live}
+          <button key={k} className={`${active ? "active" : ""} ${soon ? "soon" : ""}`}
                   title={title} onClick={go}>
             ◇ {k}
+            {/* §1.2 names "small soon badges" as one of the five things the
+                accent is for, so this is a sanctioned spend rather than a leak. */}
+            {soon && <span className="rail-soon">soon</span>}
           </button>
         );
       })}

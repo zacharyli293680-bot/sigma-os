@@ -19,6 +19,7 @@ import Palette from "./palette";
 import Review from "./review";
 import StudyView from "./study";
 import BuildView from "./build";
+import SoonView from "./soon";
 import WorkbenchView from "./workbench";
 import WorkView from "./work";
 import AgendaRail from "./agenda-rail";
@@ -85,6 +86,10 @@ export default function App() {
   const [studyOpen, setStudyOpen] = useState(false);
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const [buildOpen, setBuildOpen] = useState(false);
+  // Which unbuilt rail slot is showing its placeholder (§5.4). One piece of
+  // state for all three: they are mutually exclusive, and a boolean each would
+  // be three more rungs on the Esc ladder for one behaviour.
+  const [soonSlot, setSoonSlot] = useState<string | null>(null);
   const [workOpen, setWorkOpen] = useState(false);
   const [agendaOpen, setAgendaOpen] = useState(false);
   const [captureOpen, setCaptureOpen] = useState(false);
@@ -262,6 +267,7 @@ export default function App() {
         else if (agendaOpen) setAgendaOpen(false);
         else if (studyOpen) setStudyOpen(false);
         else if (buildOpen) setBuildOpen(false);
+        else if (soonSlot) setSoonSlot(null);
         else if (paletteOpen) setPaletteOpen(false);
         else if (noSyncOpen) setNoSyncOpen(false);
         else if (ledgerOpen) setLedgerOpen(false);
@@ -277,7 +283,8 @@ export default function App() {
     // opens and closes on Ctrl+' while Esc silently skips its rung. `agendaOpen`
     // was missing exactly that way and it took driving the view to notice.
   }, [paletteOpen, ledgerOpen, chatOpen, noSyncOpen, reviewing, studyOpen,
-      workbenchOpen, buildOpen, workOpen, agendaOpen, captureOpen, brainFilter]);
+      workbenchOpen, buildOpen, workOpen, agendaOpen, captureOpen, brainFilter,
+      soonSlot]);
 
   // Palette jobs stream here and take over the dock while they run; when one
   // finishes, the panels it may have changed refetch immediately.
@@ -334,7 +341,9 @@ export default function App() {
             studyOpen={studyOpen} onStudy={() => setStudyOpen(o => !o)}
             buildOpen={buildOpen} onBuild={() => setBuildOpen(o => !o)}
             workOpen={workOpen} onWork={() => setWorkOpen(o => !o)}
-            agendaOpen={agendaOpen} onAgenda={() => setAgendaOpen(o => !o)} />
+            agendaOpen={agendaOpen} onAgenda={() => setAgendaOpen(o => !o)}
+            soonSlot={soonSlot}
+            onSoon={k => setSoonSlot(s => (s === k ? null : k))} />
       {/* The centre stage: one scene, not a panel with a picture in it. The sky
           fills this cell and nothing else — it briefly spanned the whole shell
           behind every panel, and what that cost was the alignment, because the
@@ -379,6 +388,7 @@ export default function App() {
                      onClose={() => setWorkbenchOpen(false)}
                      guideProg={guideProg} />
       <BuildView open={buildOpen} vault={vault} onClose={() => setBuildOpen(false)} />
+      <SoonView slot={soonSlot} vault={vault} onClose={() => setSoonSlot(null)} />
       <WorkView open={workOpen} vault={vault} onClose={() => setWorkOpen(false)}
                 onMutate={refresh} />
       <AgendaView open={agendaOpen} vault={vault} onClose={() => setAgendaOpen(false)} />

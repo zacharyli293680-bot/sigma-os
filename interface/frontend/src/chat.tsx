@@ -162,16 +162,31 @@ export default function ChatDrawer({ open, vault, onClose, onTool }: {
       </header>
 
       <main className="drawer-main">
+        {/* §3.3 — the empty state is the most designed screen: a centred mark,
+            one headline, one sentence, three tiles that teach what this is for
+            in about four seconds and then get out of the way. The tiles were
+            already here as bare strings; what they lacked was a title saying
+            what *kind* of question each one is, which is the part that
+            generalises past the three examples. */}
         {turns.length === 0 && (
           <div className="empty">
-            <p>Ask the vault a question. Answers cite the notes actually read.</p>
+            <span className="empty-mark" aria-hidden="true">Σ</span>
+            <h2>Ask the vault.</h2>
+            <p>
+              Every answer is grounded in notes read this turn, and cites them.
+              If the vault is silent on something, it says so.
+            </p>
             <div className="suggestions">
               {[
-                "What am I behind on?",
-                "What's the status of each course?",
-                "What has Sigma learned about itself?",
-              ].map(s => (
-                <button key={s} onClick={() => !busy && ask(s)}>{s}</button>
+                ["◷", "Catch up", "What am I behind on?"],
+                ["◇", "Where each course stands", "What's the status of each course?"],
+                ["⟳", "Sigma on itself", "What has Sigma learned about itself?"],
+              ].map(([icon, title, q]) => (
+                <button key={q} onClick={() => !busy && ask(q)}>
+                  <span className="sugg-icon" aria-hidden="true">{icon}</span>
+                  <span className="sugg-title">{title}</span>
+                  <span className="sugg-eg">{q}</span>
+                </button>
               ))}
             </div>
           </div>
