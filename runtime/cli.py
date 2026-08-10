@@ -54,6 +54,7 @@ CAPTURE = HERE / "session_logger.py"
 INTAKE = HERE / "intake.py"
 DEVLOG = HERE / "devlog.py"
 MAPPER = HERE / "mapper.py"
+GUIDE = HERE / "guide.py"
 SCAFFOLD = HERE / "scaffold.py"
 HOOKS = HERE / "install_hooks.py"
 TODO = HERE / "todo.py"
@@ -245,6 +246,14 @@ def cmd_intake(a):
     # needs_sdk: unlike the other verbs this one calls a model, so it has to run
     # on the interpreter that has the agent SDK.
     return run(INTAKE, *args, needs_sdk=True)
+
+
+def cmd_guide(a):
+    if a.guide_cmd == "status" or not getattr(a, "course", None):
+        return run(GUIDE, "--status")
+    # guide.py's model surface is `claude -p` via sigma.call_model — the
+    # reflect/retro path, so the SDK interpreter is not demanded.
+    return run(GUIDE, a.course)
 
 
 def cmd_devlog(a):
@@ -483,6 +492,13 @@ def build_parser():
         ("--max", {"metavar": "N"}),
     ])
 
+    gd = sub.add_parser("guide", help="the S7 study-guide generation pipeline")
+    gds = gd.add_subparsers(dest="guide_cmd")
+    gds.add_parser("status", help="blueprint + coverage per course")
+    gdr = gds.add_parser("run", help="blueprint pass, or author what the "
+                                     "approved blueprint still misses")
+    gdr.add_argument("course", help="course code, e.g. AA-210")
+
     mp = sub.add_parser("map", help="turn a project's codebase into architecture notes")
     ms = mp.add_subparsers(dest="map_cmd")
     mss = ms.add_parser("status", help="which projects have no architecture notes")
@@ -559,7 +575,8 @@ def main(argv=None):
     # something plausible — guessing is how a CLI teaches you the wrong model.
     for group, dest in (("fleet", "fleet_cmd"), ("reflect", "reflect_cmd"),
                         ("capture", "capture_cmd"), ("intake", "intake_cmd"),
-                        ("devlog", "devlog_cmd"), ("map", "map_cmd")):
+                        ("devlog", "devlog_cmd"), ("map", "map_cmd"),
+                        ("guide", "guide_cmd")):
         if a.cmd == group and not getattr(a, dest, None):
             if group == "fleet":
                 return run(FLEET, "--status")
@@ -568,7 +585,9 @@ def main(argv=None):
             # Bare `sigma intake` reports; `sigma intake run` spends the window.
             if group == "intake":
                 return run(INTAKE, "--status")
-            # Same for devlog and map: reporting is free, writing is the verb.
+            # Same for devlog, map and guide: reporting is free, the verb spends.
+            if group == "guide":
+                return run(GUIDE, "--status")
             if group in ("devlog", "map"):
                 return run(DEVLOG if group == "devlog" else MAPPER, "--status",
                            *(["--project", a.project] if a.project else []))
@@ -577,7 +596,7 @@ def main(argv=None):
     return {
         "status": cmd_status, "doctor": cmd_doctor, "fleet": cmd_fleet,
         "reflect": cmd_reflect, "capture": cmd_capture, "intake": cmd_intake,
-        "devlog": cmd_devlog, "map": cmd_map, "new": cmd_new,
+        "devlog": cmd_devlog, "map": cmd_map, "guide": cmd_guide, "new": cmd_new,
         "todo": cmd_todo, "review": cmd_review, "leetcode": cmd_leetcode,
         "install": cmd_install, "ui": cmd_ui,
     }[a.cmd](a)

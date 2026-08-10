@@ -211,6 +211,43 @@ async def api_fleet_progress():
 
 
 # --------------------------------------------------------------------------
+# GET /api/guide/progress — the generation pipeline's live feed (study S7)
+# --------------------------------------------------------------------------
+
+_GUIDE_PROGRESS_PATH = Path(_RUNTIME) / "guide.progress.json"
+
+
+@router.get("/guide/progress")
+async def api_guide_progress():
+    """guide.py's progress file, streamed the way the fleet's is — a file
+    poll, deliberately uncoupled from the pipeline process, because a run can
+    also be started from the CLI and must render here all the same."""
+    async def stream():
+        last, quiet = None, 0
+        while True:
+            payload = None
+            try:
+                obj = json.loads(_GUIDE_PROGRESS_PATH.read_text(encoding="utf-8"))
+                payload = json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+            except (OSError, ValueError):
+                pass                        # no file yet, or a torn write
+            if payload is not None and payload != last:
+                last = payload
+                quiet = 0
+                yield f"data: {payload}\n\n"
+            else:
+                quiet += 1
+                if quiet >= 30:             # ~15s — keeps the connection alive
+                    quiet = 0
+                    yield ": ping\n\n"
+            await asyncio.sleep(0.5)
+
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
+
+
+# --------------------------------------------------------------------------
 # GET /api/fleet/fire — what the fleet is touching (dashboard-plan section 5)
 # --------------------------------------------------------------------------
 

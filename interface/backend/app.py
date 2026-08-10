@@ -204,9 +204,12 @@ def api_health():
 from panels import router as panels_router  # noqa: E402
 app.include_router(panels_router)
 
-# The palette's whitelisted command runner (Phase 3).
+# The palette's whitelisted command runner (Phase 3), and the S7 generation
+# starter that shares its job slot (a course selects among discovered folder
+# names — nothing user-supplied reaches an argv).
 import commands  # noqa: E402
 app.include_router(commands.router)
+app.include_router(commands.guide_router)
 
 # The write API (Phase 4): checkbox toggle, the activity ledger, revert.
 import writes  # noqa: E402

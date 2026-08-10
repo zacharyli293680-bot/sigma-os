@@ -15,7 +15,9 @@ unattended:
   a target that escapes the vault, is gitignored, or lands in the proposals
   machinery itself · anything touching CLAUDE.md (the single held category) ·
   a change that ticks a checkbox (completion is a human signal) · a change
-  that would hollow out an existing note.
+  that would hollow out an existing note · a module/checkpoint body that
+  fails its own grammar · a NEW module/checkpoint that the course's approved
+  blueprint does not plan (study S7 — approval is what authorises it).
 
 A held proposal stays `pending` — exactly what every proposal used to be — and
 is stamped with why, so waiting-on-you explains itself.
@@ -38,6 +40,52 @@ _CHECKED = re.compile(r"^\s*[-*]\s+\[[xX]\]", re.M)
 _SELF_PATHS = ("06-System/proposals/", "06-System/proposed/")
 
 HOLLOW_RATIO = 0.4
+
+
+def _blueprint_hold(vault, content: str, ctype: str) -> str | None:
+    """Why a NEW module/checkpoint note is unauthorised, or None (study S7).
+
+    Zach's blueprint approval is what authorises a generated note to exist —
+    a module pass that drifts and invents a lecture nobody signed off on must
+    be held with a reason, not committed. Creation-only on purpose: an update
+    to a note that already exists (a tutor correction, an auditor fix) is not
+    bringing anything new into existence, and the pilot's hand-written modules
+    predate any blueprint. The structural hold has already run, so the number
+    fields are known-present ints."""
+    import lesson
+
+    fm = lesson.frontmatter(content) or {}
+    course = str(fm.get("course") or "").strip()
+    bp = lesson.load_blueprint(vault, course)
+    if bp is None:
+        return (f"no blueprint for {course} — a new {ctype} note needs an "
+                f"approved plan behind it")
+    if bp["status"] != "approved":
+        return (f"{course}'s blueprint is {bp['status'] or 'unstated'!r}, not "
+                f"approved — approval is what authorises a new {ctype}")
+    if ctype == "module":
+        n = lesson._int_or_none(fm.get("module"))
+        title = str(fm.get("title") or "").strip()
+        row = next((r for r in bp["rows"]
+                    if r["kind"] == "module" and r["n"] == n), None)
+        if row is None:
+            return f"module M{n:02} is not in {course}'s approved blueprint"
+        if row["title"].strip().casefold() != title.casefold():
+            return (f"module M{n:02}'s title {title!r} does not match the "
+                    f"approved blueprint's {row['title']!r}")
+    else:
+        n = lesson._int_or_none(fm.get("checkpoint"))
+        row = next((r for r in bp["rows"]
+                    if r["kind"] == "checkpoint" and r["n"] == n), None)
+        if row is None:
+            return f"checkpoint CP{n} is not in {course}'s approved blueprint"
+        planned = {r["n"] for r in bp["rows"] if r["kind"] == "module"}
+        bad = [c for c in lesson._fm_covers(content) if c not in planned]
+        if bad:
+            return (f"checkpoint CP{n} covers "
+                    + ", ".join(f"M{c:02}" for c in bad)
+                    + " which the approved blueprint does not plan")
+    return None
 
 
 def _title_of(text: str, fallback: str) -> str:
@@ -77,8 +125,10 @@ def _mark_held(path: Path, today: str, reason: str):
     _stamp(path, f"**Held {today}** — {reason}. It stays pending for your review.")
 
 
-def apply_one(prop_path: Path, actor: str) -> dict:
-    """Apply or hold one proposal. Never raises; never deletes anything."""
+def apply_one(prop_path: Path, actor: str, extra: dict | None = None) -> dict:
+    """Apply or hold one proposal. Never raises; never deletes anything.
+    `extra` rides into the ledger row — the generation pipeline threads its
+    `run` id through here so one run's commits group in the activity view."""
     import datetime
 
     import reflect as rf                        # read at call time: tests re-point rf.VAULT
@@ -134,7 +184,23 @@ def apply_one(prop_path: Path, actor: str) -> dict:
             if ign.returncode not in (0, 1):
                 return held("could not verify the privacy boundary — failing closed")
 
+            # The two S7 guards, in scope now that the pull has landed (the
+            # sources a module cites and the blueprint that authorises it must
+            # be judged as they are NOW, like the gitignore check above). One
+            # validator, the renderer's own — never a second parser.
+            ctype = str((rf.frontmatter(content) or {}).get("type") or "").strip()
+            if ctype in ("module", "checkpoint"):
+                import lesson
+                errs = lesson.validate_any(content, vault=vault)
+                if errs:
+                    more = f" (+{len(errs) - 1} more)" if len(errs) > 1 else ""
+                    return held(f"{ctype} fails the grammar: {errs[0]}{more}")
+
             existed = dest.exists()
+            if ctype in ("module", "checkpoint") and not existed:
+                reason = _blueprint_hold(vault, content, ctype)
+                if reason:
+                    return held(reason)
             if existed:
                 old = dest.read_text(encoding="utf-8", errors="replace")
                 if len(_CHECKED.findall(content)) > len(_CHECKED.findall(old)):
@@ -156,7 +222,8 @@ def apply_one(prop_path: Path, actor: str) -> dict:
     out.update({"action": verb, "sha": res["sha"], "absorbed": res["absorbed"],
                 "reason": res["note"]})
     ledger.record(actor, verb, rel, res["sha"], title,
-                  extra={"proposal": name, **({"absorbed": True} if res["absorbed"] else {})})
+                  extra={"proposal": name, **(extra or {}),
+                         **({"absorbed": True} if res["absorbed"] else {})})
     _mark_auto_applied(prop_path, today, rel, res["sha"])
     log(f"applied {name} -> {rel} "
         f"({res['sha'][:10] if res['sha'] else 'no commit'}"
@@ -164,7 +231,7 @@ def apply_one(prop_path: Path, actor: str) -> dict:
     return out
 
 
-def apply_run(files: list[str], actor: str) -> list[dict]:
+def apply_run(files: list[str], actor: str, extra: dict | None = None) -> list[dict]:
     """Apply every proposal a specialist's run just raised, one commit each."""
     import reflect as rf
 
@@ -174,5 +241,5 @@ def apply_run(files: list[str], actor: str) -> list[dict]:
         if not p.exists():
             log(f"skip {fname}: vanished before apply")
             continue
-        out.append(apply_one(p, actor))
+        out.append(apply_one(p, actor, extra=extra))
     return out

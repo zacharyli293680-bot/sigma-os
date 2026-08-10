@@ -29,10 +29,12 @@ from pathlib import Path
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel
 
 RUNTIME = Path(__file__).resolve().parents[2] / "runtime"
 
 router = APIRouter(prefix="/api/commands")
+guide_router = APIRouter(prefix="/api/guide")
 
 
 def _script(name: str, *flags: str) -> list:
@@ -129,6 +131,12 @@ VERBS: dict = {
                         # Several notes per project, and the survey is large.
                         "argv": _script("mapper.py"),
                         "timeout": 2400, "model": True, "writes": True},
+    # Study S7. The course-taking sibling verb is POST /api/guide/generate
+    # below — a palette verb is a fixed argv and cannot name a course, the
+    # same reason `new` sits in DISABLED.
+    "guide-status":    {"title": "Guide — blueprint + coverage per course",
+                        "hint": "which courses have a plan, and what is missing",
+                        "argv": _script("guide.py", "--status"), "timeout": 60},
 }
 
 DISABLED = [
@@ -316,6 +324,55 @@ async def api_run(verb: str):
     _task = asyncio.get_running_loop().create_task(_run(spec))
     _task.add_done_callback(_finalise)
     return {"started": verb}
+
+
+class GenerateReq(BaseModel):
+    course: str
+
+
+# The generation timeout is its own number: a full course is dozens of model
+# calls, and the pipeline pauses/resumes cleanly if the slot kills it — but a
+# kill mid-run wastes a window, so the budget errs long.
+GENERATE_TIMEOUT = 5400
+
+
+@guide_router.post("/generate")
+async def api_guide_generate(req: GenerateReq):
+    """Start the S7 generation pipeline for one course (study plan §10, §13).
+
+    The whitelist doctrine, kept: the request's course string never reaches
+    the command line — it only *selects* among the course folders discovered
+    on disk, and the discovered name is what rides the argv. Everything else
+    is the palette POST's own policy, inherited: the window hold refuses a
+    model job, the single slot refuses a second one."""
+    global _job, _task
+    course = (req.course or "").strip()
+    try:
+        import panels
+        root = Path(panels.VAULT) / "02-Areas" / "Academics"
+        match = next((d.name for d in sorted(root.iterdir())
+                      if d.is_dir() and d.name.lower() == course.lower()), None)
+    except OSError:
+        match = None
+    if not course or match is None:
+        return JSONResponse({"error": f"unknown course: {course!r}"},
+                            status_code=404)
+    hold = _window_hold()
+    if hold:
+        return JSONResponse({"error": "window", "reason": hold}, status_code=409)
+    if _job and _job["state"] == "running":
+        return JSONResponse({"error": "busy", "running": _job["verb"]},
+                            status_code=409)
+    spec = {"title": f"Guide — generate {match}",
+            "argv": _script("guide.py", match),
+            "timeout": GENERATE_TIMEOUT, "model": True, "writes": True}
+    _job = {"verb": "guide-generate", "title": spec["title"], "state": "running",
+            "started": datetime.datetime.now().isoformat(timespec="seconds"),
+            "finished": None, "exit": None, "lines": []}
+    _bump()
+    _task = asyncio.get_running_loop().create_task(_run(spec))
+    _task.add_done_callback(_finalise)
+    return {"started": match}
 
 
 @router.get("/events")

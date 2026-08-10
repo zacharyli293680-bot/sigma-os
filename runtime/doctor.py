@@ -584,8 +584,10 @@ def check_modules(out):
     generated path — this check is what catches a hand-edit that broke one."""
     import lesson as ln
     # Checkpoints are co-writable by hand too (study S6) — same sweep, same
-    # reason, their own validator.
-    rows = ln.scan(ln.DEFAULT_VAULT) + ln.scan_checkpoints(ln.DEFAULT_VAULT)
+    # reason, their own validator. Blueprints joined in S7: approval IS a hand
+    # edit, so a broken row must surface here, not as a run that plans nothing.
+    rows = (ln.scan(ln.DEFAULT_VAULT) + ln.scan_checkpoints(ln.DEFAULT_VAULT)
+            + ln.scan_blueprints(ln.DEFAULT_VAULT))
     if not rows:
         return                      # no guides yet — nothing worth saying
     broken = [r for r in rows if r["problems"]]

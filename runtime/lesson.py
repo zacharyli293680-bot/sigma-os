@@ -607,35 +607,53 @@ def course_folder(vault: Path, course: str) -> Path | None:
 
 def guide(vault: Path, course: str, split=None) -> dict | None:
     """One course's chain, progress and blueprint status — the payload behind
-    GET /api/guide/{course}. None when the course has no `<code>-guide.md`;
-    the name is fixed by the contract, so nothing is searched for."""
+    GET /api/guide/{course}. The names are fixed by the contract, so nothing
+    is searched for. A course with a blueprint but no chain yet (drafted,
+    awaiting approval — S7's gate) returns a chain-less payload with
+    `file: None` rather than 404ing: the generate affordance lives exactly
+    there. None only when the course has neither note."""
     folder = course_folder(vault, course)
     if folder is None:
         return None
     code = folder.name.lower()
     p = folder / f"{code}-guide.md"
-    if not p.is_file():
-        return None
-    rel = p.relative_to(vault).as_posix()
-    sealed, _ = (split or _default_split)(vault, [rel])
+    bp = folder / f"{code}-guide-blueprint.md"
+    rel = p.relative_to(vault).as_posix() if p.is_file() else None
+    bp_rel = bp.relative_to(vault).as_posix() if bp.is_file() else None
+    sealed, _ = (split or _default_split)(vault, [r for r in (rel, bp_rel) if r])
     if rel in sealed:
         return None
-    try:
-        text = p.read_text(encoding="utf-8-sig", errors="replace")
-    except OSError:
-        return None
-    rows = parse_chain(text)
+    if bp_rel in sealed:
+        bp_rel = None                       # a sealed blueprint reads as absent
+    rows = []
+    if rel is not None:
+        try:
+            rows = parse_chain(p.read_text(encoding="utf-8-sig", errors="replace"))
+        except OSError:
+            return None
 
     # `status: draft | approved`, read mechanically — the same field the S7
-    # applier hold will check. None when no blueprint note exists yet.
+    # applier hold checks. None when no blueprint note exists yet. `planned`/
+    # `missing` are the generate affordance's arithmetic: how many rows the
+    # plan holds, and how many have no note on disk yet — computed fresh from
+    # the blueprint and the guide/ folder, never cached, like the rows.
     blueprint = None
-    bp = folder / f"{code}-guide-blueprint.md"
-    if bp.is_file():
+    planned = missing = None
+    if bp_rel is not None:
         try:
-            fm = frontmatter(bp.read_text(encoding="utf-8-sig", errors="replace"))
-            blueprint = str(fm.get("status") or "").strip() or None
+            bp_text = bp.read_text(encoding="utf-8-sig", errors="replace")
+            blueprint = str((frontmatter(bp_text) or {}).get("status")
+                            or "").strip() or None
+            plan = parse_blueprint(bp_text)
+            have_m, have_c = existing_units(vault, course)
+            planned = len(plan["rows"])
+            missing = sum(1 for r in plan["rows"]
+                          if (r["n"] not in have_m if r["kind"] == "module"
+                              else r["n"] not in have_c))
         except OSError:
             blueprint = None
+    if rel is None and blueprint is None:
+        return None
 
     return {
         "course": folder.name, "file": rel, "rows": rows,
@@ -644,6 +662,8 @@ def guide(vault: Path, course: str, split=None) -> dict | None:
         "skipped": sum(1 for r in rows if r["state"] == "skipped"),
         "frontier": next((r for r in rows if r["state"] == "open"), None),
         "blueprint": blueprint,
+        "planned": planned,
+        "missing": missing,
     }
 
 
@@ -799,8 +819,11 @@ def validate_any(text: str, vault: Path | None = None) -> list[str]:
     that bury the one real problem; the note says which contract it claims,
     so judge it by that one."""
     fm = frontmatter(text) or {}
-    if str(fm.get("type") or "").strip() == "checkpoint":
+    kind = str(fm.get("type") or "").strip()
+    if kind == "checkpoint":
         return validate_checkpoint(text, vault=vault)
+    if kind == "guide-blueprint":
+        return validate_blueprint(text, vault=vault)
     return validate(text, vault=vault)
 
 
@@ -883,6 +906,344 @@ def load_checkpoint(vault: Path, course: str, cp_no: int, split=None) -> dict | 
                 if p_.startswith(("duplicate checkpoint", "course field"))]
             return d
     return None
+
+
+# --------------------------------------------------------------------------
+# the blueprint grammar — the approved plan a guide is generated from (§5.3)
+# --------------------------------------------------------------------------
+# One row per planned module or checkpoint, in teaching order — the row order
+# IS the chain order, so approval of the note is approval of the sequence. The
+# grammar reuses the family's own shapes on purpose: the module row carries the
+# segment heading's `·` and `⏱`, sources are indented `- source::` children,
+# and a checkpoint row names what it covers. Zach edits rows by hand before
+# flipping `status: approved`, so a parser must reject a bad row mechanically —
+# the same doctrine as the module body, and the same single owner.
+
+BP_MODULE_RE = re.compile(r"^\s*-\s+M(\d+)\s+·\s+(.+?)\s+⏱\s+(\d+)\s*$")
+BP_CP_RE = re.compile(r"^\s*-\s+CP(\d+)\s+·\s+(.*\S)\s*$")
+BP_UNIT_RE = re.compile(r"^##\s+Unit\s+(\d+)(?:\s+·\s+(.+?))?\s*$")
+BP_SRC_RE = re.compile(r"^\s+-\s+source::\s*(.+?)\s*$")
+BP_COVERS_RE = re.compile(r"^(?:(.*?)\s+·\s+)?covers\s+(.+?)$")
+
+# Units are earned by count, mechanically (§4): ≤8 modules → flat, no unit
+# sections; 9–30 → units of 4–6 drawn at the course's own seams.
+FLAT_MAX = 8
+UNIT_MIN, UNIT_MAX = 4, 6
+
+
+def _covers_numbers(spec: str) -> list[int]:
+    """`M2, M3` / `M01–M04` / `2-4` → sorted module numbers. Ranges accept
+    the en dash the titles use and the hyphen a keyboard produces."""
+    out: set = set()
+    for tok in re.split(r"[,\s]+", spec.strip()):
+        if not tok:
+            continue
+        m = re.match(r"^M?0*(\d+)(?:\s*[–-]\s*M?0*(\d+))?$", tok)
+        if not m:
+            return []
+        a = int(m.group(1))
+        b = int(m.group(2)) if m.group(2) else a
+        if b < a:
+            return []
+        out.update(range(a, b + 1))
+    return sorted(out)
+
+
+def parse_blueprint(text: str) -> dict:
+    """The whole blueprint → dict; never raises, faults land in `problems`.
+
+    `rows` is the ordered plan: each entry is a module
+    ({kind, n, title, unit, est, sources, line}) or a checkpoint
+    ({kind, n, title, unit, covers, line}), in document order."""
+    fm = frontmatter(text) or {}
+    d = {
+        "type": str(fm.get("type") or "").strip(),
+        "course": str(fm.get("course") or "").strip(),
+        "status": str(fm.get("status") or "").strip(),
+        "rows": [],
+        "units": [],
+        "problems": [],
+    }
+    unit: int | None = None
+    in_rows = in_fence = False
+    for i, line in enumerate(text.splitlines(), 1):
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        um = BP_UNIT_RE.match(line)
+        if um:
+            unit = int(um.group(1))
+            d["units"].append({"n": unit, "title": (um.group(2) or "").strip() or None,
+                               "line": i})
+            in_rows = True
+            continue
+        if re.match(r"^##\s+Modules\s*$", line):
+            unit, in_rows = None, True
+            continue
+        if H2_RE.match(line):
+            in_rows = False                  # any other section ends the plan
+            continue
+        if not in_rows:
+            continue
+        mm = BP_MODULE_RE.match(line)
+        if mm:
+            d["rows"].append({"kind": "module", "n": int(mm.group(1)),
+                              "title": mm.group(2).strip(), "unit": unit,
+                              "est": int(mm.group(3)), "sources": [], "line": i})
+            continue
+        cm = BP_CP_RE.match(line)
+        if cm:
+            body = cm.group(2)
+            cv = BP_COVERS_RE.match(body)
+            covers = _covers_numbers(cv.group(2)) if cv else []
+            title = (cv.group(1) or "").strip() if cv else body.strip()
+            if not cv or not covers:
+                d["problems"].append(
+                    f"line {i}: checkpoint row must name what it covers — "
+                    f"`- CP{cm.group(1)} · <title> · covers M<a>–M<b>`")
+            d["rows"].append({"kind": "checkpoint", "n": int(cm.group(1)),
+                              "title": title or None, "unit": unit,
+                              "covers": covers, "line": i})
+            continue
+        sm = BP_SRC_RE.match(line)
+        if sm:
+            if d["rows"] and d["rows"][-1]["kind"] == "module":
+                d["rows"][-1]["sources"].append(sm.group(1))
+            else:
+                d["problems"].append(f"line {i}: source:: line belongs under "
+                                     f"a module row, and none is open")
+            continue
+        if re.match(r"^\s*-\s+\S", line):
+            d["problems"].append(f"line {i}: unrecognised row — a plan row is "
+                                 f"`- M<n> · <title> ⏱ <min>`, "
+                                 f"`- CP<n> · … covers …`, or an indented "
+                                 f"`- source:: <path>`")
+    return d
+
+
+def validate_blueprint(text: str, vault: Path | None = None) -> list[str]:
+    """Every way this blueprint violates its contract; [] conforms. The
+    checks are §4's grouping arithmetic made mechanical — approval is only
+    load-bearing if what was approved is itself well-formed."""
+    d = parse_blueprint(text)
+    out = list(d["problems"])
+
+    if d["type"] != "guide-blueprint":
+        out.append(f"frontmatter: type is {d['type']!r}, expected 'guide-blueprint'")
+    if not d["course"]:
+        out.append("frontmatter: course is blank")
+    if d["status"] not in ("draft", "approved"):
+        out.append(f"frontmatter: status is {d['status']!r}, expected "
+                   f"'draft' or 'approved'")
+
+    mods = [r for r in d["rows"] if r["kind"] == "module"]
+    cps = [r for r in d["rows"] if r["kind"] == "checkpoint"]
+    if not mods:
+        out.append("no module rows — a blueprint with no plan approves nothing")
+
+    seen: dict = {}
+    for r in mods:
+        tag = f"module row M{r['n']:02} (line {r['line']})"
+        if r["n"] in seen:
+            out.append(f"{tag}: duplicate module number (also line {seen[r['n']]})")
+        seen.setdefault(r["n"], r["line"])
+        if not r["title"]:
+            out.append(f"{tag}: title is blank")
+        if not ESTIMATE_MIN <= r["est"] <= ESTIMATE_MAX:
+            out.append(f"{tag}: estimate {r['est']} outside "
+                       f"{ESTIMATE_MIN}–{ESTIMATE_MAX} minutes — split or merge")
+        if not r["sources"]:
+            out.append(f"{tag}: no source:: line — a module planned from "
+                       f"nothing is unverified content")
+    seen_cp: dict = {}
+    ahead: set = set()
+    for r in d["rows"]:
+        if r["kind"] == "module":
+            ahead.add(r["n"])
+            continue
+        tag = f"checkpoint row CP{r['n']} (line {r['line']})"
+        if r["n"] in seen_cp:
+            out.append(f"{tag}: duplicate checkpoint number "
+                       f"(also line {seen_cp[r['n']]})")
+        seen_cp.setdefault(r["n"], r["line"])
+        planned = {m["n"] for m in mods}
+        for n in r["covers"]:
+            if n not in planned:
+                out.append(f"{tag}: covers M{n:02}, which no module row plans")
+            elif n not in ahead:
+                out.append(f"{tag}: covers M{n:02}, which is planned after it "
+                           f"— an assessment cannot precede its material")
+
+    # §4's grouping rule, mechanically. The last unit may run short — a course's
+    # tail rarely divides evenly — but an oversized unit is always a wrong seam.
+    units = [u["n"] for u in d["units"]]
+    if units:
+        if units != sorted(set(units)):
+            out.append("unit sections must be unique and in order")
+        for idx, u in enumerate(units):
+            size = sum(1 for r in mods if r["unit"] == u)
+            tag = f"unit {u}"
+            if size > UNIT_MAX:
+                out.append(f"{tag}: {size} modules — units are "
+                           f"{UNIT_MIN}–{UNIT_MAX} (§4)")
+            if size < UNIT_MIN and idx < len(units) - 1:
+                out.append(f"{tag}: {size} module(s) — units are "
+                           f"{UNIT_MIN}–{UNIT_MAX} (§4)")
+            if not any(r["kind"] == "checkpoint" and r["unit"] == u
+                       for r in d["rows"]):
+                out.append(f"{tag}: no checkpoint row — one per unit, "
+                           f"never optional (§4)")
+        for r in mods:
+            if r["unit"] is None:
+                out.append(f"module row M{r['n']:02} (line {r['line']}): "
+                           f"outside every unit section")
+    else:
+        if len(mods) > FLAT_MAX:
+            out.append(f"{len(mods)} modules with no unit sections — a course "
+                       f"over {FLAT_MAX} modules is grouped into units (§4)")
+        if len(mods) >= 4 and len(cps) < len(mods) // 4:
+            out.append(f"{len(cps)} checkpoint row(s) for {len(mods)} modules "
+                       f"— flat courses carry one every 4 modules (§4)")
+
+    if vault is not None and d["course"]:
+        for r in mods:
+            for src in r["sources"]:
+                if not (vault / src).is_file():
+                    out.append(f"module row M{r['n']:02} source does not "
+                               f"resolve: {src}")
+    return out
+
+
+def serialize_blueprint(d: dict) -> str:
+    """dict → canonical blueprint text; parse_blueprint(serialize_blueprint(d))
+    sees the same plan. The preamble is the approval instruction itself,
+    because the person reading this note next is Zach deciding whether to
+    flip `status:` — the note must say what flipping it authorises."""
+    code = d["course"].lower()
+    out = ["---",
+           "type: guide-blueprint",
+           f"course: {d['course']}",
+           f"status: {d.get('status') or 'draft'}",
+           "tags: [guide]",
+           "---",
+           "",
+           f"# {d['course']} — study-guide blueprint",
+           "",
+           "The plan the study guide generates from ([[sigma-os-study-plan]] "
+           "§5.3): one row per module, in teaching order, each with its "
+           "sources; checkpoint rows name what they assess. **Edit the rows, "
+           "then set `status: approved`** — generation only runs against an "
+           "approved blueprint, a module absent from it is held, and the row "
+           f"order becomes `{code}-guide.md`'s chain order.",
+           ""]
+    units = {u["n"]: u for u in d.get("units", [])}
+    if not units:
+        out.append("## Modules")
+        out.append("")
+    current = object()
+    for r in d["rows"]:
+        if units and r["unit"] != current:
+            current = r["unit"]
+            u = units.get(current) or {}
+            title = f" · {u['title']}" if u.get("title") else ""
+            if out[-1] != "":
+                out.append("")
+            out.append(f"## Unit {current}{title}")
+            out.append("")
+        if r["kind"] == "module":
+            out.append(f"- M{r['n']:02} · {r['title']} ⏱ {r['est']}")
+            out += [f"    - source:: {s}" for s in r["sources"]]
+        else:
+            covers = ", ".join(f"M{n}" for n in r["covers"])
+            title = f"{r['title']} · " if r.get("title") else ""
+            out.append(f"- CP{r['n']} · {title}covers {covers}")
+    return "\n".join(out).rstrip("\n") + "\n"
+
+
+def load_blueprint(vault: Path, course: str, split=None) -> dict | None:
+    """One course's parsed blueprint plus file identity and problems, or None
+    when no blueprint note exists. The fixed name rule, like guide()."""
+    folder = course_folder(vault, course)
+    if folder is None:
+        return None
+    p = folder / f"{folder.name.lower()}-guide-blueprint.md"
+    if not p.is_file():
+        return None
+    rel = p.relative_to(vault).as_posix()
+    sealed, _ = (split or _default_split)(vault, [rel])
+    if rel in sealed:
+        return None
+    try:
+        text = p.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return None
+    d = parse_blueprint(text)
+    d["file"] = rel
+    d["problems"] = validate_blueprint(text, vault=vault)
+    return d
+
+
+def scan_blueprints(vault: Path, split=None) -> list[dict]:
+    """Every `type: guide-blueprint` note at a course root, with its problems
+    — doctor's sweep. Blueprints are hand-edited by design (approval IS an
+    edit), so a broken row must surface as a finding, not as a generation
+    run that silently plans nothing."""
+    root = vault.joinpath(*ACADEMICS)
+    if not root.is_dir():
+        return []
+    paths = sorted(root.glob("*/*-guide-blueprint.md"))
+    rels = [p.relative_to(vault).as_posix() for p in paths]
+    sealed, _ = (split or _default_split)(vault, rels)
+    out = []
+    for p, rel in zip(paths, rels):
+        if rel in sealed:
+            continue
+        try:
+            text = p.read_text(encoding="utf-8-sig", errors="replace")
+        except OSError:
+            continue
+        fm = frontmatter(text) or {}
+        if str(fm.get("type") or "").strip() != "guide-blueprint":
+            continue
+        d = parse_blueprint(text)
+        problems = validate_blueprint(text, vault=vault)
+        folder = p.parent.name
+        if d["course"] and d["course"].lower() != folder.lower():
+            problems.append(f"course field says {d['course']!r} but the note "
+                            f"lives in {folder}/")
+        out.append({"course": d["course"] or folder, "file": rel,
+                    "status": d["status"] or None,
+                    "rows": len(d["rows"]), "problems": problems})
+    return out
+
+
+def existing_units(vault: Path, course: str) -> tuple[set, set]:
+    """(module numbers, checkpoint numbers) that already exist on disk under
+    the course's guide/ folder — the resume test. No state file, on purpose:
+    the notes on disk are the record of which generation jobs completed
+    (§13.3), so a wiped sidecar or a hand-authored module both read true."""
+    folder = course_folder(vault, course)
+    mods: set = set()
+    cps: set = set()
+    if folder is None or not (folder / "guide").is_dir():
+        return mods, cps
+    for p in sorted((folder / "guide").glob("*.md")):
+        try:
+            fm = frontmatter(p.read_text(encoding="utf-8-sig", errors="replace")) or {}
+        except OSError:
+            continue
+        kind = str(fm.get("type") or "").strip()
+        if kind == "module":
+            n = _int_or_none(fm.get("module"))
+            if n is not None:
+                mods.add(n)
+        elif kind == "checkpoint":
+            n = _int_or_none(fm.get("checkpoint"))
+            if n is not None:
+                cps.add(n)
+    return mods, cps
 
 
 # --------------------------------------------------------------------------
