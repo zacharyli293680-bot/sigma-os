@@ -377,7 +377,7 @@ sigma-os/
 │       ├── src/review.tsx        the proposal diff + decide view
 │       ├── src/calendar.tsx      the 14-day calendar strip
 │       ├── src/capture.tsx       Ctrl+N quick capture
-│       ├── src/theme.ts          the six palettes + the store that writes one onto :root
+│       ├── src/theme.ts          the seven palettes + the store that writes one onto :root
 │       ├── src/theme-view.tsx    Ctrl+, the palette picker (previews live, Esc reverts)
 │       ├── src/App.css           the entire visual language, hand-written (~1,900 lines)
 │       └── (gitignored)          node_modules/, dist/
@@ -929,6 +929,7 @@ this disk, and inherits a *machine* login — so the machine is the natural boun
 | `POST` | `/api/agenda/add` | one typed event becomes a line in a month note |
 | `POST` | `/api/agenda/edit` | retitle, retime, reschedule or cancel one event line |
 | `POST` | `/api/agenda/except` | skip or move ONE occurrence of a recurrence rule (P6) |
+| `POST` | `/api/courses/add` | start a course — folder + `lectures/ assignments/ exams/` + a contract-shaped `<code>.md`, in one commit |
 | `POST` | `/api/capture` | quick capture → one note in `00-Inbox`, as its own revertible commit |
 | `POST` | `/api/activity/revert` | `git revert` of exactly one ledger commit |
 | `POST` | `/api/proposals/{name}/decide` | approve · reject · apply · merge |
@@ -943,13 +944,31 @@ plain HTTP you can debug with `curl`.
 
 A dark instrument, not a dark-mode web app. Designed from HUD references in `reference-photos/`.
 
-**Visual language.** Void `#05070A` with a 4% circuit texture · primary cyan `#22D3EE` · glow
-`#00E5FF` at 40% · held/warning amber `#FFB020` · fault `#FF4D4D` · **no-sync bronze `#C77D2E`** ·
-muted `#3A4A55`. Monospace for every number and path; condensed letter-spaced uppercase for labels;
-numbers are the hero. Panels are **bordered, not filled** — 1px hairlines, notched corners, depth from
-glow rather than drop shadows. Motion is instrument-like: a 4s breathing pulse at idle, linear sweeps
-when working, 200ms cross-fades. **If it moves, something happened.** Status is never colour alone —
-every state pairs a glyph or word with its colour.
+**Visual language.** The values below are VOID's, and since the palettes landed they are one theme's
+values rather than the design: void `#05070A` with a 4% circuit texture · primary cyan `#22D3EE` ·
+glow `#00E5FF` at 40% · held/warning amber `#FFB020` · fault `#FF4D4D` ·
+**no-sync bronze `#C77D2E`** · muted `#3A4A55`. Panels are **unframed by default** — an eyebrow label
+with a hairline running off it, and a frame reserved for `.panel.attn`, meaning *something is on you*.
+Motion is instrument-like: a 4s breathing pulse at idle, linear sweeps when working, 200ms
+cross-fades. **If it moves, something happened.** Status is never colour alone — every state pairs a
+glyph or word with its colour.
+
+**The reference design language** (2026-08-10, vault note `reference-ui-design-language`) added four
+rules on top, each of them true in any palette rather than in one:
+
+- **Elevation is lightness, never a shadow.** Three grounds per theme, and a raised thing is the
+  lighter one. The three drop shadows went, and the `--shadow` token with them.
+- **The accent is spent on four things** — brand, the one primary action, the active indicator, the
+  focus ring — and nothing else. It had been set by 117 rules, which is a way of marking nothing.
+  Panel eyebrows in particular went from accent to muted mono.
+- **A selected control fills with ink and flips its label to the page.** The accent is not an
+  active-state colour.
+- **The mono/sans split is semantic**: sans for what a human wrote or would say, mono for what a
+  machine produced. This is the one rule that must be identical in every palette.
+
+Shape follows a scale — `--r-pill` for anything that toggles or labels, `--r-ctl` for a small control
+— while containers keep the notched `clip-path` corners the instrument has always had. Shape is
+deliberately *not* a palette value: `theme.ts` never writes those three tokens.
 
 **Layout.** Top strip (health glyph · window meter · study block · clock) · left rail · centre stage ·
 right column (waiting-on-you, queue digest) · lower row (**today rail**, projects) · foot (clickable
@@ -1034,7 +1053,7 @@ Chrome intermittently eats Ctrl+K and Ctrl+G at the browser level.
 | `Ctrl+N` | quick capture (Ctrl+Enter submits) |
 | `Ctrl+;` | the work view — the four queues, and quick-add |
 | `Ctrl+'` | the full agenda — week, month, and the 14-day list |
-| `Ctrl+,` | the palette picker — six colour schemes, previewed live |
+| `Ctrl+,` | the palette picker — seven colour schemes, previewed live |
 | `Esc` | peels one layer: capture → review → work → **agenda** → study → build → palette → no-sync → ledger → chat → dive → active brain filter |
 
 The picker is the one overlay **absent from that Esc ladder**, and deliberately: Esc there has to
@@ -1046,7 +1065,7 @@ coherence and what it cost was that every hue lived inline in `App.css` — 64 l
 same cyan at a different alpha, which is *why* a second palette was impossible rather than merely
 undesirable. The rule that replaced it is stricter, not looser: **no rule may name a colour, and a
 theme is a value swap rather than a stylesheet fork.** There is no `.theme-ember .panel` anywhere and
-there must never be one — the moment a rule knows which theme is active, the other five stop being
+there must never be one — the moment a rule knows which theme is active, the other six stop being
 maintained. Composited colours take channel triples (`rgb(var(--accent-rgb) / 0.28)`); `theme.ts`
 derives every `-rgb` token from its hex, so a colour and its channels cannot drift apart.
 
@@ -1058,13 +1077,19 @@ derives every `-rgb` token from its hex, so a colour and its channels cannot dri
 | **SYNAPSE** | violet — the brain's nebula colours, brought out to the shell |
 | **MERIDIAN** | daylight — a paper dashboard around a dark instrument window |
 | **GRAPHITE** | neutral — grey structure, so only status and the graph carry hue |
+| **QUARTZ** | the reference language — a tinted canvas under white cards, one accent kept for one thing |
 
-Three constraints survive the swap, and every palette is held to them. **Bronze means one thing**
+Four constraints survive the swap, and every palette is held to them. **Bronze means one thing**
 ("never leaves this machine"), so each theme keeps it in the copper family *and* clear of its own
 accent — EMBER is the hard case, which is why its accent is red-orange and its bronze olive.
 **Status is never colour alone**, so amber/red/green may move for contrast without changing meaning.
 **The graph's nine bucket colours are data**, so they stay a full categorical wheel even in GRAPHITE;
-a monochrome brain would look consistent and say nothing.
+a monochrome brain would look consistent and say nothing. **Elevation is lightness, never a shadow**
+(2026-08-10, with the reference design language), so every palette states three grounds — `--void`
+the page, `--surface` the raised plane, `--inset` the well — and a raised thing is the one that is
+*lighter than the page*. The rule inverts cleanly into the dark themes, where it had been doing
+nothing at all: a modal was `--void` on `--void`, held apart by a hairline and a bloom. Its three
+drop-shadow uses went with it, and so did the `--shadow` token they were the only readers of.
 
 MERIDIAN is the one that proves the tokens are real, because it cannot simply invert: the brain's
 canvas composites with `lighter` and needs a dark ground to read at all. So the **sky is its own

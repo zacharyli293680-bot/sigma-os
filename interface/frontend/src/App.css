@@ -25,12 +25,25 @@
  * everything a theme must define.
  */
 :root {
-  /* --- surface ------------------------------------------------------------ */
+  /* --- surface -------------------------------------------------------------
+     Three grounds, and which one a thing wears is its elevation. A raised thing
+     — a modal, a card, a popover, a floating control — is the one that is
+     *lighter than the page*, and nothing is raised by a shadow (the reference
+     language's §1.1). Before this, every overlay in the app was --void on
+     --void, held apart by a hairline and a bloom; the rule was doing no work
+     even in the light theme that had it natively. */
   --void: #05070A;             /* the page itself */
   --void-rgb: 5 7 10;
+  --surface: #0C1116;          /* raised: modals, cards, popovers, sticky heads */
+  --surface-rgb: 12 17 22;
+  --inset: #080C11;            /* pressed in: code blocks, formula boxes, wells */
+  --inset-rgb: 8 12 17;
   --scrim-rgb: 2 3 5;          /* what an overlay darkens the page with */
-  --shadow: rgb(0 0 0 / 0.62); /* one drop-shadow colour, themed: a light page
-                                  must not wear a black bruise under a modal */
+  /* There was a --shadow here, themed so that "a light page must not wear a
+     black bruise under a modal". Adopting §1.1 removed its last three uses —
+     the drawer, the palette and the queue menu — and with them the problem it
+     was solving. The lesson survives as this note; the token would have been
+     three palettes' worth of dead value. */
   --grid-rgb: 34 211 238;      /* the circuit-trace substrate on the body */
   --scheme: dark;              /* native controls (date pickers) follow this */
 
@@ -53,6 +66,7 @@
   --red: #FF4D4D;              /* fault */
   --red-rgb: 255 77 77;
   --add: #4ADE80;              /* a diff's inserted line */
+  --add-rgb: 74 222 128;
   /* Bronze means exactly one thing app-wide — "never leaves this machine" — so
      every theme keeps it in the copper family and keeps it clear of its own
      accent. Nothing else may borrow it. */
@@ -75,6 +89,9 @@
   --sky: #05070A;
   --sky-rgb: 5 7 10;
   --sky-bg: transparent;       /* a colour only when the page is lighter than it */
+  --sky-surface: #0C1116;      /* the stage's own raised plane — a light theme's
+                                  near-white one would be a hole in the stars */
+  --sky-surface-rgb: 12 17 22;
   --sky-ink: #D9E4EB;
   --sky-ink-2: #8299A6;
   --sky-muted: #3A4A55;
@@ -92,6 +109,39 @@
 
   --mono: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
   --sans: "Segoe UI", system-ui, sans-serif;
+}
+
+/* Shape is not a palette value, so these live in their own block: theme.ts
+   never writes them and a theme may not vary them. Shape carries meaning
+   instead — the reference language's §3.1, adopted in the hybrid form: a pill
+   is something you toggle or something that labels, 8px is a small control,
+   and a *container* keeps the notched corner it has always had. That notch is
+   why --r-card goes unused here; it is declared so the scale is legible and so
+   a container that ever wants a curve has one right value to reach for. */
+:root {
+  --r-pill: 999px;             /* chips, badges, toggles, segmented positions */
+  --r-ctl: 8px;                /* inputs, buttons, small controls */
+  --r-card: 12px;              /* containers that are not notched */
+}
+
+/* Who wears which, in one place, so the scale reads as a scale rather than as
+   forty scattered declarations. A few rules set their own radius further down
+   — the swatch and legend dots (50%, they are dots) and the scrollbar thumbs —
+   and those are deliberate exceptions, not drift. */
+.wb-slots button, .brain-filters button, .th-swatch,
+.agview-modes button, .agview-nav button, .agview-filter button,
+/* The composer bars: §3.1 calls the input bar out by name as a pill, and these
+   are the two places you type a sentence rather than fill in a field. */
+.drawer-form input, .wb-tutorform input {
+  border-radius: var(--r-pill);
+}
+
+input, select, textarea, kbd,
+button.box, button.dock, button.waiting-row, button.legend-row,
+.rail button, .suggestions button, .review-actions button, .agview-cancel,
+.q-add-go, .q-sugg-go, .agadd button, .capture-actions button,
+.drawer-form button, .wb-card-new {
+  border-radius: var(--r-ctl);
 }
 
 * { box-sizing: border-box; }
@@ -188,8 +238,14 @@ body {
   align-items: center;
   gap: 10px;
   margin: 0 0 8px;
-  color: var(--accent);
-  font: 600 10.5px/1.6 var(--sans);
+  /* An eyebrow label: small, letterspaced, uppercase, muted, mono (§2.2). It
+     was accent and sans, which broke two rules at once — the accent marked
+     every block on the screen so it marked none of them, and a machine's own
+     word for a block was set in the family reserved for what a human wrote
+     (§2.1). Muted is what lets the *content* of a panel be the thing you see
+     first. 600 → 500 is §2.4: two weights, and hierarchy by size. */
+  color: var(--ink-2);
+  font: 500 10.5px/1.6 var(--mono);
   letter-spacing: 0.18em;
 }
 .panel > h2::after {
@@ -219,12 +275,12 @@ body {
   padding: 3px 6px;
   border: 1px solid transparent;
 }
-.rows a:hover { border-color: var(--panel-line-dim); color: var(--accent); }
+.rows a:hover { border-color: var(--panel-line-dim); color: var(--ink); }
 
 .dim { color: var(--ink-2); }
 .dim-rows a { color: var(--ink-2); }
 .sub { margin: 10px 0 2px; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; }
-.allclear { color: var(--accent); }
+.allclear { color: var(--add); }
 .warn-line { color: var(--amber); }
 code { font-family: var(--mono); font-size: 0.92em; }
 
@@ -249,14 +305,14 @@ code { font-family: var(--mono); font-size: 0.92em; }
   font: inherit; padding: 3px 8px;
 }
 .health:hover { border-color: var(--panel-line-dim); }
-.health.ok   { color: var(--accent); }
+.health.ok   { color: var(--add); }
 .health.warn { color: var(--amber); }
 .health.down { color: var(--ink-2); }
 .health .glyph { margin-right: 4px; }
 /* Borrows .health's shape but not its state colours — it reports a preference,
    not a condition, so it must not read as a fourth health state. */
 .theme-btn { color: var(--ink-2); letter-spacing: 0.06em; }
-.theme-btn:hover { color: var(--accent); }
+.theme-btn:hover { color: var(--ink); }
 .meter { color: var(--ink-2); display: flex; align-items: center; gap: 8px; }
 .meter-bar {
   width: 90px; height: 8px;
@@ -289,7 +345,14 @@ code { font-family: var(--mono); font-size: 0.92em; }
   text-align: left;
   cursor: pointer;
 }
-.rail button.active { color: var(--accent); border-color: var(--panel-line); }
+/* §1.3, the detail the reference says most implementations get wrong: a
+   selected nav item fills with the *ink* colour and flips its label to the
+   page, and the accent is not spent here at all. The 1px border was already
+   transparent, so the fill costs no geometry. */
+.rail button.active {
+  background: var(--ink); border-color: var(--ink); color: var(--void);
+  border-radius: var(--r-ctl);
+}
 /* Unbuilt phases stay visible as a faint roadmap rather than vanishing —
    the rail keeps its shape, and you can see what is coming. */
 .rail button:disabled { color: var(--muted); cursor: default; opacity: 0.42; }
@@ -324,6 +387,11 @@ code { font-family: var(--mono); font-size: 0.92em; }
      the dark ground it then needs would be invisible. */
   --void: var(--sky);
   --void-rgb: var(--sky-rgb);
+  --surface: var(--sky-surface);
+  --surface-rgb: var(--sky-surface-rgb);
+  /* No --sky-inset: the stage has nothing pressed into it, and the sky's
+     surface is already the darkest plane a light theme puts here. */
+  --inset: var(--sky-surface);
   --ink: var(--sky-ink);
   --ink-2: var(--sky-ink-2);
   --muted: var(--sky-muted);
@@ -510,7 +578,7 @@ code { font-family: var(--mono); font-size: 0.92em; }
   color: var(--ink-2);
   min-height: 1.4em;                     /* no reflow when a probe swaps in */
 }
-.center-sub.probing b { color: var(--accent); font-weight: 500; }
+.center-sub.probing b { color: var(--ink-2); font-weight: 500; }
 .due-tag { color: var(--amber); font-style: normal; }
 .center-note { margin-top: 8px; font-size: 11.5px; }
 
@@ -526,16 +594,22 @@ code { font-family: var(--mono); font-size: 0.92em; }
 .right .panel { flex: 1; }
 .right .today { flex: 1.4; }
 
+/* §1.4 — a pale tint of the hue with the text in the same hue, and the word
+   inside it doing the actual telling. The tint is 12% of the status colour
+   rather than a fixed grey, so it moves with the palette and can never end up
+   the wrong side of a light theme's ground. */
 .badge {
-  font: 600 10px/1 var(--sans);
+  font: 500 10px/1 var(--mono);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   font-style: normal;
   margin-right: 6px;
+  padding: 2px 7px;
+  border-radius: var(--r-pill);
 }
-.badge.pending  { color: var(--amber); }
-.badge.approved { color: var(--accent); }
-.badge.staged   { color: var(--amber); }
+.badge.pending  { color: var(--amber); background: rgb(var(--amber-rgb) / 0.12); }
+.badge.approved { color: var(--add);   background: rgb(var(--add-rgb) / 0.12); }
+.badge.staged   { color: var(--amber); background: rgb(var(--amber-rgb) / 0.12); }
 
 .today .box { color: var(--muted); margin-right: 6px; }
 .due-date { font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); margin-right: 6px; }
@@ -585,7 +659,7 @@ kbd {
   font-size: 10.5px;
 }
 .dock { font-family: var(--mono); font-size: 11.5px; }
-.dock.live { color: var(--accent); }
+.dock.live { color: var(--ink); }
 
 /* ---------------------------------------------------------------- chat drawer */
 
@@ -594,9 +668,8 @@ kbd {
   top: 0; right: 0; bottom: 0;
   width: min(40vw, 640px);
   min-width: 420px;
-  background: rgb(var(--void-rgb) / 0.97);
+  background: rgb(var(--surface-rgb) / 0.97);
   border-left: 1px solid var(--panel-line);
-  box-shadow: -18px 0 42px var(--shadow);
   display: flex;
   flex-direction: column;
   transform: translateX(102%);
@@ -609,7 +682,7 @@ kbd {
   padding: 12px 16px;
   border-bottom: 1px solid var(--panel-line-dim);
 }
-.drawer-head .label { font: 600 11px/1 var(--sans); letter-spacing: 0.18em; color: var(--accent); }
+.drawer-head .label { font: 500 11px/1 var(--mono); letter-spacing: 0.18em; color: var(--ink-2); }
 .ghost { background: none; border: none; color: var(--ink-2); cursor: pointer; font-size: 14px; }
 .ghost:hover { color: var(--ink); }
 
@@ -620,18 +693,18 @@ kbd {
   background: none; border: 1px solid var(--panel-line-dim);
   color: var(--ink); text-align: left; padding: 8px 12px; cursor: pointer; font: inherit;
 }
-.suggestions button:hover { border-color: var(--accent); color: var(--accent); }
+.suggestions button:hover { border-color: var(--ink); color: var(--ink); }
 
 .drawer-main article { margin-bottom: 22px; }
-.q { color: var(--accent); font-weight: 600; margin-bottom: 6px; }
+.q { color: var(--ink); font-weight: 600; margin-bottom: 6px; }
 .a p, .a li { margin: 6px 0; }
 .a h3 { font-size: 14px; margin: 12px 0 4px; }
 .thinking { color: var(--ink-2); }
-.wikilink { color: var(--accent); text-decoration: none; border-bottom: 1px dotted var(--accent); }
+.wikilink { color: var(--ink); text-decoration: none; border-bottom: 1px dotted var(--ink); }
 .trail { margin: 6px 0; font-size: 12px; color: var(--ink-2); }
 .trail summary { cursor: pointer; }
 .trail .step { padding: 2px 0 2px 14px; font-family: var(--mono); }
-.trail .tool { color: var(--accent); }
+.trail .tool { color: var(--ink-2); }
 .blocked { color: var(--bronze); font-size: 12.5px; margin: 4px 0; }
 .error { color: var(--red); font-family: var(--mono); font-size: 12.5px; margin-top: 6px; }
 .stats { color: var(--muted); font-family: var(--mono); font-size: 11px; margin-top: 6px; }
@@ -666,7 +739,7 @@ kbd {
 .chat-fab {
   position: fixed;
   right: 18px; bottom: 52px;
-  background: var(--void);
+  background: var(--surface);
   border: 1px solid var(--panel-line);
   color: var(--accent);
   font: 600 12px/1 var(--mono);
@@ -681,7 +754,7 @@ kbd {
   position: fixed;
   left: 50%; top: 50%;
   transform: translate(-50%, -50%);
-  background: var(--void);
+  background: var(--surface);
   border-color: var(--red);
   padding: 24px 32px;
   z-index: 30;
@@ -700,12 +773,11 @@ kbd {
   width: min(620px, 92vw);
   height: fit-content;
   max-height: 62vh;
-  background: var(--void);
+  background: var(--surface);
   border: 1px solid var(--panel-line);
   clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px),
                      calc(100% - 12px) 100%, 0 100%, 0 12px);
   display: flex; flex-direction: column;
-  box-shadow: 0 18px 60px var(--shadow);
 }
 .palette input {
   background: none; border: none;
@@ -722,20 +794,24 @@ kbd {
   padding: 9px 16px;
   cursor: pointer;
 }
-.palette li.sel { background: rgb(var(--accent-rgb) / 0.08); box-shadow: inset 2px 0 0 var(--accent); }
+/* A selected row, not a selected control: too large an area to fill with ink
+   under §1.2, so it is pressed in rather than lit up. The 2px bar is the
+   active *indicator*, which is one of the four things the accent is for. */
+.palette li.sel { background: var(--inset); box-shadow: inset 2px 0 0 var(--accent); }
 .palette li.off { color: var(--muted); cursor: default; }
 .palette li.off .p-title { color: var(--muted); }
 .p-title { color: var(--ink); font-size: 13.5px; }
 .p-meta { display: flex; align-items: center; gap: 8px; }
 .p-meta code { color: var(--ink-2); font-size: 11px; }
 .p-badge {
-  font: 600 9.5px/1 var(--sans);
+  font: 500 9.5px/1 var(--mono);
   letter-spacing: 0.1em; text-transform: uppercase; font-style: normal;
   padding: 2px 5px;
   border: 1px solid currentColor;
+  border-radius: var(--r-pill);
 }
 .p-badge.writes { color: var(--amber); }
-.p-badge.model { color: var(--accent); }
+.p-badge.model { color: var(--ink); }
 .p-badge.off-badge { color: var(--muted); }
 .palette-foot { padding: 8px 16px 12px; font-size: 11px; border-top: 1px solid var(--panel-line-dim); }
 
@@ -749,7 +825,7 @@ kbd {
   padding: 11px 16px; border-bottom: 1px solid var(--panel-line-dim);
 }
 .themes-head .label {
-  color: var(--accent); font: 600 11px/1 var(--sans); letter-spacing: 0.18em;
+  color: var(--ink-2); font: 500 11px/1 var(--mono); letter-spacing: 0.18em;
 }
 .themes-head .dim { font-size: 11px; }
 .themes li { align-items: center; }
@@ -770,8 +846,8 @@ kbd {
   background: none; border: none; padding: 0;
   color: var(--ink-2); font: inherit; cursor: pointer;
 }
-.foot-keys button:hover { color: var(--accent); }
-.foot-keys button:hover kbd { border-color: var(--accent); color: var(--accent); }
+.foot-keys button:hover { color: var(--ink); }
+.foot-keys button:hover kbd { border-color: var(--ink); color: var(--ink); }
 
 /* ---------------------------------------------------------------- the brain */
 
@@ -868,11 +944,11 @@ kbd {
 }
 .brain-stats .hero {
   font: 200 84px/1 var(--mono);
-  color: var(--accent);
+  color: var(--ink-2);
   text-shadow: 0 0 30px rgb(var(--glow-rgb) / 0.35);
 }
 .brain-stats .hero-label {
-  font: 600 11px/2.4 var(--sans);
+  font: 500 11px/2.4 var(--mono);
   letter-spacing: 0.34em;
   color: var(--ink-2);
 }
@@ -940,9 +1016,9 @@ button.box {
   padding: 3px 4px; flex: none;
   transition: color 200ms linear;
 }
-button.box:hover { color: var(--accent); border-color: var(--panel-line-dim); }
+button.box:hover { color: var(--ink); border-color: var(--panel-line-dim); }
 button.box.busy { color: var(--amber); cursor: progress; }
-button.box.done { color: var(--accent); }
+button.box.done { color: var(--add); }
 .row-err {
   flex: none; align-self: center;
   font: 400 10.5px/1.4 var(--mono);
@@ -965,7 +1041,7 @@ button.dock {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   max-width: 60vw;
 }
-button.dock:hover { color: var(--accent); }
+button.dock:hover { color: var(--ink); }
 
 /* the ledger overlay — the palette's shell, wider, row-per-commit */
 .ledger {
@@ -973,7 +1049,7 @@ button.dock:hover { color: var(--accent); }
   width: min(760px, 94vw);
   height: fit-content;
   max-height: 70vh;
-  background: var(--void);
+  background: var(--surface);
   border: 1px solid var(--panel-line);
   box-shadow: 0 0 40px rgb(var(--glow-rgb) / 0.08);
   display: flex; flex-direction: column;
@@ -996,11 +1072,11 @@ button.dock:hover { color: var(--accent); }
 }
 .led-row:last-child { border-bottom: none; }
 .led-when { flex: none; width: 44px; font-family: var(--mono); font-size: 11px; color: var(--ink-2); }
-.led-actor { flex: none; width: 74px; font-family: var(--mono); font-size: 11px; color: var(--accent); }
+.led-actor { flex: none; width: 74px; font-family: var(--mono); font-size: 11px; color: var(--ink-2); }
 .led-glyph { flex: none; color: var(--ink-2); }
 .led-what { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .led-what a { color: var(--ink); text-decoration: none; }
-.led-what a:hover { color: var(--accent); }
+.led-what a:hover { color: var(--ink); }
 .led-summary { color: var(--ink-2); }
 .led-err { color: var(--amber); font-family: var(--mono); font-size: 11px; }
 .led-undo, .led-undo-slot {
@@ -1036,10 +1112,17 @@ button.led-undo:disabled { cursor: progress; opacity: 0.6; }
 /* The rail button is live now (it was a disabled Phase 5 placeholder). Its
    count is the whole pitch: how much of the vault exists on one disk only. */
 .rail .seal { color: var(--bronze); opacity: 0.72; cursor: pointer; }
-/* Beats `.rail button.active`, which would repaint this cyan — the one thing
-   bronze must never do is stop meaning "never leaves this machine". */
+/* Beats `.rail button.active`, which since §1.3 would fill this solid ink and
+   flip the label to the page — the one thing bronze must never do is stop
+   meaning "never leaves this machine", and it cannot mean it as a label
+   colour that has been overwritten. Unfilled on purpose: bronze marks the
+   seal, and a bronze *fill* would make the loudest item in the rail the one
+   about privacy. */
 .rail .seal:hover,
-.rail button.seal.active { color: var(--bronze); opacity: 1; border-color: rgb(var(--bronze-rgb) / 0.5); }
+.rail button.seal.active {
+  background: none; color: var(--bronze); opacity: 1;
+  border-color: rgb(var(--bronze-rgb) / 0.5);
+}
 .seal-n {
   display: block; font-size: 9px; opacity: 0.75; letter-spacing: 0;
   margin-top: 1px;
@@ -1056,7 +1139,7 @@ button.led-undo:disabled { cursor: progress; opacity: 0.6; }
   width: min(760px, 94vw);
   height: fit-content;
   max-height: 74vh;
-  background: var(--void);
+  background: var(--surface);
   border: 1px solid rgb(var(--bronze-rgb) / 0.42);
   box-shadow: 0 0 40px rgb(var(--bronze-rgb) / 0.10);
   display: flex; flex-direction: column;
@@ -1067,7 +1150,7 @@ button.led-undo:disabled { cursor: progress; opacity: 0.6; }
   padding: 10px 14px;
   border-bottom: 1px solid rgb(var(--bronze-rgb) / 0.28);
 }
-.nosync-head .label { color: var(--bronze); letter-spacing: 0.16em; font-size: 11px; }
+.nosync-head .label { color: var(--bronze); letter-spacing: 0.16em; font-size: 11px; font-family: var(--mono); }
 .nosync .claim {
   margin: 0; padding: 10px 14px;
   font-size: 12px; line-height: 1.55; color: var(--ink-2);
@@ -1108,13 +1191,13 @@ button.waiting-row {
   font-family: var(--mono); font-size: 12.5px; color: var(--ink);
   text-align: left; padding: 3px 6px; width: 100%;
 }
-button.waiting-row:hover { border-color: var(--panel-line-dim); color: var(--accent); }
+button.waiting-row:hover { border-color: var(--panel-line-dim); color: var(--ink); }
 
 .review {
   margin-top: 7vh;
   width: min(900px, 95vw);
   max-height: 80vh;
-  background: var(--void);
+  background: var(--surface);
   border: 1px solid var(--panel-line);
   box-shadow: 0 0 40px rgb(var(--glow-rgb) / 0.08);
   display: flex; flex-direction: column; overflow: hidden;
@@ -1123,7 +1206,7 @@ button.waiting-row:hover { border-color: var(--panel-line-dim); color: var(--acc
   display: flex; justify-content: space-between; align-items: center; gap: 12px;
   padding: 10px 14px; border-bottom: 1px solid var(--panel-line-dim);
 }
-.review-head .label { color: var(--accent); letter-spacing: 0.14em; font-size: 11px; }
+.review-head .label { color: var(--ink-2); letter-spacing: 0.14em; font-size: 11px; font-family: var(--mono); }
 .review .pad { padding: 14px; }
 .review-meta {
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
@@ -1131,7 +1214,7 @@ button.waiting-row:hover { border-color: var(--panel-line-dim); color: var(--acc
   border-bottom: 1px solid var(--panel-line-dim);
 }
 .review-meta a { color: var(--ink-2); text-decoration: none; }
-.review-meta a:hover { color: var(--accent); }
+.review-meta a:hover { color: var(--ink); }
 /* Says what the buttons will really do, before you press one. */
 .review-note {
   margin: 0; padding: 9px 14px; font-size: 11.5px; line-height: 1.5;
@@ -1143,14 +1226,15 @@ pre.diff {
   margin: 0; padding: 10px 14px; overflow: auto; flex: 1; min-height: 0;
   font-family: var(--mono); font-size: 11.5px; line-height: 1.5;
   white-space: pre;
+  background: var(--inset);
 }
 pre.diff .add  { color: var(--add); }
 pre.diff .del  { color: var(--red); }
-pre.diff .hunk { color: var(--accent); opacity: 0.75; }
+pre.diff .hunk { color: var(--ink-2); opacity: 0.75; }
 pre.diff .meta { color: var(--muted); }
 
 .review-said {
-  margin: 0; padding: 8px 14px; font-size: 11.5px; color: var(--accent);
+  margin: 0; padding: 8px 14px; font-size: 11.5px; color: var(--ink);
   border-top: 1px solid var(--panel-line-dim);
 }
 .review-actions {
@@ -1162,7 +1246,7 @@ pre.diff .meta { color: var(--muted); }
   background: none; color: var(--ink);
   border: 1px solid var(--panel-line-dim); padding: 5px 12px;
 }
-.review-actions button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.review-actions button:hover:not(:disabled) { border-color: var(--ink); color: var(--ink); }
 .review-actions button:disabled { opacity: 0.35; cursor: default; }
 /* merge overwrites a note — the one place Sigma does. It should not look like
    the other three. */
@@ -1173,7 +1257,7 @@ pre.diff .meta { color: var(--muted); }
 
 .study {
   margin-top: 7vh; width: min(880px, 95vw); max-height: 80vh;
-  background: var(--void); border: 1px solid var(--panel-line);
+  background: var(--surface); border: 1px solid var(--panel-line);
   box-shadow: 0 0 40px rgb(var(--glow-rgb) / 0.08);
   display: flex; flex-direction: column; overflow: hidden;
 }
@@ -1181,12 +1265,12 @@ pre.diff .meta { color: var(--muted); }
   display: flex; justify-content: space-between; align-items: center;
   padding: 10px 14px; border-bottom: 1px solid var(--panel-line-dim);
 }
-.study-head .label { color: var(--accent); letter-spacing: 0.14em; font-size: 11px; }
+.study-head .label { color: var(--ink-2); letter-spacing: 0.14em; font-size: 11px; font-family: var(--mono); }
 .study .pad { padding: 14px; }
 .study-body { overflow-y: auto; padding: 12px 14px 16px; }
 .study-body h3 {
-  margin: 16px 0 6px; font: 600 10.5px/1.6 var(--sans);
-  letter-spacing: 0.18em; color: var(--accent); text-transform: uppercase;
+  margin: 16px 0 6px; font: 500 10.5px/1.6 var(--mono);
+  letter-spacing: 0.18em; color: var(--ink-2); text-transform: uppercase;
 }
 .study-body h3:first-child { margin-top: 0; }
 .study-note { margin: 0 0 8px; font-size: 11.5px; line-height: 1.5; }
@@ -1197,9 +1281,9 @@ pre.diff .meta { color: var(--muted); }
   padding: 3px 0; font-size: 12.5px;
 }
 .exam-list a { display: flex; gap: 10px; flex: 1; color: var(--ink); text-decoration: none; }
-.exam-list a:hover { color: var(--accent); }
+.exam-list a:hover { color: var(--ink); }
 .exam-course { font-family: var(--mono); color: var(--ink-2); }
-.exam-id { font-family: var(--mono); color: var(--accent); }
+.exam-id { font-family: var(--mono); color: var(--ink); }
 .exam-title { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .exam-when { font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); }
 .exam-when.soon { color: var(--amber); }
@@ -1234,7 +1318,7 @@ pre.diff .meta { color: var(--muted); }
 .cov-folders b.none { color: var(--amber); }
 .cov-files li { padding: 1px 6px 1px 24px; font-size: 11.5px; }
 .cov-files a { color: var(--ink-2); text-decoration: none; }
-.cov-files a:hover { color: var(--accent); }
+.cov-files a:hover { color: var(--ink); }
 
 /* ------------------------------------------- Phase 6: build / repo awareness */
 .repo-list, .repo-flags { list-style: none; margin: 0; padding: 0; }
@@ -1250,7 +1334,7 @@ pre.diff .meta { color: var(--muted); }
 .repo-git { min-width: 120px; color: var(--ink-2); }
 .repo-idle { min-width: 80px; }
 .repo-hub a { color: var(--ink-2); text-decoration: none; }
-.repo-hub a:hover { color: var(--accent); }
+.repo-hub a:hover { color: var(--ink); }
 .repo-flags li { padding: 2px 0; font-size: 12px; color: var(--ink-2); }
 .repo-flags b { color: var(--ink); font-family: var(--mono); }
 
@@ -1267,7 +1351,7 @@ pre.diff .meta { color: var(--muted); }
 .agrail { flex: none; }
 .agrail > h2 {
   display: flex; align-items: center; gap: 10px; margin: 0 0 6px;
-  color: var(--accent); font: 600 10.5px/1.6 var(--sans); letter-spacing: 0.18em;
+  color: var(--ink-2); font: 500 10.5px/1.6 var(--mono); letter-spacing: 0.18em;
 }
 .agrail > h2::after {
   content: ""; flex: 1 1 auto; height: 1px;
@@ -1298,9 +1382,9 @@ pre.diff .meta { color: var(--muted); }
 .ag-item.is-next a { color: var(--ink); }
 .ag-item.is-next .ag-when { color: var(--accent); }
 .ag-glyph { flex: none; width: 12px; text-align: center; }
-.ag-glyph.k-event { color: var(--accent); }
+.ag-glyph.k-event { color: var(--ink-2); }
 .ag-glyph.k-rule  { color: var(--ink-2); }
-.ag-glyph.k-note  { color: var(--accent); opacity: 0.7; }
+.ag-glyph.k-note  { color: var(--ink-2); opacity: 0.7; }
 .ag-glyph.k-task  { color: var(--ink-2); }
 /* A standing daily goal, dimmer than an appointment: it is owed by the end of
    the day rather than at a time, so it must not read as the next thing due. */
@@ -1322,10 +1406,10 @@ pre.diff .meta { color: var(--muted); }
   gap: 2px; padding: 2px 10px 2px 0; background: none; border: none;
   border-right: 1px solid var(--panel-line-dim); color: var(--ink); cursor: pointer;
 }
-.ag-free-n { font: 400 22px/1 var(--mono); color: var(--accent); }
+.ag-free-n { font: 400 22px/1 var(--mono); color: var(--ink); }
 .ag-free-n em { font-style: normal; font-size: 12px; opacity: 0.65; margin-left: 1px; }
 .ag-free-l {
-  font: 600 8.5px/1 var(--sans); letter-spacing: 0.16em; color: var(--ink-2);
+  font: 500 8.5px/1 var(--mono); letter-spacing: 0.16em; color: var(--ink-2);
 }
 
 .ag-week { display: flex; align-items: flex-end; gap: 3px; }
@@ -1353,25 +1437,28 @@ pre.diff .meta { color: var(--muted); }
 .agview {
   width: min(1360px, 94vw); height: min(860px, 92vh);
   display: flex; flex-direction: column;
-  background: var(--void); border: 1px solid var(--panel-line);
+  background: var(--surface); border: 1px solid var(--panel-line);
   box-shadow: 0 0 60px rgb(var(--glow-rgb) / 0.06);
 }
 .agview-head {
   display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
   padding: 8px 12px; border-bottom: 1px solid var(--panel-line-dim);
 }
-.agview-head .label { color: var(--accent); letter-spacing: 0.18em; font-size: 10.5px; font-weight: 600; }
+.agview-head .label { color: var(--ink-2); letter-spacing: 0.18em; font-size: 10.5px; font-weight: 500; font-family: var(--mono); }
 .agview-head .ghost { margin-left: auto; }
 .agview-range { font: 400 11px/1 var(--mono); color: var(--ink-2); }
 .agview-modes, .agview-nav, .agview-filter { display: flex; gap: 4px; }
 .agview-modes button, .agview-nav button, .agview-filter button {
   background: none; border: 1px solid var(--panel-line-dim); color: var(--ink-2);
-  font: 600 9px/1 var(--sans); letter-spacing: 0.12em; padding: 4px 7px; cursor: pointer;
+  font: 500 9px/1 var(--mono); letter-spacing: 0.12em; padding: 4px 7px; cursor: pointer;
 }
 .agview-modes button:hover, .agview-nav button:hover, .agview-filter button:hover {
   border-color: var(--panel-line); color: var(--ink);
 }
-.agview-modes button.on, .agview-filter button.on { border-color: var(--accent); color: var(--accent); }
+/* §1.3, same inversion as every other segmented control in the app. */
+.agview-modes button.on, .agview-filter button.on {
+  background: var(--ink); border-color: var(--ink); color: var(--void);
+}
 .agview-problems {
   margin: 0; padding: 5px 12px; font: 400 11px/1.4 var(--mono);
   color: var(--amber); border-bottom: 1px solid var(--panel-line-dim); cursor: help;
@@ -1386,7 +1473,7 @@ pre.diff .meta { color: var(--muted); }
 .agview-foot.has { border-top-color: var(--accent); }
 .agview-foot b { color: var(--ink); font-weight: 400; }
 .agview-foot .ghost { margin-left: auto; }
-.agview-src { color: var(--accent); text-decoration: none; }
+.agview-src { color: var(--ink); text-decoration: none; }
 .agview-src:hover { text-decoration: underline; }
 .agview-why { color: var(--amber); }
 .agview-foot .warn { color: var(--amber); }
@@ -1397,7 +1484,7 @@ pre.diff .meta { color: var(--muted); }
   flex: none; background: none; border: none; padding: 0; cursor: pointer;
   color: var(--muted); font: 400 9.5px/1 var(--mono);
 }
-.agrow-why:hover { color: var(--accent); }
+.agrow-why:hover { color: var(--ink); }
 .agrow-when { flex: none; width: 82px; font: 400 11px/1.5 var(--mono); color: var(--ink-2); }
 .agrow-title {
   flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
@@ -1413,7 +1500,7 @@ pre.diff .meta { color: var(--muted); }
   border-bottom: 1px solid var(--panel-line-dim); padding-bottom: 5px;
 }
 .agweek-corner {
-  font: 600 8.5px/1 var(--sans); letter-spacing: 0.14em;
+  font: 500 8.5px/1 var(--mono); letter-spacing: 0.14em;
   color: var(--muted); align-self: start; padding: 2px 6px 0 0; text-align: right;
 }
 .agweek-allday { min-width: 0; padding: 0 3px; border-left: 1px solid var(--panel-line-dim); }
@@ -1456,7 +1543,7 @@ pre.diff .meta { color: var(--muted); }
 .agblock:hover { background: rgb(var(--accent-rgb) / 0.18); }
 .agblock.k-rule { border-left-color: var(--muted); background: rgb(var(--muted-rgb) / 0.22); }
 .agblock.k-task { border-left-color: var(--ink-2); }
-.agblock-t { font: 400 9px/1 var(--mono); color: var(--accent); }
+.agblock-t { font: 400 9px/1 var(--mono); color: var(--ink); }
 .agblock-n {
   font: 400 10.5px/1.25 var(--mono); overflow: hidden;
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
@@ -1465,7 +1552,7 @@ pre.diff .meta { color: var(--muted); }
 /* ---- month */
 .agmonth { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; }
 .agmonth-dow {
-  font: 600 8.5px/1 var(--sans); letter-spacing: 0.14em; color: var(--muted);
+  font: 500 8.5px/1 var(--mono); letter-spacing: 0.14em; color: var(--muted);
   padding: 0 4px 4px; text-align: center;
 }
 .agmonth-cell {
@@ -1499,8 +1586,8 @@ pre.diff .meta { color: var(--muted); }
 }
 .aglist section.today h4 { color: var(--accent); }
 .aglist h4 em {
-  font-style: normal; font: 600 8px/1 var(--sans); letter-spacing: 0.14em;
-  color: var(--accent);
+  font-style: normal; font: 500 8px/1 var(--mono); letter-spacing: 0.14em;
+  color: var(--ink-2);
 }
 .aglist ul { margin: 0; padding: 0; }
 .aglist p { margin: 0; font: 400 11px/1.6 var(--mono); }
@@ -1551,14 +1638,14 @@ pre.diff .meta { color: var(--muted); }
 .agrow.pending, .agmonth-item.pending { opacity: 0.6; }
 .agblock.pending { opacity: 0.6; border-style: dotted; }
 .agrow.pending .agrow-when::after,
-.agmonth-item.pending button::after { content: " ⟳"; color: var(--accent); }
+.agmonth-item.pending button::after { content: " ⟳"; color: var(--ink); }
 
 [draggable="true"] { cursor: grab; }
 .agmonth-cell.drop-on, .agweek-col.drop-on { background: rgb(var(--accent-rgb) / 0.10); }
 
 .capture {
   margin-top: 16vh; width: min(620px, 94vw);
-  background: var(--void); border: 1px solid var(--panel-line);
+  background: var(--surface); border: 1px solid var(--panel-line);
   box-shadow: 0 0 40px rgb(var(--glow-rgb) / 0.10);
   display: flex; flex-direction: column;
 }
@@ -1566,7 +1653,7 @@ pre.diff .meta { color: var(--muted); }
   display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
   padding: 9px 12px; border-bottom: 1px solid var(--panel-line-dim);
 }
-.capture-head .label { color: var(--accent); letter-spacing: 0.14em; font-size: 11px; }
+.capture-head .label { color: var(--ink-2); letter-spacing: 0.14em; font-size: 11px; font-family: var(--mono); }
 .capture-head .dim { font-size: 10.5px; }
 .capture textarea {
   background: none; border: none; resize: vertical;
@@ -1574,7 +1661,7 @@ pre.diff .meta { color: var(--muted); }
   padding: 11px 12px; outline: none;
 }
 .capture-said {
-  margin: 0; padding: 0 12px 8px; font-size: 11.5px; color: var(--accent);
+  margin: 0; padding: 0 12px 8px; font-size: 11.5px; color: var(--ink);
 }
 .capture-actions {
   display: flex; justify-content: space-between; align-items: center; gap: 12px;
@@ -1600,15 +1687,21 @@ button.legend-row {
   pointer-events: auto;
 }
 button.legend-row:hover { border-color: var(--panel-line-dim); }
-button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
+/* Not filled, unlike every other toggle in the app: these sit *over* the star
+   field, and a solid ink row would punch a hole in the picture the filter is
+   for. Ink at full strength against the row's dimmed default, plus the bucket
+   swatch, which is data and was always the real signal here. */
+button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 .brain-filters { display: flex; gap: 6px; margin-top: 12px; }
 .brain-filters button {
   background: none; border: 1px solid var(--panel-line-dim); color: var(--ink-2);
   font: 11px var(--mono); padding: 4px 8px; cursor: pointer;
   pointer-events: auto;                /* see button.legend-row above */
 }
-.brain-filters button:hover:not(:disabled) { color: var(--accent); border-color: var(--panel-line); }
-.brain-filters button.on { color: var(--accent); border-color: var(--accent); }
+.brain-filters button:hover:not(:disabled) { color: var(--ink); border-color: var(--panel-line); }
+/* Over the star field, so ink rather than a fill — the same reason
+   `button.legend-row.on` above is not filled either. */
+.brain-filters button.on { color: var(--ink); border-color: var(--panel-line); }
 .brain-filters button:disabled { opacity: 0.35; cursor: default; }
 .brain-filter-note { margin: 8px 0 0; font-size: 11px; line-height: 1.5; }
 
@@ -1638,7 +1731,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
      600px of void. STUDY never showed it because its content is always long. */
   align-self: flex-start;
   margin-top: 6vh; width: min(1120px, 96vw); max-height: 84vh;
-  background: var(--void); border: 1px solid var(--panel-line);
+  background: var(--surface); border: 1px solid var(--panel-line);
   box-shadow: 0 0 40px rgb(var(--glow-rgb) / 0.08);
   display: flex; flex-direction: column; overflow: hidden;
 }
@@ -1646,7 +1739,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
   display: flex; align-items: center; gap: 16px;
   padding: 10px 14px; border-bottom: 1px solid var(--panel-line-dim);
 }
-.work-head .label { color: var(--accent); letter-spacing: 0.14em; font-size: 11px; }
+.work-head .label { color: var(--ink-2); letter-spacing: 0.14em; font-size: 11px; font-family: var(--mono); }
 .work-head .ghost { margin-left: auto; }
 .work-counts {
   font-family: var(--mono); font-size: 11.5px; color: var(--ink-2);
@@ -1733,7 +1826,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
 .q-practice.is-done { border-color: var(--panel-line-dim); }
 .q-pr-body { display: flex; align-items: baseline; gap: 8px; margin: 6px 0 2px; }
 .q-pr-mark { flex: none; font-size: 15px; color: var(--muted); line-height: 1; }
-.q-pr-mark.done { color: var(--accent); }
+.q-pr-mark.done { color: var(--add); }
 .q-pr-title { flex: none; color: var(--ink); border-bottom: 1px solid transparent; }
 .q-pr-title:hover { border-bottom-color: var(--panel-line-dim); }
 .q-pr-stats {
@@ -1748,17 +1841,23 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
 .q-pr-hist li { color: var(--ink-2); }
 .q-pr-hist .q-pr-n { color: var(--ink-2); }
 .q-pr-day { flex: none; font-variant-numeric: tabular-nums; font-size: 11px; }
-.q-pr-n { flex: none; color: var(--accent); font-variant-numeric: tabular-nums; }
+.q-pr-n { flex: none; color: var(--ink); font-variant-numeric: tabular-nums; }
 .q-pr-name { flex: 1 1 auto; min-width: 0; overflow: hidden;
              text-overflow: ellipsis; white-space: nowrap; }
+/* A LeetCode difficulty, and the clearest §1.4 case in the file: three values,
+   one hue each, the word always present. Two bugs went with the restyle —
+   MEDIUM wore --bronze, which means "never leaves this machine" and nothing
+   else may borrow, and HARD referenced --warn, a token that has never existed
+   in any palette, so it had been silently falling back to ordinary ink. */
 .q-pr-d {
   flex: none; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
-  padding: 1px 5px; border: 1px solid var(--panel-line-dim); border-radius: 2px;
+  padding: 1px 5px; border: 1px solid var(--panel-line-dim);
+  border-radius: var(--r-pill);
   color: var(--ink-2);
 }
-.q-pr-d.d-easy   { color: var(--accent); }
-.q-pr-d.d-medium { color: var(--bronze); }
-.q-pr-d.d-hard   { color: var(--warn, var(--ink)); }
+.q-pr-d.d-easy   { color: var(--add);   background: rgb(var(--add-rgb) / 0.12);   border-color: transparent; }
+.q-pr-d.d-medium { color: var(--amber); background: rgb(var(--amber-rgb) / 0.12); border-color: transparent; }
+.q-pr-d.d-hard   { color: var(--red);   background: rgb(var(--red-rgb) / 0.12);   border-color: transparent; }
 .q-pr-add { display: flex; gap: 6px; margin-top: 8px; }
 .q-pr-add input { flex: 1 1 auto; min-width: 0; font-variant-numeric: tabular-nums; }
 .q-pr-add button { flex: none; }
@@ -1798,14 +1897,21 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
    aloud, and the tone only sharpens it. Text stays on ink tokens elsewhere —
    these are status, which is the documented exception. */
 .q-chip {
-  font: 600 9.5px/1 var(--sans);
+  font: 500 9.5px/1 var(--mono);
   letter-spacing: 0.08em; text-transform: uppercase;
   font-style: normal; white-space: nowrap;
   color: var(--ink-2);
+  padding: 2px 6px;
+  border-radius: var(--r-pill);
 }
-.q-chip.danger { color: var(--red); }
-.q-chip.warn   { color: var(--amber); }
-.q-chip.age    { color: var(--bronze); }
+/* Tinted, per §1.4 — and only these two, because only these two are *status*.
+   The rest of the row's chips are metadata that happens to be short. */
+.q-chip.danger { color: var(--red);   background: rgb(var(--red-rgb) / 0.12); }
+.q-chip.warn   { color: var(--amber); background: rgb(var(--amber-rgb) / 0.12); }
+/* Was --bronze, which means "never leaves this machine" app-wide and nothing
+   else may borrow (theme.ts rule 1). How long a task has sat is metadata, and
+   an overdue one already has `.q-row.overdue` shouting for it. */
+.q-chip.age    { color: var(--ink-2); }
 .q-chip.urg    { color: var(--ink); }
 .q-chip.dim    { color: var(--muted); }
 
@@ -1841,9 +1947,9 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
   padding: 3px 4px; flex: none;
   transition: color 200ms linear;
 }
-.q-box:hover:not(:disabled) { color: var(--accent); }
+.q-box:hover:not(:disabled) { color: var(--ink); }
 .q-box.busy { color: var(--amber); }
-.q-box.leaving { color: var(--accent); }
+.q-box.leaving { color: var(--add); }
 .q-box:disabled { cursor: default; }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1862,7 +1968,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
   cursor: pointer; padding: 2px 4px; margin: 0 0 4px; width: 100%;
   text-align: left;
 }
-.q-open:hover { color: var(--accent); border-color: var(--panel-line-dim); }
+.q-open:hover { color: var(--ink); border-color: var(--panel-line-dim); }
 /* Section names inside the digest: the same small-caps rule as `next up` was,
    but they name a queue rather than a day-bucket. */
 .today .sub { margin: 8px 0 1px; color: var(--ink-2); }
@@ -1907,7 +2013,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
   flex: 1 0 100%;
   font: 400 11.5px/1.5 var(--mono); color: var(--ink-2);
 }
-.q-add-said a { color: var(--accent); text-decoration: none; }
+.q-add-said a { color: var(--ink); text-decoration: none; }
 .q-add-said a:hover { text-decoration: underline; }
 .q-add-said.err { color: var(--red); }
 
@@ -1924,7 +2030,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
   background: rgb(var(--accent-rgb) / 0.04);
   animation: q-promote 220ms var(--dive-ease) both;
 }
-.q-sugg-mark { color: var(--accent); flex: none; }
+.q-sugg-mark { color: var(--ink-2); flex: none; }
 .q-sugg-body { flex: 1 1 auto; min-width: 0; font-size: 12.5px; }
 .q-sugg-body b { font-weight: 500; }
 .q-sugg-meta { color: var(--ink-2); font-family: var(--mono); font-size: 11px; }
@@ -1949,7 +2055,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
   background: none; border: 1px solid transparent;
   color: var(--ink-2); font: inherit; cursor: pointer; padding: 0 5px;
 }
-.q-chev:hover:not(:disabled) { color: var(--accent); border-color: var(--panel-line-dim); }
+.q-chev:hover:not(:disabled) { color: var(--ink); border-color: var(--panel-line-dim); }
 .q-chev:disabled { color: var(--muted); opacity: 0.45; cursor: default; }
 
 .q-more {
@@ -1993,7 +2099,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
   border: 3px solid var(--void);      /* inset, so the thumb reads as a hairline */
   border-radius: 5px;
 }
-.q-more::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+.q-more::-webkit-scrollbar-thumb:hover { background: var(--ink); }
 
 .q-more-group + .q-more-group { margin-top: 10px; }
 /* Both headings stick, on two levels: the course code at the top of the
@@ -2003,15 +2109,15 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
    kills the sub-pixel gap rows would otherwise show through. */
 .q-more-parent {
   position: sticky; top: 0; z-index: 2;
-  background: var(--void);
+  background: var(--surface);
   margin: 0; padding: 7px 0 3px;
   font: 500 10.5px/1.6 var(--mono); letter-spacing: 0.06em; color: var(--ink-2);
 }
 .q-more-head {
   position: sticky; top: 0; z-index: 1;
-  background: var(--void);
+  background: var(--surface);
   margin: 0; padding: 6px 0 2px;
-  font: 400 10px/1.6 var(--sans); letter-spacing: 0.14em;
+  font: 400 10px/1.6 var(--mono); letter-spacing: 0.14em;
   text-transform: uppercase; color: var(--muted);
 }
 /* Only a block title inside a chain group sits below a course code. The
@@ -2070,7 +2176,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
   color: var(--ink-2); font: inherit; font-size: 10px;
   margin-left: 8px; padding: 0 6px; cursor: pointer;
 }
-.q-more-all:hover { color: var(--accent); border-color: var(--accent); }
+.q-more-all:hover { color: var(--ink); border-color: var(--ink); }
 
 /* The checkbox, on every row of the expanded list.
    Before this, only the front of each queue could be ticked — finishing
@@ -2084,9 +2190,9 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
   padding: 1px 3px; flex: none;
   transition: color 200ms linear;
 }
-.q-more-box:hover:not(:disabled) { color: var(--accent); }
+.q-more-box:hover:not(:disabled) { color: var(--ink); }
 .q-more-box.busy { color: var(--amber); }
-.q-more-box.leaving { color: var(--accent); }
+.q-more-box.leaving { color: var(--add); }
 .q-more-box:disabled { cursor: default; }
 /* Out of sequence: amber, the token that means *held* everywhere else in this
    file. Never colour alone — the row beside it already reads "waiting on the
@@ -2137,7 +2243,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
 .q-row:hover .q-dots,
 .q-more-row:hover .q-dots,
 .q-dots:focus-visible { opacity: 1; }
-.q-dots:hover { color: var(--accent); border-color: var(--panel-line-dim); }
+.q-dots:hover { color: var(--ink); border-color: var(--panel-line-dim); }
 
 /* Click-anywhere-to-close, and it also stops a click landing on the row under
    the menu — which would have opened Obsidian mid-decision. */
@@ -2150,8 +2256,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
   /* No top padding: the first heading is sticky and has to sit flush against
      the scroll box, or rows scroll through the gap above it. */
   padding: 0 0 5px;
-  background: var(--void); border: 1px solid var(--panel-line);
-  box-shadow: 0 6px 22px var(--shadow);
+  background: var(--surface); border: 1px solid var(--panel-line);
   /* `max-height` is set inline — it depends on where the row is on screen.
      Without the overflow, everything past the viewport edge was unreachable:
      the menu has no keyboard path to its own tail and the page behind it does
@@ -2173,16 +2278,16 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
   border: 3px solid var(--void);      /* inset, so the thumb reads as a hairline */
   border-radius: 5px;
 }
-.q-menu::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+.q-menu::-webkit-scrollbar-thumb:hover { background: var(--ink); }
 /* Sticky, because a scrolling menu that loses its headings is a list of course
    names with no indication of what choosing one does. Padding rather than
    margin above: a sticky element's margin is not part of what sticks, so the
    rows would slide through the gap it left. */
 .q-menu-head {
   position: sticky; top: 0; z-index: 1;
-  background: var(--void);
+  background: var(--surface);
   margin: 0 0 2px; padding: 6px 10px 1px;
-  font: 400 9.5px/1.6 var(--sans); letter-spacing: 0.14em;
+  font: 400 9.5px/1.6 var(--mono); letter-spacing: 0.14em;
   text-transform: uppercase; color: var(--muted);
 }
 .q-menu button, .q-menu-pick {
@@ -2210,7 +2315,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
   color: var(--ink-2); font: inherit; font-size: 10.5px;
   padding: 1px 8px; cursor: pointer;
 }
-.q-more-act:hover { color: var(--accent); border-color: var(--accent); }
+.q-more-act:hover { color: var(--ink); border-color: var(--ink); }
 
 /* --- the review strip ---------------------------------------------------- */
 
@@ -2243,7 +2348,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
 .workbench {
   margin-top: 4vh; width: min(1320px, 96vw); max-height: 88vh;
   align-self: flex-start;
-  background: var(--void); border: 1px solid var(--panel-line);
+  background: var(--surface); border: 1px solid var(--panel-line);
   box-shadow: 0 0 40px rgb(var(--glow-rgb) / 0.08);
   display: flex; flex-direction: column; overflow: hidden;
 }
@@ -2266,10 +2371,10 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
   background: none; border: none; padding: 0; cursor: pointer;
   color: var(--ink-2); font: inherit; letter-spacing: inherit;
 }
-.wb-crumb:hover:not(:disabled) { color: var(--accent); }
-.wb-crumb:disabled { color: var(--accent); cursor: default; }
+.wb-crumb:hover:not(:disabled) { color: var(--ink); }
+.wb-crumb:disabled { color: var(--ink); cursor: default; }
 .wb-crumb-sep { color: var(--muted); }
-.wb-crumb-here { color: var(--accent); }
+.wb-crumb-here { color: var(--ink); }
 .wb-head-title { font-size: 13px; color: var(--ink); }
 .wb-head-meta { font: 400 10.5px/1.5 var(--mono); }
 .wb-head-act { flex: none; white-space: nowrap; }
@@ -2343,13 +2448,18 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
 .wb-seghead { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .wb-seghead h3 { margin: 4px 0 2px; font-size: 14px; color: var(--ink); }
 .wb-read p { margin: 8px 0; line-height: 1.6; color: var(--ink); }
-/* Formula blocks: bordered, never filled, monospace — the vault's own style. */
+/* Formula blocks. They were "bordered, never filled" — the vault's own style,
+   from before there was a third ground to fill them with. §1.1 gives them one,
+   and a pressed-in well is a truer picture of a formula quoted inside prose
+   than a box drawn around it. The hairline stays: the fill alone is a 3-value
+   step and vanishes on a projector. */
 .wb-read pre {
   font: 400 12px/1.6 var(--mono); color: var(--ink);
   border: 1px solid var(--panel-line-dim); padding: 8px 12px; margin: 10px 0;
   overflow-x: auto;
+  background: var(--inset);
 }
-.wb-link { color: var(--accent); }
+.wb-link { color: var(--ink); }
 
 /* One chip. Five rows of them (segments, courses, depths, dock slots, tutor
    modes) each carried a near-identical copy of this rule; the only genuine
@@ -2359,16 +2469,19 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
 .wb-chips button, .wb-depths button, .wb-modes button {
   background: none; border: 1px solid var(--panel-line-dim); color: var(--ink-2);
   font: 400 11.5px/1.5 var(--mono); padding: 2px 9px; cursor: pointer;
+  border-radius: var(--r-pill);
 }
 .wb-chips button:hover, .wb-depths button:hover, .wb-modes button:hover { color: var(--ink); }
-.wb-chips button.active { border-color: var(--accent); color: var(--ink); }
-/* A depth or a tutor mode names a mode you are *in* rather than a place you
-   are *at* — accent rather than ink, one notch smaller. */
+/* §1.3 — one active treatment across all three rows, filled with ink. The file
+   used to give chips an accent *border* and depths/modes accent *text*, on the
+   theory that a mode you are in differs from a place you are at. That is a real
+   distinction and this is still not where to spend the accent on it; the size
+   step below already carries it. */
+.wb-chips button.active, .wb-depths button.active, .wb-modes button.active {
+  background: var(--ink); border-color: var(--ink); color: var(--void);
+}
 .wb-depths, .wb-modes { margin: 6px 0 2px; }
 .wb-depths button, .wb-modes button { font-size: 10.5px; letter-spacing: 0.06em; }
-.wb-depths button.active, .wb-modes button.active {
-  border-color: var(--accent); color: var(--accent);
-}
 
 .wb-example { border: 1px solid var(--panel-line-dim); padding: 4px 12px 8px; margin: 12px 0; }
 .wb-example h4, .wb-practice h4, .wb-dock h4 {
@@ -2385,7 +2498,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
 
 .wb-prov { list-style: none; margin: 0 0 10px; padding: 0; font-size: 12px; }
 .wb-prov li { margin: 4px 0; overflow-wrap: anywhere; }
-.wb-prov a { color: var(--accent); text-decoration: none; }
+.wb-prov a { color: var(--ink); text-decoration: none; }
 .wb-prov a:hover { text-decoration: underline; }
 
 /* Held is a word plus amber, never colour alone. */
@@ -2399,19 +2512,19 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
 }
 .wb-foot kbd { font-family: var(--mono); border: 1px solid var(--panel-line-dim); padding: 0 4px; }
 .wb-roll { font-family: var(--mono); font-size: 10.5px; }
-.wb-roll code { color: var(--accent); }
+.wb-roll code { color: var(--ink); }
 .wb-roll.err { color: var(--red); }
 
 /* The measured pace (study S8). Deliberately the accent colour rather than
    dim: a number that came from what actually happened should not read like a
    caption beside the estimate it corrects. */
-.wb-pace { color: var(--accent); }
+.wb-pace { color: var(--ink); }
 .wb-pacebar {
   font-family: var(--mono); font-size: 10.5px;
   padding: 2px 0 0; margin: 0;
 }
 .wb-pacebar a { color: inherit; text-decoration: underline dotted; }
-.wb-pacebar a:hover { color: var(--accent); }
+.wb-pacebar a:hover { color: var(--ink); }
 
 /* --- the course grid (the study dashboard's landing view) ---------------- */
 /* One card per active course, in the dashboard's own panel vocabulary. Three
@@ -2428,7 +2541,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
 .wb-card > h2 { margin-bottom: 4px; }
 .wb-card-open {
   background: none; border: none; padding: 0; cursor: pointer;
-  color: var(--accent); font: inherit; letter-spacing: inherit;
+  color: var(--ink); font: inherit; letter-spacing: inherit;
 }
 .wb-card-open:hover { color: var(--ink); }
 .wb-card-count {
@@ -2454,7 +2567,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
   color: var(--ink-2); font: 400 12px/1.5 var(--mono); cursor: pointer;
   padding: 18px 10px; min-height: 92px;
 }
-.wb-card-new:hover { border-color: var(--accent); color: var(--accent); }
+.wb-card-new:hover { border-color: var(--ink); color: var(--ink); }
 .wb-card-adding { border: 1px solid var(--panel-line); padding: 8px 12px 10px; }
 
 /* Copied from `.q-add` rather than reusing it: those rules belong to work.tsx,
@@ -2472,7 +2585,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
 .wb-add-term { width: 12ch; }
 .wb-addform .q-add-go { padding: 4px 12px; font-size: 12px; }
 .wb-said { margin: 6px 0 0; font: 400 11px/1.5 var(--mono); color: var(--ink-2); }
-.wb-said a { color: var(--accent); text-decoration: none; }
+.wb-said a { color: var(--ink); text-decoration: none; }
 .wb-said.err { color: var(--red); }
 
 /* --- the chain view (study S2 — one course, drilled into) ---------------- */
@@ -2482,13 +2595,13 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
   display: flex; justify-content: space-between; align-items: baseline;
   gap: 12px; margin: 10px 0 6px; font-size: 12px;
 }
-.wb-chainhead a { color: var(--accent); text-decoration: none; font-family: var(--mono); font-size: 11px; }
+.wb-chainhead a { color: var(--ink); text-decoration: none; font-family: var(--mono); font-size: 11px; }
 .wb-chainhead a:hover { text-decoration: underline; }
 .wb-last {
   display: flex; align-items: center; gap: 8px; margin: 4px 0;
   font: 400 11.5px/1.6 var(--mono); color: var(--add);
 }
-.wb-last code { color: var(--accent); }
+.wb-last code { color: var(--ink); }
 
 .wb-rows { list-style: none; margin: 6px 0; padding: 0; max-width: 78ch; }
 .wb-row { border: 1px solid transparent; padding: 5px 8px; margin: 2px 0; }
@@ -2504,7 +2617,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
   color: var(--ink); font: inherit; text-decoration: none;
 }
 .wb-row-done .wb-row-open, .wb-row-skipped .wb-row-open { color: var(--muted); }
-.wb-row-open:hover { color: var(--accent); }
+.wb-row-open:hover { color: var(--ink); }
 .wb-chip {
   font: 400 10px/1.5 var(--mono); color: var(--muted); font-style: normal;
   border: 1px solid var(--panel-line-dim); padding: 0 5px; margin-left: 8px;
@@ -2544,7 +2657,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
 
 /* the guide head's marker in the Courses queue card (study S2) */
 .q-guide {
-  font: 400 9.5px/1.5 var(--mono); font-style: normal; color: var(--accent);
+  font: 400 9.5px/1.5 var(--mono); font-style: normal; color: var(--ink);
   border: 1px solid var(--panel-line); padding: 0 4px; margin-right: 6px;
   vertical-align: 1px;
 }
@@ -2558,7 +2671,9 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
   background: none; border: 1px solid var(--panel-line-dim); color: var(--ink-2);
   font: 400 10.5px/1.5 var(--mono); padding: 2px 8px; cursor: pointer;
 }
-.wb-slots button.active { border-color: var(--accent); color: var(--ink); }
+.wb-slots button.active {
+  background: var(--ink); border-color: var(--ink); color: var(--void);
+}
 .wb-slots button:hover { color: var(--ink); }
 .wb-slot-x { margin-left: auto; border: none !important; }
 /* One declaration, not two: `.wb-dock` was declared here and again 250 lines
@@ -2574,7 +2689,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
 .wb-work { display: flex; flex-direction: column; }
 .wb-editor {
   flex: 1 1 auto; min-height: 120px; resize: none; width: 100%;
-  background: none; border: 1px solid var(--panel-line-dim); color: var(--ink);
+  background: var(--inset); border: 1px solid var(--panel-line-dim); color: var(--ink);
   font: 400 12px/1.6 var(--mono); padding: 8px 10px;
 }
 .wb-editor:focus { outline: none; border-color: var(--accent); }
@@ -2582,7 +2697,9 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
 /* --- the code sandbox (study S4) ----------------------------------------- */
 .wb-code { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .wb-codebar { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
-.wb-codebar .active { border-color: var(--accent); color: var(--accent); }
+.wb-codebar .active {
+  background: var(--ink); border-color: var(--ink); color: var(--void);
+}
 .wb-codenote { font: 400 10px/1.5 var(--mono); margin-right: auto; }
 .wb-code .wb-editor { min-height: 110px; flex: none; height: 32%; }
 .wb-codeout { flex: 1 1 auto; min-height: 0; overflow-y: auto; margin-top: 6px; }
@@ -2590,6 +2707,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
   font: 400 11.5px/1.6 var(--mono); color: var(--ink);
   border: 1px solid var(--panel-line-dim); padding: 6px 10px; margin: 6px 0;
   overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+  background: var(--inset);
 }
 /* A failure is amber text in its own box — a failure, never a shrug. */
 .wb-outerr { color: var(--amber); border-color: rgb(var(--amber-rgb) / 0.45); }
@@ -2602,13 +2720,13 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
 
 /* --- the tutor slot (study S5) ------------------------------------------- */
 .wb-tutor { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
-.wb-modes { display: flex; gap: 6px; margin-bottom: 6px; }
-.wb-modes button {
-  background: none; border: 1px solid var(--panel-line-dim); color: var(--ink-2);
-  font: 400 10.5px/1.5 var(--mono); letter-spacing: 0.06em; padding: 2px 9px;
-  cursor: pointer;
-}
-.wb-modes button.active { border-color: var(--accent); color: var(--accent); }
+/* The chip consolidation upstream claimed five rows; this one was still
+   restating the whole control here, and by source order its `.active` beat the
+   consolidated rule — so the tutor modes kept the accent through a change that
+   was supposed to have taken it away. Only the genuinely different declaration
+   survives, and the geometry is identical: 6px/0/2px from the shared rule with
+   the bottom re-stated is the same box as 6px/0/6px. */
+.wb-modes { margin-bottom: 6px; }
 .wb-pin { font: 400 10.5px/1.5 var(--mono); margin: 0 0 6px; overflow-wrap: anywhere; }
 /* Held is a word plus amber, never colour alone — the palette's own rule. */
 .wb-hold { color: var(--amber); font: 400 11.5px/1.6 var(--mono); border: 1px solid rgb(var(--amber-rgb) / 0.45); padding: 4px 8px; }
@@ -2621,9 +2739,10 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
 .wb-turn-a pre {
   font: 400 11.5px/1.6 var(--mono); border: 1px solid var(--panel-line-dim);
   padding: 6px 10px; margin: 6px 0; overflow-x: auto;
+  background: var(--inset);
 }
 .wb-proposal {
-  font-size: 12px; border: 1px solid var(--panel-line); border-left: 2px solid var(--accent);
+  font-size: 12px; border: 1px solid var(--panel-line); border-left: 2px solid var(--ink-2);
   padding: 4px 8px; margin: 4px 0;
 }
 .wb-tutorform { display: flex; gap: 6px; margin-top: 8px; flex: none; }
@@ -2648,16 +2767,16 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
 .miss-sessions li {
   font: 400 11px/1.7 var(--mono); color: var(--ink-2); overflow-wrap: anywhere;
 }
-.miss-course .sub a { color: var(--accent); text-decoration: none; }
+.miss-course .sub a { color: var(--ink); text-decoration: none; }
 
 /* --- generation pipeline (study S7) -------------------------------------- */
 /* The affordance row under the chain head: a draft/generate button, the live
    run line, or a notice. Live is a word plus the accent, never colour alone. */
 .wb-gen { margin: 4px 0 8px; font-size: 12.5px; }
-.wb-gen.live { color: var(--accent); font-family: var(--mono); font-size: 11.5px; }
+.wb-gen.live { color: var(--ink); font-family: var(--mono); font-size: 11.5px; }
 .wb-gen code { font: 400 11px/1.6 var(--mono); }
 .guide-line { font: 400 11px/1.6 var(--mono); margin: 4px 0 0; }
-.guide-line.live { color: var(--accent); }
+.guide-line.live { color: var(--ink); }
 
 /* One generation run folded into one ledger entry; rows expand nested and
    keep their own undo — the fold is never a bigger lever. */
@@ -2665,5 +2784,5 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
   background: none; border: none; padding: 0; cursor: pointer;
   color: var(--ink); font: 400 12px/1.6 var(--mono);
 }
-.led-group .led-run-toggle:hover { color: var(--accent); }
+.led-group .led-run-toggle:hover { color: var(--ink); }
 .led-row.led-nested { padding-left: 26px; }

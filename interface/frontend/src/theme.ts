@@ -1,5 +1,5 @@
 /**
- * theme.ts — the six palettes, and the one place a colour is written down.
+ * theme.ts — the seven palettes, and the one place a colour is written down.
  *
  * dashboard-plan §2 specified a single deliberate mode. What that bought was
  * coherence, and what it cost was that every hue lived inline in App.css: 64
@@ -9,11 +9,13 @@
  *
  * **A theme is a value swap, never a stylesheet fork.** There is no
  * `.theme-ember .panel` anywhere and there must never be one — the moment a
- * rule knows which theme is active, the other five stop being maintained.
+ * rule knows which theme is active, the other six stop being maintained.
  * Everything below is data, and `apply` writes it onto :root.
  *
- * Three rules the palettes are held to, inherited from §2 and the dataviz
- * method rather than invented here:
+ * Four rules the palettes are held to. The first three are inherited from §2
+ * and the dataviz method rather than invented here; the fourth arrived with the
+ * reference design language (`03-Projects/sigma-os/reference-ui-design-language`
+ * in the vault) and is why a Spec now states three grounds instead of one:
  *
  *   1. **Bronze means one thing.** "Never leaves this machine", app-wide.
  *      Every theme keeps it in the copper family *and* clear of its own accent
@@ -23,9 +25,15 @@
  *      glyph or a word, so a theme may move them for contrast without moving
  *      what they mean.
  *   3. **The graph's bucket colours are data, not decoration.** They stay a
- *      full categorical wheel in all six themes — nine hues that must be told
+ *      full categorical wheel in all seven themes — nine hues that must be told
  *      apart — and are only re-tuned for the ground they sit on. A monochrome
  *      GRAPHITE brain would look consistent and say nothing.
+ *   4. **Elevation is lightness, never a shadow** (the reference language's
+ *      §1.1, adopted 2026-08-10). Every palette states three grounds — the
+ *      page, the raised plane, and the inset — and a raised thing is the one
+ *      that is *lighter than the page*. The rule inverts cleanly into the dark
+ *      themes, where it had been doing nothing at all: a modal used to be
+ *      `--void` on `--void`, separated only by a hairline and a bloom.
  */
 import { useSyncExternalStore } from "react";
 
@@ -79,8 +87,13 @@ interface Spec {
   note: string;
   scheme: "dark" | "light";
   void_: string;
+  /** the raised plane: modals, cards, popovers, floating controls. Lighter
+   *  than `void_` in every theme — that is the whole rule (see 4 above). */
+  surface: string;
+  /** the inset: code blocks, formula boxes, wells. Between the two, so a well
+   *  inside a card reads as *pressed into* it rather than as a second card. */
+  inset: string;
   scrim: string;
-  shadow: string;
   /** the circuit-trace substrate; defaults to the accent */
   grid?: string;
   accent: string;
@@ -104,6 +117,9 @@ interface Spec {
    *  composites additively — see App.css's `.center`. */
   sky?: {
     bg: string;
+    /** the sky's own raised plane. A light theme's `surface` is near-white and
+     *  would be a hole punched in the star field, so the stage states its own. */
+    surface: string;
     ink: string;
     ink2: string;
     muted: string;
@@ -121,8 +137,11 @@ function make(s: Spec): Theme {
   const tokens: Record<string, string> = {
     "--void": s.void_,
     "--void-rgb": channels(s.void_),
+    "--surface": s.surface,
+    "--surface-rgb": channels(s.surface),
+    "--inset": s.inset,
+    "--inset-rgb": channels(s.inset),
     "--scrim-rgb": channels(s.scrim),
-    "--shadow": s.shadow,
     "--grid-rgb": channels(s.grid ?? s.accent),
     "--scheme": s.scheme,
 
@@ -142,6 +161,7 @@ function make(s: Spec): Theme {
     "--red": s.red,
     "--red-rgb": channels(s.red),
     "--add": s.add,
+    "--add-rgb": channels(s.add),
     "--bronze": s.bronze,
     "--bronze-rgb": channels(s.bronze),
 
@@ -150,6 +170,8 @@ function make(s: Spec): Theme {
     "--sky": sky?.bg ?? s.void_,
     "--sky-rgb": channels(sky?.bg ?? s.void_),
     "--sky-bg": sky ? sky.bg : "transparent",
+    "--sky-surface": sky?.surface ?? s.surface,
+    "--sky-surface-rgb": channels(sky?.surface ?? s.surface),
     "--sky-ink": sky?.ink ?? s.ink,
     "--sky-ink-2": sky?.ink2 ?? s.ink2,
     "--sky-muted": sky?.muted ?? s.muted,
@@ -177,7 +199,8 @@ export const THEMES: Theme[] = [
     name: "VOID",
     note: "the original — cyan structure on near-black, the instrument as specified",
     scheme: "dark",
-    void_: "#05070A", scrim: "#020305", shadow: "rgb(0 0 0 / 0.62)",
+    void_: "#05070A", surface: "#0C1116", inset: "#080C11",
+    scrim: "#020305",
     accent: "#22D3EE", glow: "#00E5FF",
     ink: "#D9E4EB", ink2: "#8299A6", muted: "#3A4A55",
     amber: "#FFB020", red: "#FF4D4D", add: "#4ADE80", bronze: "#C77D2E",
@@ -199,7 +222,8 @@ export const THEMES: Theme[] = [
     name: "EMBER",
     note: "tungsten — a warm instrument for a dark room, red-orange on charred black",
     scheme: "dark",
-    void_: "#0B0806", scrim: "#050302", shadow: "rgb(0 0 0 / 0.66)",
+    void_: "#0B0806", surface: "#150F0B", inset: "#0F0B08",
+    scrim: "#050302",
     accent: "#FF6B35", glow: "#FF9A5C",
     ink: "#F2E6D8", ink2: "#A88E75", muted: "#574536",
     // Three warm hues that have to stay apart: accent (red-orange), amber
@@ -224,7 +248,8 @@ export const THEMES: Theme[] = [
     name: "VERDANT",
     note: "phosphor — the green terminal, for when the dashboard is a readout",
     scheme: "dark",
-    void_: "#050A07", scrim: "#010402", shadow: "rgb(0 0 0 / 0.62)",
+    void_: "#050A07", surface: "#0C1310", inset: "#080D0A",
+    scrim: "#010402",
     accent: "#4ADE80", glow: "#7CF6A8",
     ink: "#DAEEDF", ink2: "#7FA189", muted: "#33503E",
     amber: "#FFC44D", red: "#FF5C5C", add: "#A3E635", bronze: "#C77D2E",
@@ -246,7 +271,8 @@ export const THEMES: Theme[] = [
     name: "SYNAPSE",
     note: "violet — the brain's own nebula colours, brought out to the whole shell",
     scheme: "dark",
-    void_: "#08060D", scrim: "#030208", shadow: "rgb(0 0 0 / 0.64)",
+    void_: "#08060D", surface: "#100D18", inset: "#0B0911",
+    scrim: "#030208",
     accent: "#C084FC", glow: "#DDA9FF",
     ink: "#E6DEF2", ink2: "#9A8FB5", muted: "#453A5E",
     amber: "#FFB020", red: "#FF4D6A", add: "#4ADE80", bronze: "#C77D2E",
@@ -268,7 +294,10 @@ export const THEMES: Theme[] = [
     name: "MERIDIAN",
     note: "daylight — a paper dashboard around a dark instrument window",
     scheme: "light",
-    void_: "#F2F5F7", scrim: "#253039", shadow: "rgb(30 45 60 / 0.18)",
+    // The one theme where the elevation rule was already native: paper is the
+    // page, and a card is the whiter thing on it.
+    void_: "#F2F5F7", surface: "#FFFFFF", inset: "#F7F9FA",
+    scrim: "#253039",
     grid: "#23404E",
     accent: "#0E7C99", glow: "#0B6F8A",
     ink: "#16212B", ink2: "#4E606E", muted: "#A7B5BE",
@@ -279,7 +308,7 @@ export const THEMES: Theme[] = [
     haze: ["#7DD3FC", "#C4B5FD", "#99F6E4", "#BFDBFE"],
     neb: ["#00E5FF", "#C084FC", "#2DD4BF", "#60A5FA"],
     sky: {
-      bg: "#060B12",
+      bg: "#060B12", surface: "#0D141D",
       ink: "#DDE7EF", ink2: "#90A5B5", muted: "#47596A",
       accent: "#38D6F0", glow: "#6FE9FF", amber: "#FFB020",
     },
@@ -305,7 +334,8 @@ export const THEMES: Theme[] = [
     name: "GRAPHITE",
     note: "neutral — structure in grey so only status and the graph carry hue",
     scheme: "dark",
-    void_: "#0A0A0C", scrim: "#030304", shadow: "rgb(0 0 0 / 0.62)",
+    void_: "#0A0A0C", surface: "#131317", inset: "#0E0E11",
+    scrim: "#030304",
     accent: "#9FB0BC", glow: "#D5E0E8",
     ink: "#E7E9EC", ink2: "#949AA1", muted: "#3E434A",
     amber: "#E0A33A", red: "#E0555F", add: "#6FBF73", bronze: "#B0885A",
@@ -321,6 +351,58 @@ export const THEMES: Theme[] = [
       fallback: "#949AA1", fire: "#E8F1F7", noSync: "#B0885A",
       edgeDim: "#8A939B", edgeFire: "#9FB0BC", edgeLit: "#D5E0E8",
       dust: "#A3ACB5", labelInk: "#E7E9EC", labelHalo: "#08080A",
+    },
+  }),
+
+  make({
+    id: "quartz",
+    name: "QUARTZ",
+    note: "the reference language — a tinted canvas under white cards, one accent kept for one thing",
+    scheme: "light",
+    // The three grounds the reference states outright, and the only palette
+    // here whose lightness step is large enough to see from across the room.
+    // MERIDIAN is also light, and this is not a second copy of it: MERIDIAN is
+    // flat paper with a teal instrument accent, QUARTZ is tinted-canvas-under-
+    // white with the faintest hairlines of any theme, because §3.2 leaves the
+    // separating to space and to that step.
+    void_: "#EEF0F8", surface: "#FFFFFF", inset: "#F5F6FA",
+    scrim: "#1E2233",
+    grid: "#3B3F63",
+    // Indigo, and this is the one value in the file chosen rather than sampled
+    // or inherited: the reference's own accent is a saturated magenta-pink, and
+    // its closing line says not to take it. Indigo clears all six existing
+    // accents — SYNAPSE's violet is lighter and pinker, MERIDIAN's is a dark
+    // teal — and clears bronze by a mile, which rule 1 requires.
+    accent: "#4F46E5", glow: "#6D63FF",
+    ink: "#171A2B", ink2: "#5A6175", muted: "#A6ADC0",
+    // Darkened for paper, exactly as MERIDIAN's are, and doing more work here:
+    // these are now also the *text* colour inside a status chip, over a 12%
+    // tint of themselves.
+    amber: "#8A5000", red: "#B3243C", add: "#15703A", bronze: "#8A5A1E",
+    // Fainter than any other theme's. The lightness step is the separator.
+    line: [0.22, 0.11],
+    haze: ["#C7BFFF", "#A5B4FC", "#DDD6FE", "#BFDBFE"],
+    neb: ["#818CF8", "#C084FC", "#38BDF8", "#2DD4BF"],
+    sky: {
+      bg: "#0A0C18", surface: "#12162A",
+      ink: "#DEE1F0", ink2: "#8E95AE", muted: "#464C66",
+      accent: "#8B93FF", glow: "#ADB2FF", amber: "#FFB020",
+    },
+    brain: {
+      // Bright, because the brain never sits on the canvas — it sits on the
+      // sky above, which is dark in this theme for the same reason it is dark
+      // in MERIDIAN: the canvas composites additively.
+      buckets: {
+        root: "#FF7A8F", inbox: "#FFD166", daily: "#E9EBF7",
+        academics: "#5CE894", areas: "#FFA24D", projects: "#7C9DFF",
+        system: "#C08BFF", archive: "#7C8399", meta: "#3EE0CB",
+      },
+      fallback: "#8E95AE", fire: "#B9BEFF",
+      // The second bronze, for the same reason MERIDIAN carries one: #8A5A1E
+      // is legible on the canvas and invisible on the sky.
+      noSync: "#E0A46A",
+      edgeDim: "#7F87A8", edgeFire: "#8B93FF", edgeLit: "#C3C7FF",
+      dust: "#A2A9CC", labelInk: "#DEE1F0", labelHalo: "#070914",
     },
   }),
 ];
