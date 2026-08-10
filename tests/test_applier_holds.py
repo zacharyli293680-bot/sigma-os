@@ -200,6 +200,38 @@ class TestBlueprintHold(HoldBase):
         out = applier.apply_one(p, "guide", extra={"run": "gen-test-1"})
         self.assertEqual(out["action"], "create", out)
 
+    def test_a_new_module_cannot_land_in_another_courses_folder(self):
+        """Authorisation is keyed to the TARGET's course folder: TEST-101's
+        planned, grammar-clean module aimed at OTHER-202/guide/ used to
+        commit into a course with no blueprint at all (S7 review, verified
+        by execution)."""
+        self.blueprint()
+        other = self.vault / "02-Areas" / "Academics" / "OTHER-202" / "guide"
+        other.mkdir(parents=True)
+        target = "02-Areas/Academics/OTHER-202/guide/test-101-m01-test-module.md"
+        p = self.proposal("cross-course", target, _valid())
+        self.assert_held(applier.apply_one(p, "guide"), p,
+                         "claims course", target)
+
+    def test_a_new_module_outside_any_guide_folder_is_held(self):
+        self.blueprint()
+        (self.vault / "04-Resources").mkdir()
+        target = "04-Resources/test-101-m01-test-module.md"
+        p = self.proposal("misfiled-module", target, _valid())
+        self.assert_held(applier.apply_one(p, "guide"), p,
+                         "guide/ folder", target)
+
+    def test_a_bom_cannot_smuggle_a_module_past_the_guards(self):
+        """A leading U+FEFF made the type sniff read {} while the vault's
+        utf-8-sig readers still saw type: module — the gate and the scanner
+        disagreed about identical bytes (S7 review)."""
+        self.blueprint()
+        target = self.target()
+        broken = "﻿" + _valid().replace("- answer:: 2\n", "", 1)
+        p = self.proposal("bom-module", target, broken)
+        self.assert_held(applier.apply_one(p, "guide"), p,
+                         "fails the grammar", target)
+
     def test_an_update_to_an_existing_module_needs_no_blueprint(self):
         """Creation-only, deliberately: the pilot's hand-written modules
         predate any blueprint, and an auditor fixing one must not be blocked

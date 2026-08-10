@@ -340,6 +340,136 @@ class TestModulePass(GuideBase):
         # both modules failed; the checkpoint never authored against them
         self.assertNotIn("CP1", prog["results"])
 
+    def test_dropped_content_fails_the_job_instead_of_vanishing(self):
+        """The S7 review's top finding: the parser flags-and-drops malformed
+        content (a `??q-` opener and everything under it), and the assembler
+        used to launder those problems away — a question the model wrote
+        silently deleted from a note that then validated clean."""
+        row = {"kind": "module", "n": 1, "title": "First module", "unit": None,
+               "est": 30,
+               "sources": ["02-Areas/Academics/TEST-101/lectures/l1.md"]}
+        laundered = _module_body(1).replace("\n?? q-1-8 · numeric",
+                                            "\n??q-1-8 · numeric")
+        text, errs = gd.author_module(self.vault, "TEST-101", row,
+                                      compose=lambda p: laundered)
+        self.assertIsNone(text)
+        self.assertTrue(any("??" in e or "practice" in e for e in errs), errs)
+
+    def test_a_raising_model_call_fails_the_job_not_the_run(self):
+        """subprocess.TimeoutExpired out of `claude -p` used to kill run()
+        with a traceback, freezing state:'running' on disk (S7 review)."""
+        import subprocess as sp
+        gd.run("TEST-101", vault=self.vault, compose=compose_stub)
+        self.approve()
+        def boom(prompt):
+            raise sp.TimeoutExpired(cmd="claude", timeout=600)
+        rc = gd.run("TEST-101", vault=self.vault, compose=boom)
+        self.assertEqual(rc, 1)
+        prog = self.progress()
+        self.assertEqual(prog["state"], "failed")     # recorded, not a crash
+        self.assertIn("two consecutive", prog["note"])
+
+    def test_a_duplicate_labelled_hand_row_survives_reconciliation(self):
+        """A hand row that merely BEGINS with a planned label used to fall
+        between block and extras and be deleted in the reconcile commit —
+        a scripted deletion of Zach's content (S7 review, reproduced)."""
+        gd.run("TEST-101", vault=self.vault, compose=compose_stub)
+        self.approve()
+        (self.course / "test-101-guide.md").write_text(
+            "---\ntype: guide\ncourse: TEST-101\ntags: [guide]\n---\n\n"
+            "## Modules\n\n"
+            "- [ ] M01 · [[test-101-m01-first-module|First module]]\n"
+            "- [ ] M01 redo the derivation by hand\n", encoding="utf-8")
+        _git(self.vault, "add", "-A")
+        _git(self.vault, "commit", "-m", "hand chain with duplicate label")
+        gd.run("TEST-101", vault=self.vault, compose=compose_stub)
+        text = (self.course / "test-101-guide.md").read_text(encoding="utf-8")
+        self.assertIn("- [ ] M01 redo the derivation by hand", text)
+
+    def test_the_blueprint_pass_respects_an_unresolved_proposal(self):
+        (rf.PROPOSALS / "held-blueprint.md").write_text(
+            "---\ntype: proposal\nstatus: pending\nkind: note\n"
+            'target: "02-Areas/Academics/TEST-101/test-101-guide-blueprint.md"\n'
+            "tags: [proposal]\n---\n\n# held blueprint\n", encoding="utf-8")
+        calls = []
+        rc = gd.run("TEST-101", vault=self.vault,
+                    compose=lambda p: calls.append(p) or BLUEPRINT_JSON)
+        self.assertEqual(rc, 0)
+        self.assertEqual(calls, [])                   # no model spend
+        self.assertEqual(self.progress()["state"], "blocked")
+        self.assertIn("held-blueprint", self.progress()["note"])
+
+    def test_a_blueprint_pause_exits_zero_like_the_module_pause(self):
+        def limited(prompt):
+            gd._just_rate_limited = lambda: True
+            return ""
+        rc = gd.run("TEST-101", vault=self.vault, compose=limited)
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.progress()["state"], "paused")
+
+    def test_git_busy_during_the_scaffold_is_a_blocked_record_not_a_crash(self):
+        gd.run("TEST-101", vault=self.vault, compose=compose_stub)
+        self.approve()
+        from sigma import gitops as go
+        real = gd.reconcile_chain
+        def busy(*a, **k):
+            raise go.GitBusy("another Sigma writer holds the git mutex")
+        gd.reconcile_chain = busy
+        try:
+            rc = gd.run("TEST-101", vault=self.vault, compose=compose_stub)
+        finally:
+            gd.reconcile_chain = real
+        self.assertEqual(rc, 1)
+        prog = self.progress()
+        self.assertEqual(prog["state"], "blocked")
+        self.assertIn("git mutex is busy", prog["note"])
+
+    def test_checkpoint_sources_follow_frontmatter_identity_not_filenames(self):
+        """A hand-named module note (module: 1 in guide/custom-name.md) is
+        the resume record — its checkpoint must mine it, not a filename
+        reconstructed from the blueprint title (S7 review)."""
+        gd.run("TEST-101", vault=self.vault, compose=compose_stub)
+        self.approve()
+        text = ("---\ntype: module\ncourse: TEST-101\nmodule: 1\nunit: \n"
+                "title: First module\nestimate: 30\nsources:\n"
+                "  - 02-Areas/Academics/TEST-101/lectures/l1.md\n"
+                "verified: 2026-08-09\ntags: [guide]\n---\n\n" + _module_body(1))
+        (self.course / "guide" / "test-101-m01-a-custom-name.md").write_text(
+            text, encoding="utf-8")
+        row = {"kind": "checkpoint", "n": 1, "title": "Shapes", "unit": None,
+               "covers": [1]}
+        bp = {"rows": [{"kind": "module", "n": 1, "title": "First module",
+                        "unit": None, "est": 30, "sources": [], "line": 0},
+                       row]}
+        prompts = []
+        gd.author_checkpoint(self.vault, "TEST-101", row, bp,
+                             compose=lambda p: prompts.append(p) or _cp_body())
+        self.assertTrue(prompts)
+        self.assertIn("test-101-m01-a-custom-name.md", prompts[0])
+
+    def test_a_dead_holders_lock_is_taken_over(self):
+        """taskkill /T /F skips __exit__; a fresh lock naming a dead pid used
+        to block the documented resume for the 2h staleness window."""
+        import subprocess as sp
+        proc = sp.Popen([sys.executable, "-c", "pass"])
+        proc.wait()
+        gd.LOCK_PATH.write_text(json.dumps(
+            {"pid": proc.pid,
+             "at": __import__("datetime").datetime.now()
+                   .isoformat(timespec="seconds")}), encoding="utf-8")
+        with gd.Lock() as lock:
+            self.assertTrue(lock.held, "a dead holder's lock must be taken over")
+
+    def test_a_live_holders_lock_is_respected(self):
+        gd.LOCK_PATH.write_text(json.dumps(
+            {"pid": __import__("os").getpid(),
+             "at": __import__("datetime").datetime.now()
+                   .isoformat(timespec="seconds")}), encoding="utf-8")
+        with gd.Lock() as lock:
+            self.assertFalse(lock.held)
+        self.assertTrue(gd.LOCK_PATH.exists(),
+                        "a refused lock must not be deleted on exit")
+
     def test_the_window_refusal_blocks_before_anything_runs(self):
         gd.window_refusal = lambda: "reserved for the 09:00 fleet run"
         rc = gd.run("TEST-101", vault=self.vault, compose=compose_stub)

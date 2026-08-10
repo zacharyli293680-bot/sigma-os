@@ -57,6 +57,61 @@ class TestGrammar(unittest.TestCase):
         self.assertEqual(lesson._covers_numbers("junk"), [])
         self.assertEqual(lesson._covers_numbers("M4–M2"), [])
 
+    def test_covers_ranges_accept_spaces_around_the_dash(self):
+        """Natural typography in a grammar whose own separator is a spaced
+        `·` — tokenising on whitespace first made the regex's space
+        allowance dead code (S7 review)."""
+        self.assertEqual(lesson._covers_numbers("M1 – M4"), [1, 2, 3, 4])
+        self.assertEqual(lesson._covers_numbers("M01 - M04"), [1, 2, 3, 4])
+        self.assertEqual(lesson._covers_numbers("M1, M3 – M5"), [1, 3, 4, 5])
+
+    def test_a_plan_row_after_a_near_miss_heading_is_flagged_not_lost(self):
+        """'## Unit 2 addendum' fails BP_UNIT_RE and used to silently swallow
+        every row after it with problems=[] — an approved plan whose M05 no
+        code path could see (S7 review, verified by execution)."""
+        text = _bp(_mod_row(1)) + "\n## Unit 2 addendum\n\n" + _mod_row(5)
+        d = lesson.parse_blueprint(text)
+        self.assertEqual(len(d["rows"]), 1)
+        self.assertTrue(any("ended the plan section" in p for p in d["problems"]),
+                        d["problems"])
+        self.assertNotEqual(lesson.validate_blueprint(text), [])
+
+    def test_serialize_never_emits_a_unit_none_heading(self):
+        """A None-unit row in a united plan used to serialize as a literal
+        '## Unit None' its own parser reads as end-of-plan, silently dropping
+        every row beneath it (S7 review, verified by execution)."""
+        d = {"course": "TEST-101", "status": "draft",
+             "units": [{"n": 1, "title": None, "line": 0}],
+             "rows": ([{"kind": "module", "n": n, "title": f"T{n}", "unit": 1,
+                        "est": 40, "sources": ["x/a.md"], "line": 0}
+                       for n in (1, 2, 3, 4)]
+                      + [{"kind": "checkpoint", "n": 1, "title": None,
+                          "unit": None, "covers": [1, 2, 3, 4], "line": 0}]
+                      + [{"kind": "module", "n": 5, "title": "Tail",
+                          "unit": None, "est": 40, "sources": ["x/a.md"],
+                          "line": 0}])}
+        t = lesson.serialize_blueprint(d)
+        self.assertNotIn("Unit None", t)
+        p = lesson.parse_blueprint(t)
+        self.assertEqual(len(p["rows"]), len(d["rows"]),
+                         "the round trip must not lose rows")
+
+    def test_leading_unitless_rows_get_a_modules_section(self):
+        d = {"course": "TEST-101", "status": "draft",
+             "units": [{"n": 1, "title": None, "line": 0}],
+             "rows": ([{"kind": "module", "n": 1, "title": "Lead",
+                        "unit": None, "est": 40, "sources": ["x/a.md"],
+                        "line": 0}]
+                      + [{"kind": "module", "n": n, "title": f"T{n}", "unit": 1,
+                          "est": 40, "sources": ["x/a.md"], "line": 0}
+                         for n in (2, 3, 4, 5)]
+                      + [{"kind": "checkpoint", "n": 1, "title": None,
+                          "unit": 1, "covers": [2, 3], "line": 0}])}
+        t = lesson.serialize_blueprint(d)
+        p = lesson.parse_blueprint(t)
+        self.assertEqual(len(p["rows"]), 6)
+        self.assertIsNone(p["rows"][0]["unit"])
+
     def test_a_checkpoint_row_without_covers_is_a_problem(self):
         d = lesson.parse_blueprint(_bp(_mod_row(1) + "- CP1 · just a title\n"))
         self.assertTrue(any("must name what it covers" in p
@@ -259,6 +314,19 @@ class TestVaultSide(unittest.TestCase):
 
     def test_neither_note_is_still_none(self):
         self.assertIsNone(lesson.guide(self.vault, "TEST-101"))
+
+    def test_a_blank_status_blueprint_still_answers_a_payload(self):
+        """'leave unknowns blank' is the contract's own habit — a real
+        blueprint note with an empty status: used to 404 the course and
+        dead-end the workbench into offering to draft a plan that already
+        exists (S7 review)."""
+        (self.course / "test-101-guide-blueprint.md").write_text(
+            _bp(_mod_row(1)).replace("status: draft", "status:"),
+            encoding="utf-8")
+        g = lesson.guide(self.vault, "TEST-101")
+        self.assertIsNotNone(g)
+        self.assertEqual(g["blueprint"], "unstated")
+        self.assertEqual(g["planned"], 1)
 
     def test_a_sealed_blueprint_reads_as_absent(self):
         self.bp(_mod_row(1))

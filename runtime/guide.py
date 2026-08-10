@@ -93,11 +93,14 @@ class Lock:
                 self.held = True
                 return self
             except FileExistsError:
-                age = _hours_since((self._read() or {}).get("at"))
-                if age is not None and age < self.stale_hours:
+                info = self._read() or {}
+                age = _hours_since(info.get("at"))
+                if (age is not None and age < self.stale_hours
+                        and self._alive(info.get("pid"))):
                     return self
                 log(f"taking over a stale lock ({age:.1f}h old)" if age is not None
-                    else "taking over an unreadable lock")
+                    and age >= self.stale_hours
+                    else "taking over a dead holder's lock")
                 try:
                     self.path.unlink()
                 except OSError:
@@ -112,6 +115,35 @@ class Lock:
             return json.loads(self.path.read_text(encoding="utf-8"))
         except Exception:
             return None
+
+    @staticmethod
+    def _alive(pid) -> bool:
+        """Is the lock's holder still a running process? The palette slot's
+        timeout and the server's shutdown hook both kill the tree with
+        `taskkill /T /F`, which skips __exit__ — without this probe the
+        leftover lock blocked the documented resume for up to the 2h
+        staleness window. Anything uncertain reads as alive (the
+        conservative direction); os.kill is never used, because on Windows
+        any signal but CTRL_* unconditionally TERMINATES the target."""
+        if not pid:
+            return True
+        if sys.platform != "win32":
+            return True
+        try:
+            import ctypes
+            import ctypes.wintypes
+            k32 = ctypes.windll.kernel32
+            handle = k32.OpenProcess(0x1000, False, int(pid))  # QUERY_LIMITED
+            if not handle:
+                return False
+            # An exited process stays openable while anything holds a handle
+            # to it — the exit code, not the handle, says whether it lives.
+            code = ctypes.wintypes.DWORD()
+            ok = k32.GetExitCodeProcess(handle, ctypes.byref(code))
+            k32.CloseHandle(handle)
+            return not ok or code.value == 259          # STILL_ACTIVE
+        except Exception:
+            return True
 
     def __exit__(self, *exc):
         if self.held:
@@ -148,6 +180,19 @@ def _just_rate_limited() -> bool:
         return spend.rate_limited_within(1)
     except Exception:
         return False
+
+
+def _call_safe(call, prompt: str) -> str | None:
+    """A model call must cost a failed job, never the run (retro.py's own
+    pattern). subprocess.TimeoutExpired from `claude -p` — or any transport
+    error — comes back as None; the job records a failure and the pipeline
+    keeps its progress record consistent instead of dying with a traceback
+    that leaves state:"running" frozen on disk."""
+    try:
+        return call(prompt)
+    except Exception as e:
+        log(f"model call raised: {type(e).__name__}: {e}")
+        return None
 
 
 # --------------------------------------------------------------------------
@@ -289,6 +334,24 @@ def _blueprint_rows_to_dict(course: str, data: dict) -> dict:
             rows.append(row)
         except (KeyError, TypeError, ValueError):
             continue
+    # The prompt's own example sanctions `"unit": null`, and a null-unit row
+    # in a united plan used to serialize as a literal `## Unit None` heading
+    # that hid every row beneath it from the parser (S7 review, verified by
+    # execution). Normalise before serialising: a checkpoint inherits the
+    # unit of the last module it covers; anything else carries the previous
+    # row's unit forward.
+    if units:
+        last = None
+        for row in rows:
+            if row["unit"] is None:
+                if row["kind"] == "checkpoint" and row.get("covers"):
+                    cu = [m["unit"] for m in rows
+                          if m["kind"] == "module" and m["n"] in row["covers"]
+                          and m["unit"] is not None]
+                    row["unit"] = max(cu) if cu else last
+                else:
+                    row["unit"] = last
+            last = row["unit"]
     return {"course": course, "status": "draft", "rows": rows, "units": units}
 
 
@@ -318,20 +381,34 @@ def blueprint_pass(vault: Path, course: str, run_id: str, compose=None) -> dict:
     prompt = BLUEPRINT_PROMPT.format(course=folder.name,
                                      existing="\n".join(existing) or "(none)",
                                      inventory=inventory)
+    waiting = _pending_proposal_for(rel)
+    if waiting:
+        return {"action": "waiting",
+                "reason": f"unresolved proposal {waiting} already targets the "
+                          f"blueprint — resolve it before drafting again"}
     call = compose or (lambda p: call_model(p, MODEL, timeout=BLUEPRINT_TIMEOUT,
                                             actor="guide"))
     errs: list[str] = ["no reply"]
     for attempt in (1, 2):
-        out = call(prompt)
+        out = _call_safe(call, prompt)
         if _just_rate_limited():
             return {"action": "failed", "reason": "rate limited", "paused": True}
-        data = parse_model_json(out)
-        if data is None:
+        data = parse_model_json(out) if out is not None else None
+        if out is None:
+            errs = ["the model call failed or timed out — see guide.log"]
+        elif data is None:
             errs = ["the reply was not parseable JSON"]
         else:
             d = _blueprint_rows_to_dict(folder.name, data)
             text = ln.serialize_blueprint(d)
             errs = ln.validate_blueprint(text, vault=vault)
+            # Never write something the scanner cannot read (§13) includes
+            # never LOSING something the scanner cannot see: the reparse must
+            # account for every planned row, or a heading broke the grammar.
+            lost = len(d["rows"]) - len(ln.parse_blueprint(text)["rows"])
+            if lost:
+                errs.append(f"round trip lost {lost} plan row(s) — a heading "
+                            f"broke the row grammar")
         if not errs:
             return _propose_and_apply(
                 f"{folder.name} study-guide blueprint",
@@ -409,10 +486,14 @@ def reconcile_chain(vault: Path, course: str, bp: dict, run_id: str) -> dict | N
                 row_at.setdefault(label, i)
         block = [lines[row_at[lab]] if lab in row_at else new
                  for lab, new in desired]
-        # a hand row the plan does not name stays, after the planned block
-        extras = [lines[i] for i in row_idx
-                  if _row_label(ln.CHAIN_ROW_RE.match(lines[i]).group(2))
-                  not in {lab for lab, _ in desired}]
+        # EVERY row not re-emitted in the block survives, after it — not just
+        # rows whose label the plan omits. Filtering by label deleted a
+        # hand-written second row that merely began with a planned label
+        # ("- [ ] M01 redo the derivation") — a scripted deletion of Zach's
+        # content, the S7 review's reproduction. Nothing in this vault
+        # deletes a record; the reconcile re-orders and adds, only.
+        chosen = {row_at[lab] for lab, _ in desired if lab in row_at}
+        extras = [lines[i] for i in row_idx if i not in chosen]
         insert_at = row_idx[0] if row_idx else len(lines)
         kept = [line for i, line in enumerate(lines) if i not in set(row_idx)]
         new_lines = kept[:insert_at] + block + extras + kept[insert_at:]
@@ -568,14 +649,21 @@ def author_module(vault: Path, course: str, row: dict, compose=None) -> tuple[st
                                             actor="guide"))
     errs: list[str] = ["no reply"]
     for attempt in (1, 2):
-        out = call(prompt)
+        out = _call_safe(call, prompt)
         if _just_rate_limited():
             return None, ["rate limited"]
         if not (out or "").strip():
-            errs = ["the model returned nothing"]
+            errs = ["the model call failed, timed out, or returned nothing"]
         else:
-            text = _assemble_module(folder.name, row, out)
-            errs = ln.validate_any(text, vault=vault)
+            text, raw_problems = _assemble_module(folder.name, row, out)
+            # The raw body's parse problems come FIRST: the parser flags and
+            # drops malformed content (a `??q-` opener and everything under
+            # it, prose after an item's keyed lines), so the canonical text
+            # can validate clean while a question the model wrote has already
+            # vanished. Laundering those problems away was the S7 review's
+            # top finding — what the parser dropped is a repair, never a
+            # silent deletion.
+            errs = raw_problems + ln.validate_any(text, vault=vault)
             if not errs:
                 return text, []
         if attempt == 1:
@@ -593,12 +681,15 @@ def _strip_fence(out: str) -> str:
     return s
 
 
-def _assemble_module(course: str, row: dict, body: str) -> str:
-    """Frontmatter is script-owned: every field comes from the approved
-    blueprint row, never from the model — the estimate is re-derived from the
-    segment ⏱ values so the sum rule is checked against what was actually
-    written, and `verified:` is today because validation against the sources
-    happens right after this."""
+def _assemble_module(course: str, row: dict, body: str) -> tuple[str, list[str]]:
+    """(canonical note text, the RAW body's parse problems). Frontmatter is
+    script-owned: every field comes from the approved blueprint row, never
+    from the model — the estimate is re-derived from the segment ⏱ values so
+    the sum rule is checked against what was actually written, and
+    `verified:` is today because validation against the sources happens right
+    after this. The raw problems ride along because serialising re-emits only
+    what the parser KEPT — content the parser flagged and dropped must fail
+    the job, not vanish from the committed note."""
     body = _strip_fence(body)
     parsed = ln.parse("---\ntype: module\n---\n\n" + body)
     total = sum(s["minutes"] for s in parsed["segments"]) or row["est"]
@@ -607,7 +698,7 @@ def _assemble_module(course: str, row: dict, body: str) -> str:
          "sources": list(row["sources"]),
          "verified": datetime.date.today().isoformat(),
          "tags": "[guide]", "preamble": "", "segments": parsed["segments"]}
-    return ln.serialize(d)
+    return ln.serialize(d), list(parsed["problems"])
 
 
 CHECKPOINT_PROMPT = """You are authoring checkpoint CP{n} of {course}'s study
@@ -646,16 +737,15 @@ Assessment and module notes:
 def author_checkpoint(vault: Path, course: str, row: dict, bp: dict,
                       compose=None) -> tuple[str | None, list[str]]:
     folder = ln.course_folder(vault, course)
-    code = folder.name.lower()
     # sources: the covered modules' notes, plus the course's own assessment
-    # notes — the shapes a checkpoint mines (§13.4)
-    src_rels = []
-    for r in bp["rows"]:
-        if r["kind"] == "module" and r["n"] in row["covers"]:
-            base = module_basename(code, r["n"], r["title"])
-            rel = f"02-Areas/Academics/{folder.name}/guide/{base}.md"
-            if (vault / rel).is_file():
-                src_rels.append(rel)
+    # notes — the shapes a checkpoint mines (§13.4). Covered modules are
+    # found by their frontmatter identity through the same scan the deferral
+    # gate uses, never by reconstructing a filename from the blueprint title:
+    # hand-authored modules are explicitly the resume record, and a renamed
+    # or hand-named note must feed its own checkpoint.
+    src_rels = [m["file"] for m in ln.scan(vault)
+                if m["course"].lower() == folder.name.lower()
+                and m["module"] in row["covers"]]
     exam_notes = [n for n in course_notes(vault, folder)
                   if n["type"] in ("exam-prep", "assignment")][:6]
     src_rels += [n["rel"] for n in exam_notes]
@@ -672,7 +762,7 @@ def author_checkpoint(vault: Path, course: str, row: dict, bp: dict,
                                             actor="guide"))
     errs: list[str] = ["no reply"]
     for attempt in (1, 2):
-        out = call(prompt)
+        out = _call_safe(call, prompt)
         if _just_rate_limited():
             return None, ["rate limited"]
         text = _assemble_checkpoint(folder.name, row, _strip_fence(out or ""))
@@ -755,8 +845,12 @@ def run(course: str, vault: Path = DEFAULT_VAULT, compose=None) -> int:
                 "seconds": int((datetime.datetime.now() - started).total_seconds())}
             prog["current"] = None
             if r.get("paused"):
+                # The same pause the module loop exits 0 on: a designed,
+                # resumable stop, never a failure to a scripted caller.
                 prog.update(state="paused", note="window exhausted",
                             resume_at=_resume_estimate())
+            elif r.get("action") == "waiting":
+                prog.update(state="blocked", note=r.get("reason"))
             elif ok:
                 prog.update(state="done",
                             note="blueprint drafted — edit it, then set "
@@ -766,7 +860,8 @@ def run(course: str, vault: Path = DEFAULT_VAULT, compose=None) -> int:
             prog["finished"] = datetime.datetime.now().isoformat(timespec="seconds")
             write_progress(prog)
             print(prog["note"] or "done")
-            return 0 if ok else 1
+            return 0 if (ok or r.get("paused")
+                         or r.get("action") == "waiting") else 1
 
         if bp["status"] != "approved":
             note = (f"{course}'s blueprint is {bp['status'] or 'unstated'!r} — "
@@ -784,9 +879,20 @@ def run(course: str, vault: Path = DEFAULT_VAULT, compose=None) -> int:
             return 1
 
         # approval already happened — make the plan reachable (§13.2), then
-        # author what is missing, in plan order, one commit per note
-        reconcile_chain(vault, course, bp, run_id)
-        reconcile_index(vault, course, bp, run_id)
+        # author what is missing, in plan order, one commit per note.
+        # GitBusy degrades to a blocked record, exactly as apply_one degrades
+        # the same exception to a held proposal — never a traceback that
+        # leaves the previous run's progress on screen.
+        try:
+            reconcile_chain(vault, course, bp, run_id)
+            reconcile_index(vault, course, bp, run_id)
+        except gitops.GitBusy as e:
+            note = (f"the git mutex is busy ({e}) — nothing written; "
+                    f"re-run when it frees")
+            print(note)
+            write_progress({"state": "blocked", "course": course, "note": note,
+                            "queue": [], "current": None, "results": {}})
+            return 1
 
         have_m, have_c = ln.existing_units(vault, course)
         todo = [r for r in bp["rows"]

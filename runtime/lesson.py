@@ -642,8 +642,12 @@ def guide(vault: Path, course: str, split=None) -> dict | None:
     if bp_rel is not None:
         try:
             bp_text = bp.read_text(encoding="utf-8-sig", errors="replace")
-            blueprint = str((frontmatter(bp_text) or {}).get("status")
-                            or "").strip() or None
+            # A blank status is a malformed blueprint, not an absent one —
+            # doctor flags it, and the payload must still render so the
+            # workbench can SAY so instead of falling into the no-guide
+            # dead end and offering to draft a plan that already exists.
+            blueprint = (str((frontmatter(bp_text) or {}).get("status")
+                             or "").strip() or "unstated")
             plan = parse_blueprint(bp_text)
             have_m, have_c = existing_units(vault, course)
             planned = len(plan["rows"])
@@ -651,8 +655,8 @@ def guide(vault: Path, course: str, split=None) -> dict | None:
                           if (r["n"] not in have_m if r["kind"] == "module"
                               else r["n"] not in have_c))
         except OSError:
-            blueprint = None
-    if rel is None and blueprint is None:
+            bp_rel = None                   # unreadable reads as absent
+    if rel is None and bp_rel is None:
         return None
 
     return {
@@ -933,9 +937,13 @@ UNIT_MIN, UNIT_MAX = 4, 6
 
 def _covers_numbers(spec: str) -> list[int]:
     """`M2, M3` / `M01–M04` / `2-4` → sorted module numbers. Ranges accept
-    the en dash the titles use and the hyphen a keyboard produces."""
+    the en dash the titles use and the hyphen a keyboard produces — with or
+    without spaces around it (`M1 – M4` is natural typography in a grammar
+    whose own separator is a spaced `·`; tokenising on whitespace first made
+    the regex's space allowance dead code and rejected exactly that)."""
     out: set = set()
-    for tok in re.split(r"[,\s]+", spec.strip()):
+    spec = re.sub(r"\s*([–-])\s*", r"\1", spec.strip())
+    for tok in re.split(r"[,\s]+", spec):
         if not tok:
             continue
         m = re.match(r"^M?0*(\d+)(?:\s*[–-]\s*M?0*(\d+))?$", tok)
@@ -966,6 +974,7 @@ def parse_blueprint(text: str) -> dict:
     }
     unit: int | None = None
     in_rows = in_fence = False
+    ended_by = "the preamble — no plan section is open yet"
     for i, line in enumerate(text.splitlines(), 1):
         if line.lstrip().startswith("```"):
             in_fence = not in_fence
@@ -984,8 +993,17 @@ def parse_blueprint(text: str) -> dict:
             continue
         if H2_RE.match(line):
             in_rows = False                  # any other section ends the plan
+            ended_by = line.strip()
             continue
         if not in_rows:
+            # A plan-shaped row outside the plan is a LOST row, not prose —
+            # the exact way a near-miss unit heading ('## Unit 2 addendum',
+            # '## unit 3') silently swallowed everything after it. Flag it;
+            # never silently drop what looks like a planned module.
+            if BP_MODULE_RE.match(line) or BP_CP_RE.match(line):
+                d["problems"].append(
+                    f"line {i}: plan row after {ended_by!r} ended the plan "
+                    f"section — a unit heading is `## Unit <n> · <name>`")
             continue
         mm = BP_MODULE_RE.match(line)
         if mm:
@@ -1142,16 +1160,29 @@ def serialize_blueprint(d: dict) -> str:
     if not units:
         out.append("## Modules")
         out.append("")
-    current = object()
+    # `section` is what heading is currently open: None = nothing yet,
+    # "flat" = a leading `## Modules`, an int = that unit. A row whose unit
+    # is None NEVER opens a heading of its own — `## Unit None` is a heading
+    # this file's own parser reads as end-of-plan, which silently dropped
+    # every row beneath it (found by the S7 review, verified by execution).
+    # Leading unit-less rows get `## Modules`; later ones stay in the open
+    # unit, which the reparse then records as that unit — no row is ever lost.
+    section: object = None
     for r in d["rows"]:
-        if units and r["unit"] != current:
-            current = r["unit"]
-            u = units.get(current) or {}
-            title = f" · {u['title']}" if u.get("title") else ""
-            if out[-1] != "":
+        if units:
+            ru = r["unit"]
+            if ru is not None and ru != section:
+                section = ru
+                u = units.get(ru) or {}
+                title = f" · {u['title']}" if u.get("title") else ""
+                if out[-1] != "":
+                    out.append("")
+                out.append(f"## Unit {ru}{title}")
                 out.append("")
-            out.append(f"## Unit {current}{title}")
-            out.append("")
+            elif section is None:
+                section = "flat"
+                out.append("## Modules")
+                out.append("")
         if r["kind"] == "module":
             out.append(f"- M{r['n']:02} · {r['title']} ⏱ {r['est']}")
             out += [f"    - source:: {s}" for s in r["sources"]]

@@ -692,11 +692,18 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
 
   // When a generation run for the open course settles, its notes just landed
   // (or were held) — refetch the chain rather than waiting for a reopen.
+  // A null guideProg is a DEAD FEED, not a state: App nulls it on any SSE
+  // error, and overwriting the 'running' evidence with null meant a run that
+  // finished across a backend restart never triggered this refetch (S7
+  // review) — the reconnect replays the terminal record, and prev must still
+  // say 'running' when it does.
   const prevGenState = useRef<string | null>(null);
   useEffect(() => {
     const s = guideProg?.state ?? null;
+    if (s === null) return;
     if (open && course && guideProg?.course === course &&
         prevGenState.current === "running" && s !== "running") {
+      setGenNote(null);            // "started —" must not outlive the run
       void fetchGuide(course);
       get<Courses>("courses").then(setCourses).catch(() => {});
     }
@@ -1200,6 +1207,14 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
                         ✎ draft blueprint
                       </button>
                     </p>;
+                  }
+                  if (guide.blueprint !== "approved") {
+                    // "unstated" or anything else hand-typed: say so rather
+                    // than dead-ending — generation refuses this state too.
+                    return <p className="wb-gen dim">blueprint status is{" "}
+                      <code>{guide.blueprint}</code> — set{" "}
+                      <code>status: draft</code> or <code>status: approved</code>{" "}
+                      in <code>{course?.toLowerCase()}-guide-blueprint.md</code></p>;
                   }
                   return null;
                 })()}

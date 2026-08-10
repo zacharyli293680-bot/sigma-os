@@ -168,7 +168,10 @@ def apply_one(prop_path: Path, actor: str, extra: dict | None = None) -> dict:
     if any(rel.startswith(p) for p in _SELF_PATHS):
         return held("targets the proposal machinery itself")
 
-    content = rf.proposal_content(text)
+    # A leading BOM would make the type sniff below read {} while the vault's
+    # own readers (utf-8-sig) still see `type: module` — the gate and the
+    # scanner must classify identical bytes identically, so strip it here.
+    content = rf.proposal_content(text).lstrip("﻿")
     if not content.strip():
         return held("empty content block")
     title = _title_of(text, name)
@@ -198,6 +201,21 @@ def apply_one(prop_path: Path, actor: str, extra: dict | None = None) -> dict:
 
             existed = dest.exists()
             if ctype in ("module", "checkpoint") and not existed:
+                # Authorisation is keyed to the TARGET's course folder, never
+                # to whatever course the content claims: without this, a
+                # drifted or crafted proposal naming course A in its
+                # frontmatter landed a "new module" in course B's guide/ —
+                # or in a course with no blueprint at all (S7 review).
+                pm = re.match(r"^02-Areas/Academics/([^/]+)/guide/[^/]+\.md$", rel)
+                if not pm:
+                    return held(f"a new {ctype} note belongs in its course's "
+                                f"guide/ folder, not {rel}")
+                fm_course = str((rf.frontmatter(content) or {})
+                                .get("course") or "").strip()
+                if fm_course.lower() != pm.group(1).lower():
+                    return held(f"the note claims course {fm_course!r} but the "
+                                f"target lands in {pm.group(1)}/ — the naming "
+                                f"rule is one string")
                 reason = _blueprint_hold(vault, content, ctype)
                 if reason:
                     return held(reason)
