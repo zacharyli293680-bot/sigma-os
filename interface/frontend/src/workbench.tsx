@@ -26,13 +26,21 @@
  * fired by the foot's button and by every close path via the open-effect's
  * cleanup, idempotent server-side through the watermark.
  *
- * Esc peels in arrival order — focus, dock, module → chain view — in the
- * capture phase; the chain view lets Esc through to App's ladder to close.
- * A module whose parse reports problems is HELD and never rendered as if fine.
+ * Esc peels in arrival order — focus, dock, module → chain, chain → the course
+ * grid — in the capture phase; only the grid lets Esc through to App's ladder
+ * to close. A module whose parse reports problems is HELD, never rendered as if
+ * fine.
+ *
+ * Three levels, one component, two files. `course === null` is the grid
+ * (courses.tsx), `course` set is that course's chain, `picked` set is a lesson.
+ * The grid is presentational plus one POST; everything stateful stays here,
+ * because the reducer, the study clock's refs and the generation feed's
+ * settle-refetch all have to survive switching between courses.
  */
 import { useEffect, useReducer, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { API, get, obsidianHref, post, ApiError } from "./api";
+import CoursesGrid from "./courses";
 import type {
   Courses, Guide, GuideProgress, GuideRow, Lesson, LessonList,
   LessonSegment, PracticeItem, Rollup,
@@ -95,7 +103,12 @@ type WbAction =
   | { t: "code"; lang?: Lang; text?: string };
 
 const START: WbState = {
-  seg: 0, depth: {}, fallback: "normal", focus: false, dock: "prov",
+  // The dock starts CLOSED: reading-first means the reading column has the
+  // width until you ask for something else. Nothing to migrate — `dock` was
+  // never in the sidecar, and `hydrate` merges exactly four fields (depth,
+  // fallback, practice, scratch), so it cannot come back from disk. Keep that
+  // list closed, or a module would reopen someone's old dock over the page.
+  seg: 0, depth: {}, fallback: "normal", focus: false, dock: null,
   practice: {}, scratch: "", lastQid: null,
   code: { lang: "python", text: "" },
 };
@@ -626,7 +639,7 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
   const [st, dispatch] = useReducer(reduce, START);
   const [busy, setBusy] = useState(false);
   const [chainErr, setChainErr] = useState<string | null>(null);
-  const [genNote, setGenNote] = useState<string | null>(null);
+  const [genNote, setGenNote] = useState<{ course: string; text: string } | null>(null);
   const [last, setLast] = useState<{ sha: string; what: string } | null>(null);
   const [rollup, setRollup] = useState<Rollup | "busy" | string | null>(null);
   // The tutor conversation lives up here, not in the slot component — switching
@@ -676,13 +689,9 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
     setGuide(undefined); setPicked(null); setLesson(undefined);
     setChainErr(null); setLast(null); setRollup(null);
     get<LessonList>("lesson").then(setList).catch(() => setList(null));
-    get<Courses>("courses").then(c => {
-      setCourses(c);
-      // Default to the first course that has a chain, then the first with
-      // any authored module — the pilot case either way.
-      const first = c.courses.find(x => x.guide) ?? c.courses.find(x => x.modules > 0);
-      setCourse(first ? first.course : null);
-    }).catch(() => setCourses(null));
+    // No course is selected on open: the grid is the landing view, and
+    // auto-selecting one made four of five courses invisible behind a chip.
+    get<Courses>("courses").then(setCourses).catch(() => setCourses(null));
     // Every close path — Esc through App's ladder included — rolls the
     // session up. Idempotent server-side, so racing the foot's button is fine.
     // The Set object itself is stable (only its contents change), so capturing
@@ -751,34 +760,43 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
   useEffect(() => {
     const s = guideProg?.state ?? null;
     if (s === null) return;
-    if (open && course && guideProg?.course === course &&
-        prevGenState.current === "running" && s !== "running") {
+    if (open && prevGenState.current === "running" && s !== "running") {
       setGenNote(null);            // "started —" must not outlive the run
-      void fetchGuide(course);
+      // The courses payload and the lesson list refresh whatever view is up:
+      // a run started from a *card* settles while `course` is still null, and
+      // keying the whole refetch on the drilled course left that card saying
+      // "▣ generating" until the workbench was reopened.
       get<Courses>("courses").then(setCourses).catch(() => {});
       // The chain rows' openable-join reads the lesson list — without this
       // refetch the just-authored notes kept their "not written yet" chips
       // (found driving the first live run).
       get<LessonList>("lesson").then(setList).catch(() => {});
+      if (course && guideProg?.course === course) void fetchGuide(course);
     }
     prevGenState.current = s;
   }, [open, course, guideProg]);
 
   // POST /api/guide/generate — the palette POST's own policy answers: a 409
   // is the window hold or the busy slot doing its job, shown as a notice.
-  async function generate() {
-    if (!course || busy) return;
+  // Takes the course rather than reading the selection: the grid fires this
+  // for a card that is not the one you are looking at.
+  async function generate(code?: string | null) {
+    const target = code ?? course;
+    if (!target || busy) return;
     setGenNote(null);
+    // The notice carries its course, because generation now fires from a grid:
+    // an unscoped string would print one course's "window held" on every card.
+    const say = (text: string) => setGenNote({ course: target, text });
     try {
-      await post("guide/generate", { course });
-      setGenNote("started — the reactor narrates; notes land as one commit each");
+      await post("guide/generate", { course: target });
+      say("started — the reactor narrates; notes land as one commit each");
     } catch (err) {
       if (err instanceof ApiError) {
         const b = err.body as { reason?: string; running?: string } | undefined;
-        setGenNote(err.code === "window" ? (b?.reason ?? "window held")
+        say(err.code === "window" ? (b?.reason ?? "window held")
           : err.code === "busy" ? `busy — ${b?.running ?? "another job"} is running`
           : (err.detail || err.code));
-      } else setGenNote("backend unreachable");
+      } else say("backend unreachable");
     }
   }
 
@@ -870,7 +888,7 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
   // promises there too. The chain view owns no focus or dock, and its Esc
   // belongs to App's ladder.
   useEffect(() => {
-    if (!open || !picked) return;
+    if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.repeat || e.ctrlKey || e.altKey || e.metaKey) return;
       // An overlay stacked above the workbench (Capture autofocuses its
@@ -888,20 +906,26 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
         }
         return;
       }
-      if (e.key === "f" && rendered) {
+      if (e.key === "f" && picked && rendered) {
         e.preventDefault();
         dispatch({ t: "focus" });
       } else if (e.key === "Escape") {
-        if (rendered && st.focus) dispatch({ t: "focus" });
-        else if (rendered && st.dock) dispatch({ t: "dock", slot: null });
-        else { setPicked(null); setLesson(undefined); }   // lesson → chain view
+        // The rungs, innermost first. The `return` at the end is the whole
+        // safety of widening this listener past the lesson: an Esc with
+        // nothing left to peel must reach App's ladder unmolested, or the
+        // workbench stops closing.
+        if (picked && rendered && st.focus) dispatch({ t: "focus" });
+        else if (picked && rendered && st.dock) dispatch({ t: "dock", slot: null });
+        else if (picked) { setPicked(null); setLesson(undefined); }  // lesson → chain
+        else if (course) setCourse(null);                            // chain → grid
+        else return;                                                 // grid → App
         e.preventDefault();
         e.stopPropagation();
       }
     };
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
-  }, [open, picked, rendered, st.focus, st.dock]);
+  }, [open, picked, course, rendered, st.focus, st.dock]);
 
   if (!open) return null;
 
@@ -1119,38 +1143,78 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
     c => c.course === (lesson?.course ?? course))?.pace ?? null;
   const atPace = paceOf?.multiplier && lesson?.estimate
     ? Math.round(lesson.estimate * paceOf.multiplier) : null;
+  // The rail's meter measures practice resolved across the whole module, and
+  // is omitted when the module has none — a 0/0 bar would report a reading-only
+  // module as untouched work, which is a different and false claim.
+  const practiceItems = lesson?.segments.flatMap(s => s.practice) ?? [];
+  const practiceTotal = practiceItems.length;
+  const practiceDone = practiceItems.filter(
+    it => pr(st, it.id).result !== null).length;
 
   return (
     <div className="palette-backdrop" onClick={onClose}>
       <div className={`workbench ${st.focus ? "focus" : ""}`}
            onClick={e => e.stopPropagation()} role="dialog" aria-label="Workbench">
-        <header className="study-head">
-          <span className="label">
-            ◇ STUDY — {inLesson ? "WORKBENCH" : "COURSES"}
-            {inLesson && lesson
-              ? ` · ${lesson.course} ${unitLabel} — ${lesson.title}` : ""}
-            {inLesson && lesson?.estimate
-              ? <span className="dim"> · {lesson.estimate} min
-                  {atPace ? (
-                    <span className="wb-pace"
-                          title={`measured: ${paceOf!.actual} min actually spent `
-                                 + `against ${paceOf!.estimate} min estimated over `
-                                 + `${paceOf!.n} finished module(s), `
-                                 + `${paceOf!.basis === "vault"
-                                      ? "vault-wide" : "this course"}`}>
-                      {" "}→ ~{atPace} min at your pace
-                    </span>
-                  ) : null}
-                </span> : null}
-            {inLesson && lesson && lesson.checkpoint != null && (lesson.covers?.length ?? 0) > 0
-              ? <span className="dim"> · covers {lesson.covers!.map(m => `M${String(m).padStart(2, "0")}`).join(", ")}</span>
-              : null}
+        <header className="study-head wb-head">
+          {/* Two tiers, because one flat `·`-joined line had the course, the
+              unit, the title, the estimate and the measured pace at equal
+              weight. Line one is where you are; line two is what you are
+              looking at. Every rule for this is scoped under `.workbench` —
+              exam mode shares `.study-head`. */}
+          <span className="wb-head-main">
+            <span className="label">
+              ◇ STUDY <span className="wb-crumb-sep">—</span>
+              <button className="wb-crumb" onClick={() => { setCourse(null); setPicked(null); }}
+                      disabled={!course && !inLesson}
+                      title="all courses (Esc)">COURSES</button>
+              {course && (
+                <>
+                  <span className="wb-crumb-sep">⟩</span>
+                  <button className="wb-crumb" disabled={!inLesson}
+                          onClick={() => { setPicked(null); setLesson(undefined); }}
+                          title="this course's chain (Esc)">{course}</button>
+                </>
+              )}
+              {inLesson && lesson && (
+                <>
+                  <span className="wb-crumb-sep">⟩</span>
+                  <span className="wb-crumb-here">{unitLabel}</span>
+                </>
+              )}
+            </span>
+            {inLesson && lesson && (
+              <span className="wb-head-title">{lesson.title}</span>
+            )}
+            {inLesson && lesson && (
+              <span className="wb-head-meta dim">
+                {lesson.estimate ? <>⏱ {lesson.estimate} min</> : null}
+                {atPace ? (
+                  <span className="wb-pace"
+                        title={`measured: ${paceOf!.actual} min actually spent `
+                               + `against ${paceOf!.estimate} min estimated over `
+                               + `${paceOf!.n} finished module(s), `
+                               + `${paceOf!.basis === "vault"
+                                    ? "vault-wide" : "this course"}`}>
+                    {" "}→ ~{atPace} min at your pace
+                  </span>
+                ) : null}
+                {lesson.checkpoint != null && (lesson.covers?.length ?? 0) > 0
+                  ? ` · covers ${lesson.covers!.map(m => `M${String(m).padStart(2, "0")}`).join(", ")}`
+                  : ""}
+              </span>
+            )}
           </span>
-          <span>
+          <span className="wb-head-act">
             {inLesson && (
               <button className="ghost" title="Back to the course chain (Esc)"
                       onClick={() => { setPicked(null); setLesson(undefined); }}>
                 ⟵ chain
+              </button>
+            )}
+            {!inLesson && course && (
+              <button className="ghost" title="Back to all courses (Esc)"
+                      onClick={() => setCourse(null)}>
+                ⟵ courses
               </button>
             )}
             {touched.current.size > 0 && (
@@ -1169,32 +1233,22 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
           </span>
         </header>
 
-        {/* ------------------------------------------------ chain view (S2) */}
-        {!inLesson && (
-          <div className="wb-chain">
-            {courses === undefined && <p className="dim pad">reading…</p>}
-            {courses === null && <p className="err pad">backend unreachable</p>}
-            {courses && courses.courses.length === 0 && (
-              <p className="dim pad">no active courses</p>
-            )}
-            {courses && courses.courses.length > 0 && (
-              <div className="wb-picker">
-                {courses.courses.map(c => (
-                  <button key={c.course}
-                          className={c.course === course ? "active" : ""}
-                          onClick={() => setCourse(c.course)}
-                          title={c.name !== c.course ? c.name : undefined}>
-                    {c.course}
-                    {c.guide
-                      ? <span className="wb-min"> {c.guide.done}/{c.guide.total}</span>
-                      : null}
-                  </button>
-                ))}
-              </div>
-            )}
+        {/* ------------------------------------- the course grid (landing) */}
+        {!inLesson && !course && (
+          <CoursesGrid vault={vault} courses={courses} guideProg={guideProg}
+                       busy={busy}
+                       onOpen={setCourse}
+                       onGenerate={c => void generate(c)}
+                       onAdded={() => {
+                         get<Courses>("courses").then(setCourses).catch(() => {});
+                       }} />
+        )}
 
-            {course && guide === undefined && <p className="dim pad">reading the chain…</p>}
-            {course && guide === null && (
+        {/* ------------------------------------------------ chain view (S2) */}
+        {!inLesson && course && (
+          <div className="wb-chain">
+            {guide === undefined && <p className="dim pad">reading the chain…</p>}
+            {guide === null && (
               <div className="pad">
                 <p className="dim">
                   no guide chain yet — a chain is
@@ -1208,11 +1262,13 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
                     ✎ draft blueprint
                   </button>
                 </p>
-                {genNote && <p className="wb-gen dim">{genNote}</p>}
+                {genNote?.course === course && (
+                  <p className="wb-gen dim">{genNote.text}</p>
+                )}
                 {row && row.modules > 0 && list && (
                   <>
-                    <p className="dim">authored modules, unchained:</p>
-                    <div className="wb-picker">
+                    <p className="sub dim">authored modules, unchained</p>
+                    <div className="wb-chips">
                       {list.modules
                         .filter(m => m.course === course)
                         .map(m => (
@@ -1332,7 +1388,9 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
                   }
                   return null;
                 })()}
-                {genNote && <p className="wb-gen dim">{genNote}</p>}
+                {genNote?.course === course && (
+                  <p className="wb-gen dim">{genNote.text}</p>
+                )}
                 {last && (
                   <p className="wb-last">
                     ✓ {last.what} · <code>{last.sha.slice(0, 7)}</code>
@@ -1351,6 +1409,7 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
                     return (
                       <li key={r.line}
                           className={`wb-row wb-row-${r.state} ${frontier ? "wb-frontier" : ""}`}>
+                        <span className="wb-row-line">
                         <span className="wb-row-glyph">
                           {r.state === "done" ? "✓" : r.state === "skipped" ? "−"
                             : frontier ? "▸" : "·"}
@@ -1371,6 +1430,11 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
                             <em className="wb-chip dim">not written yet</em>
                           )}
                         </span>
+                        </span>
+                        {/* The frontier's verbs sit *under* the row they act
+                            on. Flush right they were a thousand pixels from
+                            the words "M02 · Vectors and vector products", in a
+                            dialog sized for a lesson rather than for a list. */}
                         {frontier && (
                           <span className="wb-row-act">
                             {openable && (
@@ -1423,17 +1487,66 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
 
         {inLesson && lesson && !held && (
           <>
-            <div className="wb-segs">
-              {lesson.segments.map((s, i) => (
-                <button key={s.n} className={i === st.seg ? "active" : ""}
-                        title={`${s.title} — ⏱ ${s.minutes} min`}
-                        onClick={() => dispatch({ t: "seg", i })}>
-                  S{s.n} <span className="wb-min">{s.minutes}′</span>
-                </button>
-              ))}
-            </div>
-            <div className="wb-body">
+            <div className={`wb-body ${st.dock ? "has-dock" : ""}`}>
+              {/* The spine. A horizontal chip row said which segment was
+                  active and nothing else; a rail says where you are, how far
+                  in, and which segments still have practice waiting — and it
+                  costs width the reading column did not want anyway. */}
+              <nav className="wb-rail" aria-label="Segments">
+                {practiceTotal > 0 && (
+                  <div className="wb-railtop">
+                    <span className="cov-bar" role="img"
+                          aria-label={`${practiceDone} of ${practiceTotal} practice resolved`}>
+                      <span className="cov-fill"
+                            style={{ width: `${Math.round((practiceDone / practiceTotal) * 100)}%` }} />
+                    </span>
+                    <span className="dim">{practiceDone}/{practiceTotal} practice</span>
+                  </div>
+                )}
+                <ul>
+                  {lesson.segments.map((s, i) => {
+                    const items = s.practice.length;
+                    const done = s.practice.filter(
+                      it => pr(st, it.id).result !== null).length;
+                    // Glyph first, colour second — a dot that only differed by
+                    // hue would say nothing in the light theme or to anyone
+                    // reading it at a glance.
+                    const dot = items === 0 ? "○" : done === 0 ? "·"
+                      : done < items ? "◐" : "✓";
+                    const state = items === 0 ? "none" : done === 0 ? "open"
+                      : done < items ? "part" : "done";
+                    return (
+                      <li key={s.n}>
+                        <button className={i === st.seg ? "active" : ""}
+                                title={`${s.title} — ⏱ ${s.minutes} min`
+                                       + (items ? ` · ${done}/${items} practice` : "")}
+                                onClick={() => dispatch({ t: "seg", i })}>
+                          <span className={`wb-dot wb-dot-${state}`}>{dot}</span>
+                          <span className="wb-rail-n">S{s.n}</span>
+                          <span className="wb-min">{s.minutes}′</span>
+                          <span className="wb-rail-t">{s.title}</span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </nav>
               <div className="wb-read">
+                {/* Closed, the dock is a strip in the reading column's own
+                    corner rather than an empty 45% of the dialog holding four
+                    right-aligned buttons. Reading-first is a layout claim, and
+                    it was not true while the closed state still paid rent. */}
+                {!st.focus && !st.dock && (
+                  <div className="wb-dockbar">
+                    {SLOT_LABEL.map(([s, label]) => (
+                      <button key={s} className="ghost"
+                              title={`Open the ${s} slot`}
+                              onClick={() => dispatch({ t: "dock", slot: s })}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {seg && (
                   <Segment seg={seg} depth={depth} st={st} cp={isCp}
                            onDepth={d => dispatch({ t: "depth", i: st.seg, d })}
@@ -1527,17 +1640,6 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
                                  onMode={setTutorMode} onAsk={q => void askTutor(q)} />
                     </div>
                   )}
-                </aside>
-              )}
-              {!st.focus && !st.dock && (
-                <aside className="wb-dock wb-dock-closed">
-                  {SLOT_LABEL.map(([s, label]) => (
-                    <button key={s} className="ghost"
-                            title={`Open the ${s} slot`}
-                            onClick={() => dispatch({ t: "dock", slot: s })}>
-                      {label}
-                    </button>
-                  ))}
                 </aside>
               )}
             </div>

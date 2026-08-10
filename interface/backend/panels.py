@@ -1058,6 +1058,15 @@ def _scan_courses() -> dict:
                 open_cards = 0
         out.append({
             "course": code, "name": name,
+            # Whether the folder actually has its course-index note.
+            # `active_courses` counts a folder *without* one as active, on
+            # purpose — the manifest is documentation, not the enrolment record
+            # — so this state is reachable by hand, and reachable by undoing an
+            # add: git cannot track the empty lectures/assignments/exams dirs,
+            # so reverting the create deletes the note and leaves the folder.
+            # A card that renders a nameless course as if it were fine is the
+            # one thing worse than the ghost itself.
+            "indexed": (folder / f"{code.lower()}.md").is_file(),
             "timeline": (folder / f"{code.lower()}-timeline.md").is_file(),
             "modules": len(mine),
             "held": sum(1 for m in mine if m["problems"]),

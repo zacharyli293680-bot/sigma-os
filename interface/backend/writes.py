@@ -1462,7 +1462,7 @@ term: {term}
 tags: [course, moc]
 ---
 
-# {dept} {num}{dash}{name}
+# {dept} {num} — {name}
 
 > {blurb}
 
@@ -1490,11 +1490,11 @@ COURSE_SUBFOLDERS = ("lectures", "assignments", "exams")
 
 class CourseAdd(BaseModel):
     code: str            # "CSE-421" — <DEPT>-<NUMBER>, the contract's naming rule
-    name: str = ""       # "Software Design and Implementation"
+    name: str            # "Software Design and Implementation"
     term: str = ""       # free text; every existing index carries this blank
 
 
-@router.post("/courses")
+@router.post("/courses/add")
 def api_course_add(req: CourseAdd):
     """Create a course folder and its index note — one commit, one ledger row.
 
@@ -1510,9 +1510,24 @@ def api_course_add(req: CourseAdd):
                     detail="a course code is <DEPT>-<NUMBER>, e.g. CSE-421")
     name = " ".join((req.name or "").split())
     term = " ".join((req.term or "").split())
+    if not name:
+        return _err(400, "empty",
+                    detail="a course needs a name — active_courses falls back "
+                           "to the folder, and a course called CSE-421 twice "
+                           "tells you nothing")
     if len(name) > 120 or len(term) > 40:
         return _err(400, "too long",
                     detail="a course name is a title, not a description")
+    # A colon would survive `sigma.frontmatter` — a hand-rolled `^key:\s*(.*)$`
+    # — and break the *real* YAML parse Dataview does, which is what drives
+    # academics.md's two course tables. One note would then take both tables
+    # down, and the failure would surface in Obsidian rather than here.
+    for label, value in (("name", name), ("term", term)):
+        if ":" in value:
+            return _err(400, f"bad {label}",
+                        detail="no colons — the frontmatter is read as YAML by "
+                               "Dataview, and a colon there breaks the tables "
+                               "in academics.md")
 
     rel = f"02-Areas/Academics/{code}/{code.lower()}.md"
     if _vault_rel(rel) != rel:
@@ -1521,9 +1536,7 @@ def api_course_add(req: CourseAdd):
     dept, _, num = code.partition("-")
     note = COURSE_NOTE.format(
         code=code, name=name, term=term, dept=dept, num=num,
-        dash=" — " if name else "",
-        blurb=(f"Course index for {code}. Added from the dashboard — fill this "
-               f"line in with what the course actually covers."))
+        blurb=f"*(One line on what {code} actually covers — replace this.)*")
 
     try:
         with gitops.vault_write(VAULT) as w:

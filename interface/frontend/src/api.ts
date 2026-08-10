@@ -377,12 +377,23 @@ export type Projected = {
 /** GET /api/courses — every active course's study surface at a glance. */
 export type CourseRow = {
   course: string; name: string; timeline: boolean;
+  /** Whether the folder has its `<code>.md` course-index note. False is a real,
+   *  reachable state — `active_courses` counts an index-less folder as active —
+   *  and the card says so rather than rendering a nameless course as fine. */
+  indexed: boolean;
   modules: number; held: number;
   guide: Omit<Guide, "rows"> | null;
   pace: Pace; projected: Projected;
   recall: { open: number; cap: number; file: string | null };
 };
 export type Courses = { courses: CourseRow[] };
+/** POST /api/courses — starting a course from the dashboard. `groupings` is the
+ *  one thing the write deliberately did NOT do: academics.md lists the course
+ *  automatically, but its department sequence is hand-written. */
+export type CourseAdded = {
+  ok: true; course: string; file: string; sha: string | null;
+  note: string | null; subfolders: string[]; groupings: string;
+};
 /** What POST /api/lesson/session-end answers with. `wrote: false` is the
  *  idempotent no-op — nothing uncovered since the last rollup. */
 export type Rollup = {

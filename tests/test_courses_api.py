@@ -116,12 +116,30 @@ class TestItWrites(CourseAddBase):
         self.assertEqual([c["course"] for c in got["courses"]], ["CSE-421"])
         self.assertEqual(got["courses"][0]["name"], "Software Design")
 
-    def test_a_nameless_course_still_makes_a_readable_note(self):
-        r = self.add(code="AA-260", name="", term="")
+    def test_a_course_with_no_term_is_fine(self):
+        """Every existing index in this vault carries `term:` blank."""
+        r = self.add(code="AA-260", name="Thermodynamics", term="")
         note = (self.vault / r["file"]).read_text(encoding="utf-8")
-        self.assertIn("# AA 260", note)
-        self.assertNotIn("—  ", note)          # no dangling dash without a name
+        self.assertIn("term:", note)
         self.assertEqual(frontmatter(note)["status"], "active")
+
+    def test_undoing_the_add_leaves_a_folder_the_payload_names(self):
+        """git cannot track the empty subfolders, so a revert deletes the note
+        and leaves the folder — which `active_courses` still counts as active.
+        The state is reachable by hand too, so the payload names it rather than
+        the card rendering a nameless course as if it were fine."""
+        r = self.add()
+        (self.vault / r["file"]).unlink()       # what `git revert` does to it
+        self.assertIn("CSE-421", todo.active_courses(self.vault))
+        panels._cache.clear()
+        row = next(c for c in panels.api_courses()["courses"]
+                   if c["course"] == "CSE-421")
+        self.assertFalse(row["indexed"])
+
+    def test_an_indexed_course_says_so(self):
+        self.add()
+        panels._cache.clear()
+        self.assertTrue(panels.api_courses()["courses"][0]["indexed"])
 
     def test_the_response_says_the_groupings_block_is_still_yours(self):
         """academics.md's Dataview tables pick it up; the hand-written
@@ -167,6 +185,19 @@ class TestItRefuses(CourseAddBase):
 
     def test_a_name_longer_than_a_title_is_refused(self):
         self.assert_refused(self.add(name="x" * 121), 400, "too long")
+
+    def test_a_nameless_course_is_refused(self):
+        """active_courses falls back to the folder name, so a blank name makes
+        a card that reads CSE-421 twice and has told you nothing."""
+        self.assert_refused(self.add(name="   "), 400, "empty")
+
+    def test_a_colon_is_refused_because_dataview_parses_real_yaml(self):
+        """`sigma.frontmatter` is a hand-rolled regex and would take it. The
+        tables in academics.md are Dataview, which is not — one note with
+        `name: CSE 421: Design` would take both course tables down, and it
+        would fail in Obsidian rather than here."""
+        self.assert_refused(self.add(name="CSE 421: Design"), 400, "bad name")
+        self.assert_refused(self.add(term="Autumn: 2026"), 400, "bad term")
 
     def test_a_sealed_academics_folder_is_refused_before_the_write(self):
         (self.vault / ".gitignore").write_text("02-Areas/Academics/\n",

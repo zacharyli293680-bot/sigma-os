@@ -2237,33 +2237,108 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
 
 /* --- the study workbench (study mode S1) --------------------------------- */
 
-/* Two panes: reading column and dock, 55/45 per the plan. Wider than .study
-   because a lesson is a document, not a list; align-self keeps a short module
-   at the top instead of floating in the void (the .work lesson, relearned). */
+/* Rail, reading column, dock. Wider than .study because a lesson is a document,
+   not a list; align-self keeps a short module at the top instead of floating in
+   the void (the .work lesson, relearned). */
 .workbench {
-  margin-top: 4vh; width: min(1240px, 96vw); max-height: 88vh;
+  margin-top: 4vh; width: min(1320px, 96vw); max-height: 88vh;
   align-self: flex-start;
   background: var(--void); border: 1px solid var(--panel-line);
   box-shadow: 0 0 40px rgb(var(--glow-rgb) / 0.08);
   display: flex; flex-direction: column; overflow: hidden;
 }
 
-/* Segment chips — the module's spine. The minutes ride along because the time
-   budget is the grammar's most load-bearing number. */
-.wb-segs { display: flex; gap: 6px; flex-wrap: wrap; padding: 10px 18px 0; flex: none; }
-.wb-segs button {
-  background: none; border: 1px solid var(--panel-line-dim); color: var(--ink-2);
-  font: 400 11.5px/1.5 var(--mono); padding: 2px 9px; cursor: pointer;
+/* `.err` and `.pad` have no global rules — every view scopes its own
+   (`.study .pad`, `.work .err`). The workbench used both in three places and
+   inherited neither: no padding, and "backend unreachable" in ordinary ink.
+   These sit BEFORE .wb-roll on purpose: `.wb-roll.err` is 0,2,0 and so is
+   `.workbench .err`, so source order is the only thing keeping the rollup
+   line's 10.5px from being silently resized to 12. */
+.workbench .pad { padding: 14px 18px; }
+.workbench .err { color: var(--red); font-size: 12px; line-height: 1.5; }
+
+/* The header, two tiers. Every rule is scoped under `.workbench` because
+   `.study-head` belongs to exam mode as well, and exam mode must not move. */
+.workbench .study-head { align-items: flex-start; }
+.wb-head-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.wb-head-main .label { display: flex; align-items: baseline; gap: 6px; }
+.wb-crumb {
+  background: none; border: none; padding: 0; cursor: pointer;
+  color: var(--ink-2); font: inherit; letter-spacing: inherit;
 }
-.wb-segs button.active { border-color: var(--accent); color: var(--ink); }
-.wb-segs button:hover { color: var(--ink); }
+.wb-crumb:hover:not(:disabled) { color: var(--accent); }
+.wb-crumb:disabled { color: var(--accent); cursor: default; }
+.wb-crumb-sep { color: var(--muted); }
+.wb-crumb-here { color: var(--accent); }
+.wb-head-title { font-size: 13px; color: var(--ink); }
+.wb-head-meta { font: 400 10.5px/1.5 var(--mono); }
+.wb-head-act { flex: none; white-space: nowrap; }
+
 .wb-min { color: var(--muted); font-family: var(--mono); font-size: 10.5px; }
 
-.wb-body { display: grid; grid-template-columns: 11fr 9fr; flex: 1 1 auto; min-height: 0; }
-.wb-read { overflow-y: auto; padding: 12px 20px 16px; border-right: 1px solid var(--panel-line-dim); }
-/* Focus mode is the same tree with the dock collapsed — a class flip. */
+/* Reading-first: a fixed spine, a capped column, and a dock that only takes
+   width when it is open. `11fr 9fr` gave 45% of the dialog to a dock that was
+   usually closed, and a reading measure past ~80ch is worse, not better. */
+.wb-body {
+  display: grid; grid-template-columns: 176px minmax(0, 1fr);
+  flex: 1 1 auto; min-height: 0;
+}
+.wb-body.has-dock { grid-template-columns: 176px minmax(0, 1fr) minmax(320px, 400px); }
+.wb-read { overflow-y: auto; padding: 14px 26px 18px; }
+.wb-read > * { max-width: 78ch; }
+/* Focus is now "nothing but the reading": the rail goes too, or the toggle
+   would be a no-op against a dock that already starts closed. */
 .workbench.focus .wb-body { grid-template-columns: 1fr; }
-.workbench.focus .wb-read { max-width: 74ch; margin: 0 auto; border-right: none; }
+.workbench.focus .wb-rail { display: none; }
+.workbench.focus .wb-dockbar { display: none; }
+.workbench.focus .wb-head-meta { display: none; }
+.workbench.focus .wb-read { max-width: 78ch; margin: 0 auto; padding-top: 20px; }
+
+/* The spine. Two lines per segment — the number and its minutes, then the
+   title — because a rail that only numbered them would be the chip row again,
+   turned on its side. */
+.wb-rail {
+  overflow-y: auto; border-right: 1px solid var(--panel-line-dim);
+  padding: 10px 0 12px;
+}
+.wb-rail ul { list-style: none; margin: 0; padding: 0; }
+.wb-rail button {
+  display: grid; grid-template-columns: 14px auto 1fr; gap: 0 6px;
+  width: 100%; text-align: left; cursor: pointer;
+  background: none; border: none; border-left: 2px solid transparent;
+  padding: 4px 10px 5px 8px; color: var(--ink-2);
+  font: 400 11.5px/1.4 var(--mono);
+}
+.wb-rail button:hover { color: var(--ink); }
+.wb-rail button.active { border-left-color: var(--accent); color: var(--ink); }
+.wb-rail-n { color: inherit; }
+.wb-rail-t {
+  grid-column: 2 / -1; font-family: var(--sans); font-size: 11px;
+  color: var(--muted); overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wb-rail button.active .wb-rail-t { color: var(--ink-2); }
+/* Glyph first, colour second — the dot has to survive a light theme and a
+   glance. `○` (no practice here) is not the same claim as `·` (none done). */
+.wb-dot { font-family: var(--mono); }
+.wb-dot-done { color: var(--add); }
+.wb-dot-part { color: var(--accent); }
+.wb-dot-open { color: var(--muted); }
+.wb-dot-none { color: var(--muted); }
+.wb-railtop {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 0 10px 10px; margin-bottom: 6px;
+  border-bottom: 1px solid var(--panel-line-dim);
+  font: 400 10.5px/1.5 var(--mono);
+}
+.wb-railtop .cov-bar { width: 100%; }
+
+/* The closed dock, as a strip in the reading column's corner. */
+.wb-dockbar {
+  display: flex; gap: 6px; justify-content: flex-end;
+  max-width: none; margin-bottom: 2px;
+}
+.wb-dockbar button { font-size: 11px; }
 
 .wb-seghead { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .wb-seghead h3 { margin: 4px 0 2px; font-size: 14px; color: var(--ink); }
@@ -2276,13 +2351,24 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
 }
 .wb-link { color: var(--accent); }
 
-.wb-depths { display: flex; gap: 6px; margin: 6px 0 2px; }
-.wb-depths button {
+/* One chip. Five rows of them (segments, courses, depths, dock slots, tutor
+   modes) each carried a near-identical copy of this rule; the only genuine
+   differences were a font size and whether `.active` goes ink or accent, so
+   those are the only two things that vary now. */
+.wb-chips, .wb-depths, .wb-modes { display: flex; gap: 6px; flex-wrap: wrap; }
+.wb-chips button, .wb-depths button, .wb-modes button {
   background: none; border: 1px solid var(--panel-line-dim); color: var(--ink-2);
-  font: 400 10.5px/1.5 var(--mono); letter-spacing: 0.06em;
-  padding: 2px 9px; cursor: pointer;
+  font: 400 11.5px/1.5 var(--mono); padding: 2px 9px; cursor: pointer;
 }
-.wb-depths button.active { border-color: var(--accent); color: var(--accent); }
+.wb-chips button:hover, .wb-depths button:hover, .wb-modes button:hover { color: var(--ink); }
+.wb-chips button.active { border-color: var(--accent); color: var(--ink); }
+/* A depth or a tutor mode names a mode you are *in* rather than a place you
+   are *at* — accent rather than ink, one notch smaller. */
+.wb-depths, .wb-modes { margin: 6px 0 2px; }
+.wb-depths button, .wb-modes button { font-size: 10.5px; letter-spacing: 0.06em; }
+.wb-depths button.active, .wb-modes button.active {
+  border-color: var(--accent); color: var(--accent);
+}
 
 .wb-example { border: 1px solid var(--panel-line-dim); padding: 4px 12px 8px; margin: 12px 0; }
 .wb-example h4, .wb-practice h4, .wb-dock h4 {
@@ -2297,8 +2383,6 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
 
 .wb-nav { display: flex; align-items: center; justify-content: space-between; margin-top: 14px; }
 
-.wb-dock { overflow-y: auto; padding: 12px 16px; }
-.wb-dock-closed { display: flex; align-items: flex-start; justify-content: flex-end; }
 .wb-prov { list-style: none; margin: 0 0 10px; padding: 0; font-size: 12px; }
 .wb-prov li { margin: 4px 0; overflow-wrap: anywhere; }
 .wb-prov a { color: var(--accent); text-decoration: none; }
@@ -2308,13 +2392,6 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
 .wb-held { margin: 14px 18px; border: 1px solid var(--amber); padding: 8px 14px; overflow-y: auto; }
 .wb-held h3 { color: var(--amber); font-size: 13px; margin: 4px 0; }
 .wb-held ul { font: 400 11.5px/1.7 var(--mono); padding-left: 18px; }
-
-.wb-picker { display: flex; gap: 6px; flex-wrap: wrap; padding: 10px 18px 0; flex: none; }
-.wb-picker button {
-  background: none; border: 1px solid var(--panel-line-dim); color: var(--ink-2);
-  font: 400 11.5px/1.5 var(--mono); padding: 2px 9px; cursor: pointer;
-}
-.wb-picker button.active { border-color: var(--accent); color: var(--ink); }
 
 .wb-foot {
   flex: none; padding: 6px 18px; border-top: 1px solid var(--panel-line-dim);
@@ -2336,7 +2413,69 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
 .wb-pacebar a { color: inherit; text-decoration: underline dotted; }
 .wb-pacebar a:hover { color: var(--accent); }
 
-/* --- the chain view (study S2 — the course dashboard) -------------------- */
+/* --- the course grid (the study dashboard's landing view) ---------------- */
+/* One card per active course, in the dashboard's own panel vocabulary. Three
+   columns at 1320px: five courses and the add card make two clean rows. */
+.wb-grid {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; align-content: start;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 10px 24px; padding: 14px 18px 18px;
+}
+/* `.panel` sets `min-height: 0`, which is right for the dashboard's own fixed
+   tracks and wrong here: it lets a card be squeezed below its own content in a
+   track sized *from* the card. `.q-card` learned this the expensive way. */
+.wb-card { min-height: auto; overflow: visible; padding: 2px 2px 10px; }
+.wb-card > h2 { margin-bottom: 4px; }
+.wb-card-open {
+  background: none; border: none; padding: 0; cursor: pointer;
+  color: var(--accent); font: inherit; letter-spacing: inherit;
+}
+.wb-card-open:hover { color: var(--ink); }
+.wb-card-count {
+  order: 3; font: 400 10.5px/1.6 var(--mono); color: var(--ink-2);
+  letter-spacing: 0.04em; text-transform: none;
+}
+.wb-card-x { order: 4; font-size: 12px; }
+.wb-card-name { margin: 0 0 6px; font-size: 12px; color: var(--ink-2); }
+.wb-card-bar { display: flex; align-items: center; gap: 8px; margin: 0 0 5px;
+  font: 400 10.5px/1.5 var(--mono); }
+.wb-card-bar .cov-bar { width: 100px; }
+.wb-card-meta { margin: 0 0 4px; font: 400 11px/1.5 var(--mono); }
+/* Attention pairs a glyph with the colour, never colour alone. */
+.wb-card-warn { color: var(--amber); }
+.wb-card-act { margin: 6px 0 0; font-size: 12px; }
+.wb-card-act .ghost { font-size: 12px; }
+
+/* The add tile. A dashed border does not break "a frame means something is on
+   you": here the border IS the affordance — an empty slot — and dashed-vs-solid
+   is what separates the two readings. */
+.wb-card-new {
+  border: 1px dashed var(--panel-line-dim); background: none;
+  color: var(--ink-2); font: 400 12px/1.5 var(--mono); cursor: pointer;
+  padding: 18px 10px; min-height: 92px;
+}
+.wb-card-new:hover { border-color: var(--accent); color: var(--accent); }
+.wb-card-adding { border: 1px solid var(--panel-line); padding: 8px 12px 10px; }
+
+/* Copied from `.q-add` rather than reusing it: those rules belong to work.tsx,
+   and a later tweak here must not restyle the quick-add bar. */
+.wb-addform { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.wb-addform input {
+  background: rgb(var(--accent-rgb) / 0.04);
+  border: 1px solid var(--panel-line-dim);
+  color: var(--ink); font: 400 12px/1.5 var(--mono); padding: 4px 7px;
+}
+.wb-addform input:focus { outline: none; border-color: var(--accent); }
+.wb-addform input::placeholder { color: var(--muted); }
+.wb-add-code { width: 11ch; }
+.wb-add-name { flex: 1 1 140px; min-width: 100px; font-family: var(--sans) !important; }
+.wb-add-term { width: 12ch; }
+.wb-addform .q-add-go { padding: 4px 12px; font-size: 12px; }
+.wb-said { margin: 6px 0 0; font: 400 11px/1.5 var(--mono); color: var(--ink-2); }
+.wb-said a { color: var(--accent); text-decoration: none; }
+.wb-said.err { color: var(--red); }
+
+/* --- the chain view (study S2 — one course, drilled into) ---------------- */
 .wb-chain { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .wb-chainbody { padding: 2px 18px 14px; }
 .wb-chainhead {
@@ -2351,11 +2490,9 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
 }
 .wb-last code { color: var(--accent); }
 
-.wb-rows { list-style: none; margin: 6px 0; padding: 0; }
-.wb-row {
-  display: flex; align-items: baseline; gap: 8px;
-  border: 1px solid transparent; padding: 5px 8px; margin: 2px 0;
-}
+.wb-rows { list-style: none; margin: 6px 0; padding: 0; max-width: 78ch; }
+.wb-row { border: 1px solid transparent; padding: 5px 8px; margin: 2px 0; }
+.wb-row-line { display: flex; align-items: baseline; gap: 8px; }
 .wb-row-glyph { font-family: var(--mono); color: var(--muted); flex: none; width: 14px; }
 .wb-frontier { border-color: var(--panel-line); }
 .wb-frontier .wb-row-glyph { color: var(--accent); }
@@ -2373,7 +2510,10 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
   border: 1px solid var(--panel-line-dim); padding: 0 5px; margin-left: 8px;
   white-space: nowrap;
 }
-.wb-row-act { display: flex; gap: 6px; flex: none; }
+/* Under the row, indented to its text. Flush right these were a thousand
+   pixels from the words they act on, in a dialog sized for a lesson. */
+.wb-row-act { display: flex; gap: 10px; margin: 5px 0 1px 22px; }
+.wb-row-act .ghost { font-size: 12px; }
 
 /* --- the practice engine (study S3) -------------------------------------- */
 .wb-q { border: 1px solid var(--panel-line-dim); padding: 6px 10px; margin: 8px 0; }
@@ -2421,10 +2561,14 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--accent); }
 .wb-slots button.active { border-color: var(--accent); color: var(--ink); }
 .wb-slots button:hover { color: var(--ink); }
 .wb-slot-x { margin-left: auto; border: none !important; }
-/* The slot bodies scroll inside the dock; the dock itself becomes a column. */
-.wb-dock { display: flex; flex-direction: column; min-height: 0; }
+/* One declaration, not two: `.wb-dock` was declared here and again 250 lines
+   up, and the pair had to be read together to know what a dock was. */
+.wb-dock {
+  display: flex; flex-direction: column; min-height: 0;
+  overflow-y: auto; padding: 12px 16px;
+  border-left: 1px solid var(--panel-line-dim);
+}
 .wb-slotbody { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; }
-.wb-dock-closed { gap: 6px; flex-direction: row; }
 
 /* the work pad and the sandbox editor — bordered, monospace, never filled */
 .wb-work { display: flex; flex-direction: column; }
