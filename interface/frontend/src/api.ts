@@ -295,6 +295,10 @@ export type LessonSegment = {
   sources: LessonSource[];
   summary: string; normal: string; in_depth: string; example: string | null;
   practice: PracticeItem[];
+  /** One optional diagram: `figure:: <caption>` plus a raw `<svg>`. Checked
+   *  against an allow-list before it ever reaches here (`lesson.validate_svg`)
+   *  and walked rather than injected when it renders (`figure.tsx`). */
+  figure: { caption: string; svg: string; line: number } | null;
 };
 export type Lesson = {
   type: string; course: string; module: number | null; unit: number | null;

@@ -58,10 +58,52 @@ DEPTH_RE = re.compile(r"^###\s+(Summary|Normal|In depth|Example)\s*$")
 H3_RE = re.compile(r"^###\s+\S")
 PRACTICE_RE = re.compile(r"^\?\?\s+(\S+)\s+·\s+(\S+)\s*$")
 SOURCE_RE = re.compile(r"^source::\s*(.+?)\s*$")
+# `figure:: <caption>` and then a raw, UNFENCED `<svg>…</svg>`. Unfenced is the
+# whole point: Obsidian renders inline HTML in reading view, so the diagram
+# draws in the vault as well as in the workbench, and a ```svg fence would show
+# the source in both. Same `key:: value` shape as `source::`, `until::`,
+# `cancelled::`, `skipped::` and `expired::` — one grammar, sixth use.
+FIGURE_RE = re.compile(r"^figure::\s*(.*?)\s*$")
 ITEM_KEY_RE = re.compile(r"^-\s+(hint|answer|solution|source)::\s*(.*?)\s*$")
 QID_RE = re.compile(r"^q-(\d+)-(\d+)$")
 
 KINDS = {"mcq", "numeric", "short", "code", "proof"}
+
+# --------------------------------------------------------------------------
+# what a figure may contain
+# --------------------------------------------------------------------------
+# An allow-list, not a block-list: anything not named here is refused, so a
+# construct nobody thought of fails closed. The frontend walks the same two sets
+# to build React elements (`interface/frontend/src/figure.tsx`), and
+# `tests/test_figure_safety.py` fails if the two copies drift apart.
+SVG_TAGS = {
+    "svg", "g", "title", "desc", "defs", "marker",
+    "line", "polyline", "polygon", "path", "rect", "circle", "ellipse",
+    "text", "tspan",
+}
+SVG_ATTRS = {
+    # geometry
+    "x", "y", "x1", "y1", "x2", "y2", "cx", "cy", "r", "rx", "ry",
+    "width", "height", "d", "points", "dx", "dy", "transform",
+    "viewBox", "preserveAspectRatio",
+    # paint. `currentColor` is what the authoring prompt asks for, so a figure
+    # inherits the room's ink instead of hardcoding a black that disappears the
+    # day the ground changes.
+    "fill", "fill-opacity", "fill-rule", "stroke", "stroke-width", "opacity",
+    "stroke-linecap", "stroke-linejoin", "stroke-dasharray", "stroke-opacity",
+    # text
+    "text-anchor", "dominant-baseline", "font-size", "font-family",
+    "font-weight", "font-style", "letter-spacing",
+    # arrowheads
+    "marker-end", "marker-start", "marker-mid",
+    "markerWidth", "markerHeight", "refX", "refY", "orient", "markerUnits",
+    # identity and accessibility
+    "id", "class", "role", "aria-label", "aria-hidden", "xmlns",
+}
+# Named separately only so the refusal can say *why* rather than "not allowed":
+# these are the ones someone would actually try.
+SVG_DANGEROUS = {"script", "foreignObject", "image", "use", "a", "animate",
+                 "set", "handler", "style"}
 
 # The hard checks (study plan §4) — enforced, not advised.
 ESTIMATE_MIN, ESTIMATE_MAX = 30, 60
@@ -185,7 +227,7 @@ def _parse_segment(lines: list[str], start: int, end: int, problems: list[str]) 
         "n": int(m.group(1)), "title": m.group(2).strip(),
         "minutes": int(m.group(3)), "line": start + 1,
         "sources": [], "summary": "", "normal": "", "in_depth": "",
-        "example": None, "practice": [],
+        "example": None, "practice": [], "figure": None,
     }
     key_of = {"Summary": "summary", "Normal": "normal",
               "In depth": "in_depth", "Example": "example"}
@@ -225,6 +267,36 @@ def _parse_segment(lines: list[str], start: int, end: int, problems: list[str]) 
         if sm and bucket is None and item is None:
             seg["sources"].append({"path": sm.group(1), "line": i + 1})
             i += 1
+            continue
+
+        gm = FIGURE_RE.match(line)
+        if gm and bucket is None and item is None:
+            caption = gm.group(1)
+            svg: list[str] = []
+            j = i + 1
+            while j < end and "</svg>" not in lines[j]:
+                svg.append(lines[j])
+                j += 1
+            if j < end:
+                svg.append(lines[j])
+                j += 1
+            else:
+                problems.append(f"line {i + 1}: figure:: is never closed — a "
+                                f"figure runs from the key to its `</svg>`")
+            if seg["figure"] is not None:
+                # One per segment. A segment teaches one idea; two diagrams for
+                # it means the split is wrong, and the alternative is a rule
+                # about ordering that nothing else in this grammar needs.
+                problems.append(f"line {i + 1}: a second figure:: in segment "
+                                f"S{seg['n']} — one figure per segment")
+            elif not caption:
+                problems.append(f"line {i + 1}: figure:: has no caption — a "
+                                f"diagram nobody can describe is not evidence")
+            else:
+                seg["figure"] = {"caption": caption,
+                                 "svg": "\n".join(svg).strip(),
+                                 "line": i + 1}
+            i = j
             continue
 
         dm = DEPTH_RE.match(line)
@@ -328,6 +400,13 @@ def serialize(d: dict) -> str:
     for s in d["segments"]:
         out.append(f"## S{s['n']} · {s['title']} ⏱ {s['minutes']}")
         out += [f"source:: {src['path']}" for src in s["sources"]]
+        # Beside `source::`, and before the depth headings, because that is
+        # where it was parsed from. Canonicalisation runs through here on every
+        # generated module — a figure this dropped would be authored, validated
+        # and then quietly deleted on the way to disk.
+        if s.get("figure"):
+            out.append(f"figure:: {s['figure']['caption']}")
+            out.append(s["figure"]["svg"])
         for key, label in (("summary", "Summary"), ("normal", "Normal"),
                            ("in_depth", "In depth")):
             out += ["", f"### {label}", "", s[key]]
@@ -348,6 +427,58 @@ def serialize(d: dict) -> str:
 # validation — the checks are the contract; a module that fails any of them
 # is held, never rendered as if fine
 # --------------------------------------------------------------------------
+def validate_svg(svg: str, tag: str = "figure") -> list[str]:
+    """Every way this figure violates the allow-list; [] means it conforms.
+
+    Well-formed XML is required rather than merely preferred. SVG inside HTML
+    does not have to be, but a parser that guesses at unclosed tags is a parser
+    whose idea of the document can differ from the browser's — and the whole
+    point of this function is that what it approved is what gets rendered.
+    """
+    import xml.etree.ElementTree as ET
+
+    out: list[str] = []
+    if not svg.strip():
+        return [f"{tag}: no SVG follows the caption"]
+    try:
+        root = ET.fromstring(svg)
+    except ET.ParseError as e:
+        return [f"{tag}: not well-formed XML ({e}) — a figure is checked before "
+                f"it is rendered, so it has to be parseable the same way twice"]
+
+    def bare(name: str) -> str:
+        return name.split("}", 1)[1] if "}" in name else name
+
+    if bare(root.tag) != "svg":
+        out.append(f"{tag}: the outer element is <{bare(root.tag)}>, expected <svg>")
+    if not (root.get("viewBox") or "").strip():
+        out.append(f"{tag}: <svg> has no viewBox — without one it cannot scale "
+                   f"to the reading column")
+
+    for el in root.iter():
+        name = bare(el.tag)
+        if name in SVG_DANGEROUS:
+            out.append(f"{tag}: <{name}> is refused — a figure draws, it does "
+                       f"not script, fetch or embed")
+            continue
+        if name not in SVG_TAGS:
+            out.append(f"{tag}: <{name}> is not on the allow-list")
+            continue
+        for attr, val in el.attrib.items():
+            a = bare(attr)
+            low = a.lower()
+            if low.startswith("on"):
+                out.append(f"{tag}: <{name} {a}=…> — event handlers are refused")
+            elif low in ("href", "xlink:href") or low.endswith(":href"):
+                out.append(f"{tag}: <{name} {a}=…> — a figure never links out")
+            elif a not in SVG_ATTRS:
+                out.append(f"{tag}: <{name} {a}=…> is not on the allow-list")
+            elif "url(" in val.lower() or "javascript:" in val.lower():
+                out.append(f"{tag}: <{name} {a}=…> references an external "
+                           f"resource — a figure is self-contained")
+    return out
+
+
 def validate(text: str, vault: Path | None = None) -> list[str]:
     """Return every way this module note violates the grammar; [] means it
     conforms. `vault` enables source-resolution checks (invariant 7)."""
@@ -396,6 +527,9 @@ def validate(text: str, vault: Path | None = None) -> list[str]:
                 out.append(f"{tag}: '### {label}' is missing or empty")
         if s["example"] is not None and not s["example"]:
             out.append(f"{tag}: '### Example' is present but empty")
+        if s.get("figure"):
+            out += validate_svg(s["figure"]["svg"],
+                                f"{tag} figure (line {s['figure']['line']})")
 
     if segs and not any(s["example"] for s in segs):
         out.append("no segment has an '### Example' — at least one per module")
@@ -756,6 +890,13 @@ def validate_checkpoint(text: str, vault: Path | None = None) -> list[str]:
         if s["example"] is not None:
             out.append(f"{tag}: has '### Example' — a checkpoint carries "
                        f"practice only")
+        # A checkpoint may carry a figure: a question about a bracket needs the
+        # bracket. It is held to the same allow-list, because the difference
+        # between a module and a checkpoint is what they teach, not what they
+        # are allowed to render.
+        if s.get("figure"):
+            out += validate_svg(s["figure"]["svg"],
+                                f"{tag} figure (line {s['figure']['line']})")
 
     # Depth headings are found by scanning the text, not by truthiness on the
     # parsed buckets: parse() renders a present-but-EMPTY '### Summary' as ""

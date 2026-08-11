@@ -42,6 +42,7 @@ import type { Dispatch, SetStateAction } from "react";
 import { API, get, obsidianHref, post, ApiError } from "./api";
 import CoursesGrid from "./courses";
 import { MathBlock, MathInline } from "./math";
+import Figure from "./figure";
 import type {
   Courses, Guide, GuideProgress, GuideRow, Lesson, LessonList,
   LessonSegment, PracticeItem, Rollup,
@@ -432,6 +433,10 @@ function Segment({ seg, depth, st, cp, dispatch, onResolve, onSandbox }: {
   const resolved = seg.practice.filter(it => pr(st, it.id).result !== null).length;
   return (
     <>
+      {/* Above the prose at every depth: the diagram is what the segment is
+          about, and a reader who scrolls past it to find the words has been
+          shown the argument in the wrong order. */}
+      {seg.figure && <Figure svg={seg.figure.svg} caption={seg.figure.caption} />}
       {!cp && <Rich text={seg[depth]} />}
       {!cp && seg.example && (
         <div className="wb-example">

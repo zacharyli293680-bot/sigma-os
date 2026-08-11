@@ -2692,6 +2692,23 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 }
 .wb-link { color: var(--ink); border-bottom: 1px solid var(--panel-line); }
 
+/* A figure. `currentColor` is what the authoring prompt asks the diagram to
+   stroke and fill with, so setting the colour here is what makes it inherit the
+   room's ink instead of carrying a hardcoded black that would vanish the day
+   this ground changes. */
+.wb-figure { margin: 26px 0; color: var(--ink); }
+.wb-figure-art {
+  display: flex; justify-content: center;
+  background: var(--inset); border-radius: var(--r-card);
+  padding: 20px 18px;
+}
+.wb-figure-art svg { max-width: 100%; height: auto; }
+.wb-figure figcaption {
+  margin-top: 9px; text-align: center;
+  font-size: var(--t-small); color: var(--ink-2);
+}
+.wb-figure-bad { margin: 0; color: var(--amber); font-size: var(--t-small); }
+
 /* Example and practice: filled wells rather than outlined boxes. Separation
    goes in the surface step, and an outline inside an outline is the "boxes
    inside boxes" the design language names outright. */

@@ -638,6 +638,49 @@ Rules (a parser rejects violations mechanically):
 - Every item has `- answer::` and `- solution::` with real content.
 - Use `·` (U+00B7) and `⏱` exactly as shown in headings and item lines.
 
+## Mathematics — LaTeX, never Unicode art
+
+Write every formula as LaTeX: `$…$` inline, `$$…$$` on its own lines for a
+displayed equation. This is the vault's existing convention — Obsidian renders
+it natively, and Zach reads these notes in Obsidian.
+
+    Inline:   the magnitude $\\lVert \\mathbf{{V}} \\rVert$ is a scalar
+    Display:  $$\\lVert \\mathbf{{V}} \\rVert = \\sqrt{{V_x^2 + V_y^2 + V_z^2}}$$
+
+**Do NOT** build formulas out of Unicode symbols and spacing — no `√`, `²`, `‖`,
+`ₓ`, `θ` in a plain-text block, and never a division written as a row of
+hyphens with the numerator above it. That renders as clunky monospace in the
+reader and cannot express a fraction, an integral or a matrix at all. Vectors
+are `\\mathbf{{v}}`, norms are `\\lVert v \\rVert`, and units stay in prose
+("$12$ N·m" is fine; the unit does not need to be inside the maths).
+
+## Figures — draw one when the source describes an arrangement
+
+A segment may carry ONE diagram, written directly after its `source::` lines:
+
+    figure:: Free-body diagram of the bracket at O
+    <svg viewBox="0 0 260 170" role="img" aria-label="A bracket pinned at O with a 40 N force applied 0.3 m along the arm">
+      <line x1="30" y1="120" x2="200" y2="120" stroke="currentColor" stroke-width="2"/>
+      <circle cx="30" cy="120" r="4" fill="currentColor"/>
+      <text x="22" y="140" font-size="11" fill="currentColor">O</text>
+    </svg>
+
+Do this when the material describes something physical or spatial — a free-body
+diagram, a loaded beam, an axis set, a geometric construction. Skip it when the
+idea is not spatial; a diagram of nothing is worse than no diagram.
+
+Hard rules, all enforced by a validator:
+- The `<svg>` is **raw and unfenced** (so Obsidian draws it) and must be
+  **well-formed XML** — every element closed, every attribute quoted.
+- `viewBox` is required. Do not set `width` or `height` on the root.
+- Stroke and fill with `currentColor` so the diagram inherits the reader's ink.
+- Allowed elements ONLY: {tags}.
+- No `<script>`, `<image>`, `<use>`, `<a>`, `<foreignObject>`, no `href`, no
+  `on*` handler, no `url(...)` — a figure draws, it does not fetch or script.
+- Keep it under about 40 elements, and label the parts with `<text>`.
+- The caption after `figure::` says what it shows; the `aria-label` describes it
+  for someone who cannot see it. Both are required to be useful sentences.
+
 Source notes:
 
 {material}
@@ -653,6 +696,10 @@ def author_module(vault: Path, course: str, row: dict, compose=None) -> tuple[st
     prompt = MODULE_PROMPT.format(course=folder.name, n=row["n"],
                                   title=row["title"], est=row["est"],
                                   sources="\n".join(f"  - {s}" for s in row["sources"]),
+                                  # Straight from the validator, so the prompt
+                                  # cannot describe a different allow-list from
+                                  # the one that will judge the answer.
+                                  tags=", ".join(sorted(ln.SVG_TAGS)),
                                   material=material)
     call = compose or (lambda p: call_model(p, MODEL, timeout=JOB_TIMEOUT,
                                             actor="guide"))
@@ -737,6 +784,29 @@ Rules (a parser rejects violations mechanically):
 - Every item has `- answer::` and `- solution::` with real content.
 - Use `·` (U+00B7) and `⏱` exactly as shown.
 
+## Mathematics — LaTeX, never Unicode art
+
+Every formula is LaTeX: `$…$` inline, `$$…$$` displayed. This is the vault's
+own convention and Obsidian renders it natively.
+
+    $$\\lVert \\mathbf{{V}} \\rVert = \\sqrt{{V_x^2 + V_y^2 + V_z^2}}$$
+
+Never assemble a formula out of `√`, `²`, `‖`, `ₓ` and spacing, and never write
+a division as a row of hyphens — it renders as clunky monospace and cannot
+express a fraction or an integral at all.
+
+## Figures
+
+A segment may carry ONE diagram after its `source::` line, when a question needs
+to show an arrangement — a loaded beam, a bracket, an axis set:
+
+    figure:: The bracket for questions 1-3
+    <svg viewBox="0 0 260 170" role="img" aria-label="…">…</svg>
+
+Raw and unfenced, well-formed XML, `viewBox` required, stroke and fill with
+`currentColor`, allowed elements ONLY: {tags}. No `<script>`, `<image>`,
+`<use>`, `<a>`, `<foreignObject>`, no `href`, no `on*`, no `url(...)`.
+
 Assessment and module notes:
 
 {material}
@@ -766,6 +836,7 @@ def author_checkpoint(vault: Path, course: str, row: dict, bp: dict,
     prompt = CHECKPOINT_PROMPT.format(course=folder.name, n=row["n"],
                                       covered=covered,
                                       sources="\n".join(f"  - {s}" for s in src_rels),
+                                      tags=", ".join(sorted(ln.SVG_TAGS)),
                                       material=material)
     call = compose or (lambda p: call_model(p, MODEL, timeout=JOB_TIMEOUT,
                                             actor="guide"))
