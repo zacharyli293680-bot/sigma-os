@@ -254,7 +254,8 @@ def cmd_guide(a):
         return run(GUIDE, "--status")
     # guide.py's model surface is `claude -p` via sigma.call_model — the
     # reflect/retro path, so the SDK interpreter is not demanded.
-    return run(GUIDE, a.course)
+    redo = getattr(a, "redo", None)
+    return run(GUIDE, a.course, *(["--redo", redo] if redo else []))
 
 
 def cmd_recall(a):
@@ -508,6 +509,12 @@ def build_parser():
     gdr = gds.add_parser("run", help="blueprint pass, or author what the "
                                      "approved blueprint still misses")
     gdr.add_argument("course", help="course code, e.g. AA-210")
+    gdr.add_argument("--redo", metavar="ROWS",
+                     help="re-author notes that ALREADY exist, e.g. 'M02,CP1' "
+                          "— for when the prompt improved after they were "
+                          "written. Overwrites each in one revertible commit, "
+                          "refuses to create anything, and leaves the chain "
+                          "alone, so it does not need the blueprint approved.")
 
     rc_ = sub.add_parser("recall", help="the S8 recall cards and the measured pace")
     rcs = rc_.add_subparsers(dest="recall_cmd")

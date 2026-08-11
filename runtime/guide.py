@@ -255,6 +255,29 @@ def _pending_proposal_for(rel: str) -> str | None:
     return None
 
 
+REDO_RE = re.compile(r"^\s*(M|CP)\s*0*(\d+)\s*$", re.I)
+
+
+def parse_redo(spec: str) -> tuple[set[int], set[int], list[str]]:
+    """`"M02,CP1"` → ({2}, {1}, []). The third element is whatever did not
+    parse, returned rather than raised: a typo in one name should not decide
+    the fate of the others silently, and the caller refuses the whole run."""
+    mods: set[int] = set()
+    cps: set[int] = set()
+    bad: list[str] = []
+    for part in (spec or "").split(","):
+        if not part.strip():
+            continue
+        m = REDO_RE.match(part)
+        if not m:
+            bad.append(part.strip())
+        elif m.group(1).upper() == "M":
+            mods.add(int(m.group(2)))
+        else:
+            cps.add(int(m.group(2)))
+    return mods, cps, bad
+
+
 def _propose_and_apply(title: str, rel: str, content: str, rationale: str,
                        run_id: str) -> dict:
     import applier
@@ -885,7 +908,8 @@ def _job_rel(vault: Path, course: str, row: dict) -> str:
     return f"02-Areas/Academics/{folder.name}/guide/{base}.md"
 
 
-def run(course: str, vault: Path = DEFAULT_VAULT, compose=None) -> int:
+def run(course: str, vault: Path = DEFAULT_VAULT, compose=None,
+        redo: str | None = None) -> int:
     folder = ln.course_folder(vault, course)
     if folder is None:
         print(f"no course folder for {course!r} under 02-Areas/Academics/")
@@ -943,7 +967,15 @@ def run(course: str, vault: Path = DEFAULT_VAULT, compose=None) -> int:
             return 0 if (ok or r.get("paused")
                          or r.get("action") == "waiting") else 1
 
-        if bp["status"] != "approved":
+        # The approval gate guards *creation*, and only creation. The contract
+        # says so outright — "a new module or checkpoint absent from the
+        # approved blueprint is held by the applier … while an update to an
+        # existing note needs only the grammar" — and `applier.apply_one`
+        # implements exactly that, running `_blueprint_hold` under
+        # `if ctype in (...) and not existed`. So --redo, which refuses to
+        # create anything (checked below), does not need the plan approved. It
+        # is re-writing notes whose existence was authorised long ago.
+        if bp["status"] != "approved" and not redo:
             note = (f"{course}'s blueprint is {bp['status'] or 'unstated'!r} — "
                     f"edit {bp['file']} and set status: approved to generate")
             print(note)
@@ -958,26 +990,67 @@ def run(course: str, vault: Path = DEFAULT_VAULT, compose=None) -> int:
                             "queue": [], "current": None, "results": {}})
             return 1
 
-        # approval already happened — make the plan reachable (§13.2), then
-        # author what is missing, in plan order, one commit per note.
-        # GitBusy degrades to a blocked record, exactly as apply_one degrades
-        # the same exception to a held proposal — never a traceback that
-        # leaves the previous run's progress on screen.
-        try:
-            reconcile_chain(vault, course, bp, run_id)
-            reconcile_index(vault, course, bp, run_id)
-        except gitops.GitBusy as e:
-            note = (f"the git mutex is busy ({e}) — nothing written; "
-                    f"re-run when it frees")
-            print(note)
-            write_progress({"state": "blocked", "course": course, "note": note,
-                            "queue": [], "current": None, "results": {}})
-            return 1
-
         have_m, have_c = ln.existing_units(vault, course)
-        todo = [r for r in bp["rows"]
-                if (r["n"] not in have_m if r["kind"] == "module"
-                    else r["n"] not in have_c)]
+
+        if redo:
+            want_m, want_c, bad = parse_redo(redo)
+            if bad:
+                note = (f"--redo: cannot read {', '.join(repr(b) for b in bad)} "
+                        f"— names look like M02 or CP1")
+                print(note)
+                return 2
+            todo = [r for r in bp["rows"]
+                    if (r["n"] in want_m if r["kind"] == "module"
+                        else r["n"] in want_c)]
+            # Refuse to CREATE. This is the line that lets --redo skip the
+            # approval gate above: it only ever rewrites notes that already
+            # exist, so nothing here can put an unapproved module on disk.
+            absent = [f"M{r['n']:02}" if r["kind"] == "module" else f"CP{r['n']}"
+                      for r in todo
+                      if (r["n"] not in have_m if r["kind"] == "module"
+                          else r["n"] not in have_c)]
+            if absent:
+                note = (f"--redo only re-authors notes that exist; "
+                        f"{', '.join(absent)} do(es) not. Approve the blueprint "
+                        f"and run without --redo to create them.")
+                print(note)
+                return 2
+            named = sorted(f"M{n:02}" for n in want_m) + sorted(f"CP{n}" for n in want_c)
+            found = {f"M{r['n']:02}" if r["kind"] == "module" else f"CP{r['n']}"
+                     for r in todo}
+            unknown = [n for n in named if n not in found]
+            if unknown:
+                note = (f"--redo: {', '.join(unknown)} is not a row in "
+                        f"{course}'s blueprint — the plan is what supplies the "
+                        f"title, estimate and sources to re-author from")
+                print(note)
+                return 2
+        else:
+            # approval already happened — make the plan reachable (§13.2), then
+            # author what is missing, in plan order, one commit per note.
+            # GitBusy degrades to a blocked record, exactly as apply_one
+            # degrades the same exception to a held proposal — never a
+            # traceback that leaves the previous run's progress on screen.
+            #
+            # Deliberately NOT reached by --redo: reconciling writes every
+            # planned row into the chain and the course index, and doing that
+            # from a *draft* blueprint would publish 27 unapproved modules as
+            # links — precisely what the gate above exists to prevent.
+            try:
+                reconcile_chain(vault, course, bp, run_id)
+                reconcile_index(vault, course, bp, run_id)
+            except gitops.GitBusy as e:
+                note = (f"the git mutex is busy ({e}) — nothing written; "
+                        f"re-run when it frees")
+                print(note)
+                write_progress({"state": "blocked", "course": course,
+                                "note": note, "queue": [], "current": None,
+                                "results": {}})
+                return 1
+
+            todo = [r for r in bp["rows"]
+                    if (r["n"] not in have_m if r["kind"] == "module"
+                        else r["n"] not in have_c)]
         labels = [f"M{r['n']:02}" if r["kind"] == "module" else f"CP{r['n']}"
                   for r in todo]
         prog = {"state": "running", "course": course, "run_id": run_id,
@@ -987,14 +1060,19 @@ def run(course: str, vault: Path = DEFAULT_VAULT, compose=None) -> int:
                 "results": {}, "note": None, "resume_at": None, "finished": None}
         write_progress(prog)
         if not todo:
-            prog.update(state="done", note="nothing missing — the plan is "
-                                           "fully authored")
+            prog.update(state="done",
+                        note="nothing named to re-author" if redo else
+                             "nothing missing — the plan is fully authored")
             prog["finished"] = datetime.datetime.now().isoformat(timespec="seconds")
             write_progress(prog)
             print(prog["note"])
             return 0
-        print(f"{course}: {len(todo)} of {len(bp['rows'])} planned notes "
-              f"missing — authoring in plan order")
+        if redo:
+            print(f"{course}: re-authoring {len(todo)} existing note(s) — "
+                  f"each overwrites its file in one revertible commit")
+        else:
+            print(f"{course}: {len(todo)} of {len(bp['rows'])} planned notes "
+                  f"missing — authoring in plan order")
 
         consecutive_failures = 0
         paused = False
@@ -1139,10 +1217,19 @@ def main(argv=None):
     ap.add_argument("course", nargs="?", help="course code, e.g. AA-210")
     ap.add_argument("--status", action="store_true",
                     help="blueprint + coverage per course, and the last run")
+    ap.add_argument("--redo", metavar="ROWS",
+                    help="re-author notes that ALREADY exist, e.g. "
+                         "'M02,CP1'. Each overwrites its file in one revertible "
+                         "commit. Refuses to create anything, and leaves the "
+                         "chain and course index alone — so it does not need "
+                         "the blueprint approved.")
     a = ap.parse_args(argv)
     if a.status or not a.course:
+        if a.redo:
+            print("--redo needs a course, e.g. `sigma guide AA-210 --redo M02`")
+            return 2
         return status()
-    return run(a.course)
+    return run(a.course, redo=a.redo)
 
 
 if __name__ == "__main__":
