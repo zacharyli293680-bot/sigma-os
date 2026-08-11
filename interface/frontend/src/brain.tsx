@@ -173,8 +173,12 @@ function cacheLayout(sig: number, n: number, pos: Float32Array): void {
 const SPRITES = new Map<string, HTMLCanvasElement>();
 const SPRITE_PX = 64;
 
-function glow(color: string): HTMLCanvasElement {
-  const hit = SPRITES.get(color);
+function glow(color: string, paper = false): HTMLCanvasElement {
+  // The variant is part of the identity, not just of the drawing: without it
+  // the first theme to ask for a hue wins the cache and every later theme gets
+  // its sprite. A palette switch would keep the old star field.
+  const key = paper ? `p${color}` : color;
+  const hit = SPRITES.get(key);
   if (hit) return hit;
   const c = document.createElement("canvas");
   c.width = c.height = SPRITE_PX;
@@ -184,14 +188,25 @@ function glow(color: string): HTMLCanvasElement {
   const g = parseInt(color.slice(3, 5), 16);
   const b = parseInt(color.slice(5, 7), 16);
   const grd = x.createRadialGradient(h, h, 0, h, h, h);
-  grd.addColorStop(0.00, "rgba(255,255,255,0.95)");
-  grd.addColorStop(0.13, `rgba(${r},${g},${b},0.90)`);
-  grd.addColorStop(0.34, `rgba(${r},${g},${b},0.30)`);
-  grd.addColorStop(0.62, `rgba(${r},${g},${b},0.07)`);
+  if (paper) {
+    // Ink, not light. No white core — on paper that is a hole, and under
+    // `multiply` it is a no-op — and a much tighter falloff, because the long
+    // tail exists to make bloom and ink does not bloom. The far stops still
+    // matter: they are what lets a dense region accumulate.
+    grd.addColorStop(0.00, `rgba(${r},${g},${b},0.95)`);
+    grd.addColorStop(0.16, `rgba(${r},${g},${b},0.66)`);
+    grd.addColorStop(0.40, `rgba(${r},${g},${b},0.20)`);
+    grd.addColorStop(0.70, `rgba(${r},${g},${b},0.05)`);
+  } else {
+    grd.addColorStop(0.00, "rgba(255,255,255,0.95)");
+    grd.addColorStop(0.13, `rgba(${r},${g},${b},0.90)`);
+    grd.addColorStop(0.34, `rgba(${r},${g},${b},0.30)`);
+    grd.addColorStop(0.62, `rgba(${r},${g},${b},0.07)`);
+  }
   grd.addColorStop(1.00, `rgba(${r},${g},${b},0)`);
   x.fillStyle = grd;
   x.fillRect(0, 0, SPRITE_PX, SPRITE_PX);
-  SPRITES.set(color, c);
+  SPRITES.set(key, c);
   return c;
 }
 
@@ -652,7 +667,15 @@ export default function Brain({ graph, vault, fireRef, filter }: {
         return a;
       };
 
-      ctx.globalCompositeOperation = "lighter";
+      /* `multiply` is the true inverse of `lighter`, which is why a light sky
+         costs one token rather than a second renderer: overlapping strokes
+         still accumulate, so a dense region still reads as more intense — it
+         darkens toward the hue instead of blowing out toward white. The canvas
+         is cleared to transparent, so the first mark on empty pixels lands at
+         its own colour either way and only the overlaps differ. */
+      const paper = !!pal.paper;
+      const blend = paper ? "multiply" : "lighter";
+      ctx.globalCompositeOperation = blend;
 
       /* ---- dust ----------------------------------------------------------
          260 motes of parallax, so camera drift reads as motion through a
@@ -701,7 +724,7 @@ export default function Brain({ graph, vault, fireRef, filter }: {
         const ec = edgeCtx!;
         ec.setTransform(cw / W, 0, 0, ch / H, 0, 0);
         ec.clearRect(0, 0, W, H);
-        ec.globalCompositeOperation = "lighter";
+        ec.globalCompositeOperation = blend;
         ec.lineWidth = 1;
         // Bucket into reused flat arrays. Path2D per bucket per frame was
         // measured at 0.488ms against 0.387ms for direct ctx paths, and it
@@ -790,7 +813,7 @@ export default function Brain({ graph, vault, fireRef, filter }: {
       /* ---- axon pulses ---------------------------------------------------
          Only fired nodes emit these. Nothing else in the scene travels, so a
          moving light always means a tool actually touched that note.        */
-      const axon = glow(pal.fire);
+      const axon = glow(pal.fire, paper);
       for (const [idx] of w.fires) {
         const a = fireAge(idx);
         if (a <= 0) continue;
@@ -831,7 +854,8 @@ export default function Brain({ graph, vault, fireRef, filter }: {
           ? 0.30 : 1) * (passes ? 1 : 0.12);
 
         const r = (1.7 + Math.sqrt(node.inlinks) * 1.05) * pp[i] + boost * 6;
-        const spr = glow(boost > 0 ? pal.fire : pal.buckets[node.bucket] ?? pal.fallback);
+        const spr = glow(boost > 0 ? pal.fire : pal.buckets[node.bucket] ?? pal.fallback,
+                         paper);
         // The full reach, always. The ladder used to shrink this to 2.9 to buy
         // back fill rate, which is the change that made the sky look flat
         // without ever announcing itself.

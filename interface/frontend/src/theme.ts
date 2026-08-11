@@ -56,6 +56,21 @@ export interface BrainPalette {
   labelInk: string;
   /** the halo stroked under a star's label so it survives a bright cloud */
   labelHalo: string;
+  /**
+   * The stage is lighter than what is drawn on it — stars are **ink, not
+   * light**. Two things change in `brain.tsx` and nothing else does:
+   *
+   *   · the canvas composites `multiply` rather than `lighter`, which is the
+   *     true inverse. Overlapping strokes still accumulate, so a dense region
+   *     still reads as more intense; it darkens toward the hue instead of
+   *     blowing out toward white.
+   *   · the star sprite drops its hardcoded white core — invisible on paper —
+   *     for a tighter falloff around the hue itself. Ink does not bloom.
+   *
+   * Set only by a theme whose `sky` is light. The five dark themes never read
+   * it and are pixel-identical without it.
+   */
+  paper?: boolean;
 }
 
 export interface Theme {
@@ -112,9 +127,11 @@ interface Spec {
   haze: [string, string, string, string];
   /** the four inside the sky; defaults to the haze */
   neb?: [string, string, string, string];
-  /** Only a theme whose page is lighter than its instrument states these. The
-   *  centre stage keeps a dark ground in every theme because the brain's canvas
-   *  composites additively — see App.css's `.center`. */
+  /** The centre stage as its own room. It used to exist only so a light *page*
+   *  could hold a dark instrument, because the brain's canvas composited
+   *  additively and additive needs a dark ground. `BrainPalette.paper` removed
+   *  that constraint, so a light theme can now state a light stage too and the
+   *  stars become ink. See App.css's `.center`. */
   sky?: {
     bg: string;
     /** the sky's own raised plane. A light theme's `surface` is near-white and
@@ -126,6 +143,10 @@ interface Spec {
     accent: string;
     glow: string;
     amber: string;
+    /** The stage's own hairline alphas, defaulted to the dark-ground pair
+     *  because the sky used to be dark in every theme. A light stage needs the
+     *  heavier ones for exactly the reason a light page does. */
+    line?: [number, number];
   };
   brain: BrainPalette;
 }
@@ -179,11 +200,12 @@ function make(s: Spec): Theme {
     "--sky-accent-rgb": channels(skyAccent),
     "--sky-glow-rgb": channels(sky?.glow ?? s.glow),
     "--sky-amber": sky?.amber ?? s.amber,
-    // The sky always uses the dark-ground alphas: its ground is dark even when
-    // the page is not, so borrowing a light theme's heavier hairline would
-    // draw a cage around the stars.
-    "--sky-line": `rgb(${channels(skyAccent)} / 0.28)`,
-    "--sky-line-dim": `rgb(${channels(skyAccent)} / 0.14)`,
+    // The sky states its own alphas. It defaults to the dark-ground pair —
+    // borrowing a light *page's* heavier hairline would draw a cage around a
+    // dark star field — but a stage that is itself light needs the heavy ones,
+    // so the two are no longer the same question.
+    "--sky-line": `rgb(${channels(skyAccent)} / ${sky?.line?.[0] ?? 0.28})`,
+    "--sky-line-dim": `rgb(${channels(skyAccent)} / ${sky?.line?.[1] ?? 0.14})`,
   };
   s.haze.forEach((c, i) => { tokens[`--haze-${i + 1}`] = channels(c); });
   (s.neb ?? s.haze).forEach((c, i) => { tokens[`--neb-${i + 1}`] = channels(c); });
@@ -307,25 +329,35 @@ export const THEMES: Theme[] = [
     // Pastel over white — the haze is a 4% wash here, not a glow.
     haze: ["#7DD3FC", "#C4B5FD", "#99F6E4", "#BFDBFE"],
     neb: ["#00E5FF", "#C084FC", "#2DD4BF", "#60A5FA"],
+    // Daylight all the way through, since 2026-08-10. The stage was dark here
+    // because it had to be — additive compositing needs a dark ground — and
+    // `paper` below is what removed the "had to".
     sky: {
-      bg: "#060B12", surface: "#0D141D",
-      ink: "#DDE7EF", ink2: "#90A5B5", muted: "#47596A",
-      accent: "#38D6F0", glow: "#6FE9FF", amber: "#FFB020",
+      bg: "#E7ECF0", surface: "#FFFFFF",
+      ink: "#16212B", ink2: "#4E606E", muted: "#93A3AF",
+      accent: "#0E7C99", glow: "#0B6F8A", amber: "#9A5B00",
+      line: [0.34, 0.18],
     },
     brain: {
+      paper: true,
+      // The same nine hues, darkened until each reads as ink on paper rather
+      // than as light in a void. Rule 3 is unchanged: they must still be told
+      // apart, and desaturating them into a grey wash would lose the picture.
       buckets: {
-        root: "#FF7A7A", inbox: "#FFD873", daily: "#EEF3F7",
-        academics: "#5CE894", areas: "#FFA24D", projects: "#6FB2FF",
-        system: "#CB93FF", archive: "#7C8894", meta: "#3EE0CB",
+        root: "#C2334A", inbox: "#8A6100", daily: "#414E5C",
+        academics: "#137A45", areas: "#B0541A", projects: "#2456A6",
+        system: "#7034B0", archive: "#6B7684", meta: "#0D6E68",
       },
-      fallback: "#90A5B5", fire: "#A8F0FF",
-      // The one place a theme carries two bronzes: #8A5A1E is legible on paper
-      // and invisible on the sky, so the ring gets the same hue lifted for its
-      // own ground. Same family, same glyph, same meaning — a second *value*,
-      // not a second colour.
-      noSync: "#E0A46A",
-      edgeDim: "#7896AA", edgeFire: "#38D6F0", edgeLit: "#9BEFFC",
-      dust: "#96B9D2", labelInk: "#DDE7EF", labelHalo: "#050A11",
+      fallback: "#7A8896",
+      // Fire has to clear all nine buckets *and* read as hot. On the dark sky
+      // that was "brighter than everything"; on paper it is the one saturated
+      // red-orange nothing else is near.
+      fire: "#D9480F",
+      // One bronze again. The second value existed because #8A5A1E vanished on
+      // a dark sky; on a light one the page's own bronze is the legible one.
+      noSync: "#8A5A1E",
+      edgeDim: "#5E7382", edgeFire: "#D9480F", edgeLit: "#0E7C99",
+      dust: "#8FA3B2", labelInk: "#16212B", labelHalo: "#FFFFFF",
     },
   }),
 
@@ -383,26 +415,26 @@ export const THEMES: Theme[] = [
     line: [0.22, 0.11],
     haze: ["#C7BFFF", "#A5B4FC", "#DDD6FE", "#BFDBFE"],
     neb: ["#818CF8", "#C084FC", "#38BDF8", "#2DD4BF"],
+    // A shade deeper than the page, so the stage still reads as its own room
+    // without becoming a second card. §1.1 raises by lightness; this is the
+    // opposite move for the one region that is a ground rather than a plane.
     sky: {
-      bg: "#0A0C18", surface: "#12162A",
-      ink: "#DEE1F0", ink2: "#8E95AE", muted: "#464C66",
-      accent: "#8B93FF", glow: "#ADB2FF", amber: "#FFB020",
+      bg: "#E4E7F2", surface: "#FFFFFF",
+      ink: "#171A2B", ink2: "#5A6175", muted: "#98A0B4",
+      accent: "#4F46E5", glow: "#6D63FF", amber: "#8A5000",
+      line: [0.24, 0.12],
     },
     brain: {
-      // Bright, because the brain never sits on the canvas — it sits on the
-      // sky above, which is dark in this theme for the same reason it is dark
-      // in MERIDIAN: the canvas composites additively.
+      paper: true,
       buckets: {
-        root: "#FF7A8F", inbox: "#FFD166", daily: "#E9EBF7",
-        academics: "#5CE894", areas: "#FFA24D", projects: "#7C9DFF",
-        system: "#C08BFF", archive: "#7C8399", meta: "#3EE0CB",
+        root: "#BE2D50", inbox: "#8A6100", daily: "#3F4759",
+        academics: "#16703F", areas: "#A85418", projects: "#2F52C7",
+        system: "#7331B5", archive: "#6E7488", meta: "#0C6A73",
       },
-      fallback: "#8E95AE", fire: "#B9BEFF",
-      // The second bronze, for the same reason MERIDIAN carries one: #8A5A1E
-      // is legible on the canvas and invisible on the sky.
-      noSync: "#E0A46A",
-      edgeDim: "#7F87A8", edgeFire: "#8B93FF", edgeLit: "#C3C7FF",
-      dust: "#A2A9CC", labelInk: "#DEE1F0", labelHalo: "#070914",
+      fallback: "#7A8194", fire: "#D9480F",
+      noSync: "#8A5A1E",
+      edgeDim: "#69708A", edgeFire: "#D9480F", edgeLit: "#4F46E5",
+      dust: "#9AA1BA", labelInk: "#171A2B", labelHalo: "#FFFFFF",
     },
   }),
 ];
