@@ -246,27 +246,44 @@ export default function CoursesGrid({ vault, courses, guideProg, busy,
   onGenerate: (code: string) => void;
   onAdded: (code: string) => void;
 }) {
+  const empty = courses !== null && courses !== undefined
+    && courses.courses.length === 0;
+
   return (
     <div className="wb-chain">
       {courses === undefined && <p className="dim pad">reading…</p>}
       {courses === null && <p className="err pad">backend unreachable</p>}
-      {courses && (
+
+      {/* §3.3 — a course grid with no courses in it is a first screen, and a
+          first screen is the most designed one in the product. It used to be
+          the add tile with a dim sentence trailing under it, which reads as an
+          error state for something that is simply new. Only rendered at zero,
+          so the grid you actually use cannot be affected by it. */}
+      {empty && (
+        <div className="wb-empty">
+          <span className="empty-mark" aria-hidden="true">◇</span>
+          <h2>No courses yet.</h2>
+          <p>
+            A course is a folder under <code>02-Areas/Academics/</code> with a
+            course-index note in it. Starting one here writes both, as a single
+            commit you can undo.
+          </p>
+          <AddCourse vault={vault} onAdded={onAdded} />
+        </div>
+      )}
+
+      {courses && !empty && (
         <div className="wb-grid">
           {courses.courses.map(c => (
             <CourseCard key={c.course} c={c} gen={guideProg} busy={busy}
                         onOpen={() => onOpen(c.course)}
                         onGenerate={() => onGenerate(c.course)} />
           ))}
-          {/* Last, and present even when the grid is empty — "no active
-              courses" used to be the end of the road. */}
+          {/* Last, and never the only thing here — the empty case above owns
+              that, because a lone tile on a blank grid says nothing about what
+              a course even is. */}
           <AddCourse vault={vault} onAdded={onAdded} />
         </div>
-      )}
-      {courses && courses.courses.length === 0 && (
-        <p className="dim pad">
-          no active courses yet — a course is a folder under
-          {" "}<code>02-Areas/Academics/</code> with a course-index note
-        </p>
       )}
     </div>
   );

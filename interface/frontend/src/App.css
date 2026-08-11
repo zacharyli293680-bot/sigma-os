@@ -2695,6 +2695,20 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
   display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
   gap: 10px 24px; padding: 14px 18px 18px;
 }
+/* §3.3, at zero courses only. Reuses `.empty-mark` from the chat drawer rather
+   than declaring a second one: it is the same pattern doing the same job, and
+   two of it would drift. The add form is capped so it does not stretch to the
+   full 1320px and stop reading as one action. */
+.wb-empty {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; padding: 6vh 18px;
+}
+.wb-empty h2 { margin: 0 0 8px; font: 400 21px/1.3 var(--sans); color: var(--ink); }
+.wb-empty > p { margin: 0 0 24px; max-width: 52ch; color: var(--ink-2); line-height: 1.55; }
+.wb-empty .wb-card-adding, .wb-empty .wb-card-new { width: min(420px, 100%); }
+.wb-empty .wb-card-adding { text-align: left; }
+
 /* `.panel` sets `min-height: 0`, which is right for the dashboard's own fixed
    tracks and wrong here: it lets a card be squeezed below its own content in a
    track sized *from* the card. `.q-card` learned this the expensive way. */
