@@ -150,11 +150,23 @@ function reduce(st: WbState, a: WbAction): WbState {
   }
 }
 
+/** One option line of a multiple-choice prompt: `A) …`, `(a) …`, `B. …`.
+ *
+ *  The authoring prompt asks for "options A)–D)", so that is the shape the
+ *  notes are written in and the shape both readers here must accept. It is
+ *  anchored to the start of a line on purpose: an unanchored `(a)` matches
+ *  mid-sentence prose ("…the couple (a) is free…") and would turn a
+ *  parenthetical into an answer option.
+ *
+ *  Deliberately not global — `test()` on a `/g` regex advances `lastIndex`
+ *  between calls, so a shared one answers differently on alternate lines. */
+const OPTION_RE = /^\(?([A-Ha-h])[).]\s+\S/;
+
 /** The content grammar is markdown-lite by construction — paragraphs and
  *  4-space-indented formula blocks, with bold, backticks and wikilinks
  *  inline. Rendering it needs no library, and adding one for this would be
  *  the first runtime dependency beyond react itself. */
-type Block = { k: "p" | "pre" | "math"; text: string };
+type Block = { k: "p" | "pre" | "math" | "opt"; text: string };
 
 function Rich({ text }: { text: string }) {
   const blocks: Block[] = [];
@@ -194,7 +206,13 @@ function Rich({ text }: { text: string }) {
       if (para.length) flush();
       pre.push(line.slice(4));
     } else if (!t) flush();
-    else {
+    else if (OPTION_RE.test(t)) {
+      // An option list is the one place where a line break carries meaning:
+      // joining these into a paragraph the way prose is joined rendered a
+      // four-option question as "…points along: A) A × B B) B × A C) A · B".
+      flush();
+      blocks.push({ k: "opt", text: t });
+    } else {
       if (pre.length) flush();
       para.push(t);
     }
@@ -209,6 +227,7 @@ function Rich({ text }: { text: string }) {
       {blocks.map((b, i) =>
         b.k === "pre" ? <pre key={i}>{b.text}</pre>
         : b.k === "math" ? <MathBlock key={i} tex={b.text} />
+        : b.k === "opt" ? <p key={i} className="wb-opt"><Inline text={b.text} /></p>
         : <p key={i}><Inline text={b.text} /></p>)}
     </>
   );
@@ -260,8 +279,19 @@ function parseNumeric(s: string): number | null {
   return m ? Number(m[0]) : null;
 }
 
+/** The option letters a multiple-choice prompt actually offers.
+ *
+ *  This read `/\(([a-h])\)/g` — parenthesised and lower case — while the
+ *  authoring prompt has always asked for `A)–D)`. So every generated mcq
+ *  found zero options and silently degraded to the reveal-the-answer path:
+ *  the grader was never wrong, it was never reached. One shape, read the
+ *  same way by `Rich` above and by the grader here. */
 function mcqLetters(prompt: string): string[] {
-  return [...new Set([...prompt.matchAll(/\(([a-h])\)/g)].map(m => m[1]))];
+  const found = prompt.split("\n")
+    .map(l => l.trim().match(OPTION_RE))
+    .filter((m): m is RegExpMatchArray => m !== null)
+    .map(m => m[1].toLowerCase());
+  return [...new Set(found)];
 }
 
 /** The mcq answer as a gradeable letter, or null when the answer:: text is

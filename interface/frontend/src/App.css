@@ -2682,6 +2682,11 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 /* --- the reading itself --------------------------------------------------- */
 .wb-read p { margin: 15px 0; line-height: 1.65; color: var(--ink); }
 .wb-read b, .wb-read strong { font-weight: 590; }
+/* An option line of a multiple-choice question. It is a paragraph so that the
+   line break survives, but a *list* to the eye — paragraph spacing between
+   four one-line options reads as four unrelated statements. */
+.workbench .wb-opt { margin: 3px 0 3px 2px; }
+.workbench .wb-opt + .wb-opt { margin-top: 0; }
 /* A quoted block of monospace, the shape a module written before LaTeX still
    uses. Kept working on purpose; new modules author display maths instead. */
 .wb-read pre {

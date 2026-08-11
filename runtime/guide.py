@@ -701,8 +701,14 @@ Hard rules, all enforced by a validator:
 - No `<script>`, `<image>`, `<use>`, `<a>`, `<foreignObject>`, no `href`, no
   `on*` handler, no `url(...)` — a figure draws, it does not fetch or script.
 - Keep it under about 40 elements, and label the parts with `<text>`.
+- **Label the way the label is read.** SVG cannot hold LaTeX, so a `<text>`
+  label is the one place in a note where maths is written as characters:
+  use `θ`, `Aₐ`, `A⊥`, `F₁`, `α`, `Σ` — never `theta`, `A_a`, `A_perp`, `F_1`.
+  An underscore in a diagram reads as source code, not as a subscript.
 - The caption after `figure::` says what it shows; the `aria-label` describes it
-  for someone who cannot see it. Both are required to be useful sentences.
+  for someone who cannot see it. Both are required to be useful sentences. The
+  `aria-label` is prose read aloud, so spell the symbols out there ("the angle
+  theta between A and B") rather than repeating the glyphs.
 
 Source notes:
 
@@ -829,6 +835,9 @@ to show an arrangement — a loaded beam, a bracket, an axis set:
 Raw and unfenced, well-formed XML, `viewBox` required, stroke and fill with
 `currentColor`, allowed elements ONLY: {tags}. No `<script>`, `<image>`,
 `<use>`, `<a>`, `<foreignObject>`, no `href`, no `on*`, no `url(...)`.
+
+`<text>` labels cannot hold LaTeX, so write them as they are read — `θ`, `Aₐ`,
+`A⊥`, `F₁` — never `theta`, `A_a`, `A_perp`, `F_1`.
 
 Assessment and module notes:
 
