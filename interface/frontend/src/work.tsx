@@ -546,22 +546,16 @@ function Expanded({ s, sections, vault, rows, errs, onTick, onMeta, onMove }: {
       {s.kind === "chain" ? (
         Object.entries(groups).map(([parent, items]) => {
           // Sorted by file first, matching todo.py's own `sorted(key=(file,
-          // order))` — then split into one ChainView per sequence *document*.
-          // A course can run a timeline and a guide at once (study S2), and
-          // feeding both files into one ChainView rendered the timeline's
-          // real frontier as "waiting on the one above" — a dependency claim
-          // nothing in either note makes.
+          // order))`. ChainView groups blocks by *consecutive* equal heading,
+          // so a parent holding two chain files would otherwise interleave them
+          // and shatter the grouping.
           const seq = items.filter(t => t.chain)
             .sort((a, b) => a.file.localeCompare(b.file) || a.order - b.order);
-          const seqFiles = [...new Set(seq.map(t => t.file))];
           const flat = items.filter(t => !t.chain).sort((a, b) => b.score - a.score);
           return (
             <div key={parent} className="q-more-group">
               <p className="q-more-parent">{parent || "unfiled"}</p>
-              {seqFiles.map(f => (
-                <ChainView key={f} chain={seq.filter(t => t.file === f)}
-                           {...rowProps} />
-              ))}
+              {seq.length > 0 && <ChainView chain={seq} {...rowProps} />}
               {flat.length > 0 && (
                 <ul className="q-more-rows">
                   {flat.map((t, i) => (
@@ -733,12 +727,6 @@ function Card({ s, sections, vault, rows, errs, fresh, onTick, onMeta, onMove,
  * A duplicate comes back 409 with the date you first solved it, and becomes an
  * offer rather than an error: that prompt is the whole reason for keeping a
  * record of what you have already done.
- *
- * **The day's problem being logged does not close the card.** `p.done` dims the
- * border and flips the mark, and that is all it does — the input stays live and
- * asks for another one, because the habit's floor is one a day and nothing about
- * it is a ceiling. A second solve is refused only if it is the same *number*,
- * which is a duplicate rather than a quota.
  */
 function PracticeCard({ p, vault, onLogged }: {
   p: Practice; vault: string; onLogged: () => void;
@@ -748,10 +736,6 @@ function PracticeCard({ p, vault, onLogged }: {
   const [err, setErr] = useState<string | null>(null);
   const [dupe, setDupe] = useState<Rep | null>(null);
   const [said, setSaid] = useState<PracticeLog | null>(null);
-  // Collapsed by default: this card sits in a grid with four queues, and a
-  // habit that permanently occupied a dozen rows would crowd out the work that
-  // is actually still open.
-  const [past, setPast] = useState(false);
 
   async function submit(again = false) {
     const num = n.trim().replace(/^#/, "");
@@ -802,7 +786,14 @@ function PracticeCard({ p, vault, onLogged }: {
 
       {p.today.length > 0 && (
         <ul className="rows q-pr-today">
-          {p.today.map(r => <RepRow key={`${r.n}-${r.revisit}`} r={r} />)}
+          {p.today.map(r => (
+            <li key={`${r.n}-${r.revisit}`}>
+              <span className="q-pr-n">{r.n}</span>
+              <span className="q-pr-name">{r.title || "(no title)"}</span>
+              {r.difficulty && <span className={`q-pr-d d-${r.difficulty}`}>{r.difficulty}</span>}
+              {r.revisit > 1 && <span className="dim">revisit {r.revisit}</span>}
+            </li>
+          ))}
         </ul>
       )}
 
@@ -836,49 +827,7 @@ function PracticeCard({ p, vault, onLogged }: {
           )}
         </p>
       )}
-
-      {/* The record, read side. `p.recent` excludes today — that list is above —
-          and is capped by the backend, so this is the glance and the note is
-          the full history. Rendered only when there is a past to show, so a
-          first-day vault gets no empty disclosure. */}
-      {p.recent.length > 0 && (
-        <div className="q-pr-past">
-          <button className="ghost q-pr-more" onClick={() => setPast(v => !v)}
-                  aria-expanded={past}
-                  title={`the last ${p.recent.length} before today — ${p.file} has them all`}>
-            {past ? "▾ EARLIER" : "▸ EARLIER"}
-          </button>
-          {past && (
-            <ul className="rows q-pr-hist">
-              {p.recent.map(r => (
-                <RepRow key={`${r.date}-${r.n}-${r.revisit}`} r={r} date />
-              ))}
-              <li className="q-pr-all">
-                <a href={obsidianHref(vault, p.file)}
-                   title="the full record — every problem, every day">
-                  all {p.total} in {p.file.split("/").pop()}
-                </a>
-              </li>
-            </ul>
-          )}
-        </div>
-      )}
     </section>
-  );
-}
-
-/** One solved problem, in the practice card. Shared by today's list and the
- *  history below it so the two cannot drift apart visually — `date` is the only
- *  difference, and only history needs it (today's rows are all today). */
-function RepRow({ r, date = false }: { r: Rep; date?: boolean }) {
-  return (
-    <li>
-      {date && <span className="q-pr-day dim">{r.date.slice(5)}</span>}
-      <span className="q-pr-n">{r.n}</span>
-      <span className="q-pr-name">{r.title || "(no title)"}</span>
-      {r.difficulty && <span className={`q-pr-d d-${r.difficulty}`}>{r.difficulty}</span>}
-      {r.revisit > 1 && <span className="dim">revisit {r.revisit}</span>}
-    </li>
   );
 }
 
