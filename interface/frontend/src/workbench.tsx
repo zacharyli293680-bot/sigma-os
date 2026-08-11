@@ -44,8 +44,8 @@ import CoursesGrid from "./courses";
 import { MathBlock, MathInline } from "./math";
 import Figure from "./figure";
 import type {
-  Courses, Guide, GuideProgress, GuideRow, Lesson, LessonList,
-  LessonSegment, PracticeItem, Rollup,
+  CheckpointListRow, Courses, Guide, GuideProgress, GuideRow, Lesson,
+  LessonList, LessonListRow, LessonSegment, PracticeItem, Rollup,
 } from "./api";
 import { pythonReady, resetSql, runPython, runSql, warmPython } from "./sandbox";
 import Calculator from "./calc";
@@ -717,6 +717,24 @@ type Openable = {
   course: string; num: number; file: string; title: string;
 };
 
+/** What a checkpoint assesses, as a person would say it. `covers` is a list of
+ *  module numbers, and it is contiguous in every blueprint written so far — but
+ *  the schema allows a comma list, so a gap must print as one rather than
+ *  quietly widening into a range that claims modules it does not test. */
+function coversLabel(covers: number[]): string {
+  if (!covers.length) return "nothing yet";
+  const pad = (n: number) => `M${String(n).padStart(2, "0")}`;
+  const runs: number[][] = [];
+  for (const n of [...covers].sort((a, b) => a - b)) {
+    const last = runs[runs.length - 1];
+    if (last && n === last[last.length - 1] + 1) last.push(n);
+    else runs.push([n]);
+  }
+  return runs
+    .map(r => (r.length === 1 ? pad(r[0]) : `${pad(r[0])}–${pad(r[r.length - 1])}`))
+    .join(", ");
+}
+
 /* --------------------------------------------------------------------------
  * The rail — one fixed place for everything that is navigation.
  *
@@ -783,7 +801,7 @@ function accentPair(accent: string, scheme: Scheme): { fg: string; ink: string }
 function Rail(
   { view, courses, course, lesson, st, depth, isCp, dispatch,
     minsDone, minsTotal, practiceDone, practiceTotal, scheme, onScheme,
-    onCourses, onChain, onCourse }: {
+    onCourses, onChain, onCourse, units }: {
     view: "catalog" | "chain" | "lesson";
     courses: Courses | null | undefined;
     course: string | null;
@@ -794,6 +812,8 @@ function Rail(
     practiceDone: number; practiceTotal: number;
     scheme: Scheme; onScheme: (s: Scheme) => void;
     onCourses: () => void; onChain: () => void; onCourse: (c: string) => void;
+    units: { n: number; modules: number; done: number; skipped: number;
+             minutes: number; first: number | null; last: number | null }[];
   },
 ) {
   const pct = minsTotal ? Math.round((minsDone / minsTotal) * 100) : 0;
@@ -888,7 +908,39 @@ function Rail(
           </>
         )}
 
-        {view === "chain" && (
+        {/* The same list shape the lesson view uses for segments, one level
+            up: a course's units are to its chain what a module's segments are
+            to its page, so navigating them should not be a different idea. */}
+        {view === "chain" && units.length > 0 && (
+          <RailBand label="Units">
+            {units.map(u => {
+              const state = u.modules === 0 ? "none"
+                : u.done + u.skipped >= u.modules ? "done"
+                : u.done > 0 ? "part" : "open";
+              return (
+                <button key={u.n} className={`wb-rail-item wb-seg-item s-${state}`}
+                        /* No `behavior: "smooth"` here. It is dropped wherever
+                           animations are throttled — measured: the scroller
+                           stayed at 0 while the plain call moved it to 1111 —
+                           and a jump that sometimes does nothing is worse than
+                           one that is never animated. The easing is CSS's job
+                           (`scroll-behavior` on `.wb-chain`), where failing to
+                           apply costs smoothness rather than the scroll. */
+                        onClick={() => document.getElementById(`wb-unit-${u.n}`)
+                          ?.scrollIntoView({ block: "start" })}>
+                  <span className="wb-rail-item-k">{u.n}</span>
+                  <span className="wb-rail-item-v">
+                    {u.first != null
+                      ? `M${String(u.first).padStart(2, "0")}–M${String(u.last).padStart(2, "0")}`
+                      : "unit"}
+                  </span>
+                  <span className="wb-rail-item-x">{u.done}/{u.modules}</span>
+                </button>
+              );
+            })}
+          </RailBand>
+        )}
+        {view === "chain" && units.length === 0 && (
           <RailBand label="Course">
             <p className="wb-rail-hint">
               Pick a module on the right. The chain is ordered — each one is
@@ -1259,8 +1311,87 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
     if (c.checkpoint != null) byBase.set(base(c.file),
       { kind: "checkpoint", course: c.course, num: c.checkpoint, file: c.file, title: c.title });
   }
+  const row = courses?.courses.find(c => c.course === course) ?? null;
   const rowOpen = (r: GuideRow): Openable | null =>
     r.target ? byBase.get(r.target.split("/").pop()!) ?? null : null;
+
+  /* --- the chain, as units rather than a list ----------------------------
+   * The rows arrive flat and in teaching order, and were rendered that way:
+   * twenty-nine identical lines, of which the only distinguishing mark was a
+   * tick. Everything needed to do better is already on the wire and was simply
+   * never read — the lesson list carries each module's `unit`, `estimate`,
+   * `segments` and `practice`, and each checkpoint's `covers`.
+   *
+   * A checkpoint has no unit of its own, so it takes the unit of the last
+   * module it assesses, which is what puts it at the foot of that unit rather
+   * than adrift between two. A row whose note is not authored yet has no
+   * metadata at all, so it inherits the unit of the row above it — the chain is
+   * in teaching order, which makes carry-forward exactly right and not a guess.
+   */
+  const metaByBase = new Map<string, LessonListRow | CheckpointListRow>();
+  for (const m of list?.modules ?? []) metaByBase.set(base(m.file), m);
+  for (const c of list?.checkpoints ?? []) metaByBase.set(base(c.file), c);
+  const unitOfModule = new Map<number, number>();
+  for (const m of list?.modules ?? []) {
+    if (m.course === course && m.module != null && m.unit != null) {
+      unitOfModule.set(m.module, m.unit);
+    }
+  }
+
+  type ChainItem = {
+    row: GuideRow; open: Openable | null;
+    mod: LessonListRow | null; cp: CheckpointListRow | null;
+  };
+  type ChainUnit = {
+    n: number; items: ChainItem[];
+    first: number | null; last: number | null;      // module numbers spanned
+    modules: number; done: number; skipped: number;
+    minutes: number; practice: number; unwritten: number;
+  };
+
+  const chainUnits: ChainUnit[] = (() => {
+    if (!guide) return [];
+    const out: ChainUnit[] = [];
+    let carried = 1;
+    for (const r of guide.rows) {
+      const openable = rowOpen(r);
+      const meta = r.target ? metaByBase.get(r.target.split("/").pop()!) ?? null : null;
+      const mod = meta && "module" in meta ? meta : null;
+      const cp = meta && "checkpoint" in meta ? meta : null;
+      let unit = carried;
+      if (mod?.unit != null) unit = mod.unit;
+      else if (cp?.covers?.length) {
+        unit = unitOfModule.get(cp.covers[cp.covers.length - 1]) ?? carried;
+      }
+      carried = unit;
+      let u = out.find(x => x.n === unit);
+      if (!u) {
+        u = { n: unit, items: [], first: null, last: null, modules: 0,
+              done: 0, skipped: 0, minutes: 0, practice: 0, unwritten: 0 };
+        out.push(u);
+      }
+      u.items.push({ row: r, open: openable, mod, cp });
+      if (cp) { u.practice += cp.practice; continue; }
+      u.modules += 1;
+      if (r.state === "done") u.done += 1;
+      if (r.state === "skipped") u.skipped += 1;
+      if (mod) {
+        u.minutes += mod.estimate ?? 0;
+        u.practice += mod.practice;
+        if (mod.module != null) {
+          u.first = u.first == null ? mod.module : Math.min(u.first, mod.module);
+          u.last = u.last == null ? mod.module : Math.max(u.last, mod.module);
+        }
+      } else if (r.state === "open") u.unwritten += 1;
+    }
+    return out;
+  })();
+
+  /** The written estimate through the measured pace, when there is one. Null
+   *  means unmeasured — shown as the estimate itself, never as a silent ×1.0
+   *  (the rule the pace bar already followed). */
+  const atPaceMin = (mins: number | null | undefined): number | null =>
+    mins && row?.pace.multiplier ? Math.round(mins * row.pace.multiplier) : null;
 
   const act = async (what: string, path: string, body: unknown) => {
     setBusy(true); setChainErr(null);
@@ -1439,7 +1570,6 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
   };
 
   const inLesson = picked !== null;
-  const row = courses?.courses.find(c => c.course === course) ?? null;
   const unitLabel = lesson
     ? (lesson.checkpoint != null
       ? `CP${lesson.checkpoint}`
@@ -1492,7 +1622,7 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
               scheme={scheme} onScheme={setScheme}
               onCourses={() => { setCourse(null); setPicked(null); }}
               onChain={() => { setPicked(null); setLesson(undefined); }}
-              onCourse={setCourse} />
+              onCourse={setCourse} units={chainUnits} />
         <div className="wb-main">
         <header className="study-head wb-head">
           {/* Two tiers, because one flat `·`-joined line had the course, the
@@ -1614,14 +1744,15 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
 
             {guide && (
               <div className="wb-chainbody">
+                {/* The counts moved into the progress block below, which says
+                    the same things in the units they matter in. What is left
+                    here is what that block cannot say: which note this is, and
+                    whether the plan behind it is approved. */}
                 <p className="wb-chainhead">
                   <span className="dim">
-                    {guide.done} done · {guide.skipped} skipped
-                    · {guide.total - guide.done - guide.skipped} open
-                    {guide.blueprint ? ` · blueprint ${guide.blueprint}` : ""}
-                    {guide.planned != null
-                      ? ` · ${guide.planned} planned · ${guide.missing} missing`
-                      : ""}
+                    {guide.blueprint && guide.blueprint !== "approved"
+                      ? `blueprint ${guide.blueprint}` : ""}
+                    {(guide.missing ?? 0) > 0 ? `${guide.blueprint && guide.blueprint !== "approved" ? " · " : ""}${guide.missing} not written` : ""}
                   </span>
                   {guide.file ? (
                     <a href={obsidianHref(vault, guide.file)}
@@ -1634,40 +1765,6 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
  runs against the approved blueprint">no chain yet</span>
                   )}
                 </p>
-                {/* What the rest of this chain is going to cost, and what is
-                    waiting to be recalled (S8). The projection is the written
-                    estimate when the pace is unmeasured and says so — the
-                    number agenda P7 will consume, never a silent ×1.0. */}
-                {row && (row.projected.open > 0 || row.recall.open > 0) && (
-                  <p className="wb-pacebar dim">
-                    {row.projected.open > 0 && (
-                      <span title={row.pace.multiplier
-                        ? `${row.projected.estimate} min estimated × ${row.pace.multiplier} measured`
-                          + ` over ${row.pace.n} finished module(s)`
-                        : "estimated by the modules themselves — not enough finished"
-                          + " modules to measure your pace yet"}>
-                        {row.projected.open} open ·{" "}
-                        {row.projected.minutes
-                          ? `~${(row.projected.minutes / 60).toFixed(1)} h at your pace`
-                          : `${(row.projected.estimate / 60).toFixed(1)} h estimated`}
-                        {row.projected.unestimated
-                          ? ` (+${row.projected.unestimated} unwritten)` : ""}
-                      </span>
-                    )}
-                    {row.recall.open > 0 && (
-                      <span>
-                        {row.projected.open > 0 ? " · " : ""}
-                        {row.recall.file ? (
-                          <a href={obsidianHref(vault, row.recall.file)}
-                             title="cards raised from what you missed — they queue under Courses, low priority, and retire themselves after two weeks">
-                            {row.recall.open} recall card{row.recall.open === 1 ? "" : "s"}
-                          </a>
-                        ) : `${row.recall.open} recall cards`}
-                        {row.recall.open >= row.recall.cap ? " (at cap)" : ""}
-                      </span>
-                    )}
-                  </p>
-                )}
                 {(() => {
                   const gen = guideProg && guideProg.course === course ? guideProg : null;
                   const age = gen?.updated ? Date.now() - Date.parse(gen.updated) : NaN;
@@ -1728,66 +1825,184 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
                   </p>
                 )}
                 {chainErr && <p className="err">{chainErr}</p>}
-                <ul className="wb-rows">
-                  {guide.rows.map(r => {
-                    const m = rowOpen(r);
-                    const frontier = guide.frontier?.line === r.line;
-                    const openable = m != null;
-                    return (
-                      <li key={r.line}
-                          className={`wb-row wb-row-${r.state} ${frontier ? "wb-frontier" : ""}`}>
-                        <span className="wb-row-line">
-                        <span className="wb-row-glyph">
-                          {r.state === "done" ? "✓" : r.state === "skipped" ? "−"
-                            : frontier ? "▸" : "·"}
+                {/* --- what the whole course costs, and how far in you are --
+                    A count of done-versus-open answers "how many" and never
+                    "how far", which on a 29-row chain is the only question
+                    worth asking. The bar is segmented by unit, so its shape is
+                    the course's shape rather than one undifferentiated ratio. */}
+                {chainUnits.length > 0 && (
+                  <div className="wb-cprog">
+                    <div className="wb-cprog-bar" role="img"
+                         aria-label={`${guide.done} of ${guide.total} rows done`}>
+                      {chainUnits.map(u => (
+                        <span key={u.n} className="wb-cprog-u"
+                              style={{ flexGrow: Math.max(1, u.items.length) }}
+                              title={`Unit ${u.n} — ${u.done}/${u.modules} modules`}>
+                          <span className="wb-cprog-fill"
+                                style={{ width: `${u.modules ? (u.done / u.modules) * 100 : 0}%` }} />
                         </span>
-                        <span className="wb-row-text">
-                          {openable
-                            ? <button className="wb-row-open" onClick={() => setPicked(m)}
-                                      title={`open ${m.file}`}>{rowText(r)}</button>
-                            : <span title="module not authored yet">{rowText(r)}</span>}
-                          {m?.kind === "checkpoint" && (
-                            <em className="wb-chip">checkpoint</em>
-                          )}
-                          {r.state === "skipped" && r.skipped && (
-                            <em className="wb-chip">skipped {r.skipped}</em>
-                          )}
-                          {r.date && <em className="wb-chip">📅 {r.date}</em>}
-                          {!openable && r.state === "open" && (
-                            <em className="wb-chip dim">not written yet</em>
-                          )}
+                      ))}
+                    </div>
+                    <p className="wb-cprog-meta">
+                      <b>{guide.done}</b> of {guide.total} done
+                      {guide.skipped ? ` · ${guide.skipped} skipped` : ""}
+                      {row && row.projected.open > 0 && (
+                        <span title={row.pace.multiplier
+                          ? `${row.projected.estimate} min written × ${row.pace.multiplier} measured`
+                            + ` over ${row.pace.n} finished module(s)`
+                          : "estimated by the modules themselves — not enough finished"
+                            + " modules to measure your pace yet"}>
+                          {" · "}
+                          {row.projected.minutes
+                            ? `~${(row.projected.minutes / 60).toFixed(1)} h left at your pace`
+                            : `${(row.projected.estimate / 60).toFixed(1)} h left`}
+                          {row.projected.unestimated
+                            ? ` (+${row.projected.unestimated} unwritten)` : ""}
                         </span>
-                        </span>
-                        {/* The frontier's verbs sit *under* the row they act
-                            on. Flush right they were a thousand pixels from
-                            the words "M02 · Vectors and vector products", in a
-                            dialog sized for a lesson rather than for a list. */}
-                        {frontier && (
-                          <span className="wb-row-act">
-                            {openable && (
-                              <button className="ghost" disabled={busy}
-                                      onClick={() => setPicked(m)}>study</button>
-                            )}
-                            <button className="ghost" disabled={busy}
-                                    title="tick the row — one commit, revertible from the ledger"
-                                    onClick={() => void act(`completed ${rowText(r)}`,
-                                      "tasks/toggle",
-                                      { file: guide.file, line: r.line, raw: r.raw, done: true })}>
-                              ✓ complete
-                            </button>
-                            <button className="ghost" disabled={busy}
-                                    title="flip to [-] skipped::today — the frontier moves on, the row stays"
-                                    onClick={() => void act(`skipped ${rowText(r)}`,
-                                      "tasks/skip",
-                                      { file: guide.file, line: r.line, raw: r.raw })}>
-                              → skip
-                            </button>
-                          </span>
+                      )}
+                      {row && row.recall.open > 0 && (
+                        <>
+                          {" · "}
+                          {row.recall.file ? (
+                            <a href={obsidianHref(vault, row.recall.file)}
+                               title="cards raised from what you missed — they queue under Courses, low priority, and retire themselves after two weeks">
+                              {row.recall.open} recall card{row.recall.open === 1 ? "" : "s"}
+                            </a>
+                          ) : `${row.recall.open} recall cards`}
+                          {row.recall.open >= row.recall.cap ? " (at cap)" : ""}
+                        </>
+                      )}
+                    </p>
+                  </div>
+                )}
+
+                {/* --- the one obvious next thing ---------------------------
+                    The frontier used to be the row with a small triangle beside
+                    it, somewhere in a list of twenty-nine. It is the only row
+                    you can act on, so it is lifted out of the list entirely. */}
+                {(() => {
+                  if (!guide.frontier) return null;
+                  const r = guide.frontier;
+                  const m = rowOpen(r);
+                  const meta = r.target
+                    ? metaByBase.get(r.target.split("/").pop()!) ?? null : null;
+                  const mod = meta && "module" in meta ? meta : null;
+                  const cp = meta && "checkpoint" in meta ? meta : null;
+                  const paced = atPaceMin(mod?.estimate);
+                  return (
+                    <section className="wb-resume">
+                      <p className="wb-resume-eyebrow">
+                        {guide.done > 0 ? "Continue" : "Start here"}
+                      </p>
+                      <h3 className="wb-resume-t">{rowText(r)}</h3>
+                      <p className="wb-resume-meta">
+                        {cp
+                          ? <>Checkpoint · assesses {coversLabel(cp.covers)} · {cp.practice} questions</>
+                          : mod
+                            ? <>{mod.segments} segments · {mod.practice} practice
+                                {mod.estimate ? <> · {paced
+                                  ? `~${paced} min at your pace`
+                                  : `${mod.estimate} min`}</> : null}</>
+                            : <>not authored yet</>}
+                      </p>
+                      <div className="wb-resume-act">
+                        {m && (
+                          <button className="wb-btn wb-btn-primary" disabled={busy}
+                                  onClick={() => setPicked(m)}>
+                            {cp ? "Take it" : "Study"}<span aria-hidden="true"> →</span>
+                          </button>
                         )}
-                      </li>
-                    );
-                  })}
-                </ul>
+                        <button className="wb-btn" disabled={busy}
+                                title="tick the row — one commit, revertible from the ledger"
+                                onClick={() => void act(`completed ${rowText(r)}`,
+                                  "tasks/toggle",
+                                  { file: guide.file, line: r.line, raw: r.raw, done: true })}>
+                          ✓ Complete
+                        </button>
+                        <button className="wb-btn wb-btn-quiet" disabled={busy}
+                                title="flip to [-] skipped::today — the frontier moves on, the row stays"
+                                onClick={() => void act(`skipped ${rowText(r)}`,
+                                  "tasks/skip",
+                                  { file: guide.file, line: r.line, raw: r.raw })}>
+                          → Skip
+                        </button>
+                      </div>
+                    </section>
+                  );
+                })()}
+
+                {/* --- the units ------------------------------------------- */}
+                {chainUnits.map(u => {
+                  const complete = u.modules > 0 && u.done + u.skipped === u.modules;
+                  return (
+                    <section key={u.n} className={`wb-unit ${complete ? "is-done" : ""}`}
+                             id={`wb-unit-${u.n}`}>
+                      <header className="wb-unit-h">
+                        <h3 className="wb-unit-n">
+                          Unit {u.n}
+                          {u.first != null && (
+                            <span className="wb-unit-span">
+                              M{String(u.first).padStart(2, "0")}–M{String(u.last).padStart(2, "0")}
+                            </span>
+                          )}
+                        </h3>
+                        <span className="wb-unit-meta">
+                          {u.minutes > 0 && <>{(u.minutes / 60).toFixed(1)} h · </>}
+                          {u.practice} questions · {u.done}/{u.modules}
+                          {u.unwritten > 0 && <> · {u.unwritten} unwritten</>}
+                        </span>
+                      </header>
+                      <ul className="wb-rows">
+                        {u.items.map(({ row: r, open: m, mod, cp }) => {
+                          const frontier = guide.frontier?.line === r.line;
+                          const paced = atPaceMin(mod?.estimate);
+                          const body = (
+                            <>
+                              <span className="wb-row-k">
+                                {cp ? "◈" : mod?.module != null
+                                  ? String(mod.module).padStart(2, "0") : "··"}
+                              </span>
+                              <span className="wb-row-t">{rowText(r)}</span>
+                              <span className="wb-row-facts">
+                                {cp
+                                  ? <>assesses {coversLabel(cp.covers)} · {cp.practice}q</>
+                                  : mod
+                                    ? <>
+                                        {mod.estimate ? <em title={paced
+                                          ? `~${paced} min at your measured pace`
+                                          : "the module's own estimate"}>{mod.estimate}m</em> : null}
+                                        <em>{mod.segments} seg</em>
+                                        <em>{mod.practice}q</em>
+                                      </>
+                                    : <em className="wb-row-warn">not written yet</em>}
+                                {mod?.problems.length
+                                  ? <em className="wb-row-warn">held</em> : null}
+                                {r.state === "skipped" && r.skipped
+                                  ? <em>skipped {r.skipped}</em> : null}
+                                {r.date ? <em>📅 {r.date}</em> : null}
+                              </span>
+                            </>
+                          );
+                          return (
+                            <li key={r.line}
+                                className={`wb-row wb-row-${r.state}`
+                                  + (cp ? " wb-row-cp" : "")
+                                  + (frontier ? " wb-frontier" : "")}>
+                              <span className="wb-row-mark" aria-hidden="true">
+                                {r.state === "done" ? "✓" : r.state === "skipped" ? "−"
+                                  : frontier ? "▸" : ""}
+                              </span>
+                              {m
+                                ? <button className="wb-row-open" onClick={() => setPicked(m)}
+                                          title={`open ${m.file}`}>{body}</button>
+                                : <span className="wb-row-open is-flat">{body}</span>}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </section>
+                  );
+                })}
                 {!guide.frontier && guide.file && (
                   <p className="dim pad">no open module — the chain is complete</p>
                 )}

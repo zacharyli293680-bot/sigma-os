@@ -3323,11 +3323,17 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 .wb-said.err { color: var(--red); }
 
 /* --- the chain view (study S2 — one course, drilled into) ---------------- */
+/* Deliberately no `scroll-behavior: smooth`. Twice now the rail's unit jump
+   moved nothing: once with `behavior: "smooth"` passed to `scrollIntoView`,
+   and again after moving the easing here — because a CSS `smooth` is what a
+   plain `scrollIntoView()` then inherits. Wherever animations are throttled,
+   smooth scrolling is not slow, it is *dropped*, and a jump that sometimes
+   does nothing is a worse control than one that never animates. */
 .wb-chain { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 /* On the room's margin rather than pinned to the left edge of a 1920px screen —
    `.wb-rows` already caps a row at 78ch, so without this the chain reads as a
    narrow strip in the corner of an empty page. */
-.wb-chainbody { padding-top: 2px; padding-bottom: 14px; }
+.wb-chainbody { padding-top: 14px; padding-bottom: 40px; }
 .wb-chainhead {
   display: flex; justify-content: space-between; align-items: baseline;
   gap: 12px; margin: 10px 0 6px; font-size: 12px;
@@ -3340,30 +3346,112 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 }
 .wb-last code { color: var(--ink); }
 
-.wb-rows { list-style: none; margin: 6px 0; padding: 0; max-width: 78ch; }
-.wb-row { border: 1px solid transparent; padding: 5px 8px; margin: 2px 0; }
-.wb-row-line { display: flex; align-items: baseline; gap: 8px; }
-.wb-row-glyph { font-family: var(--mono); color: var(--muted); flex: none; width: 14px; }
-.wb-frontier { border-color: var(--panel-line); }
-.wb-frontier .wb-row-glyph { color: var(--accent); }
-.wb-row-done .wb-row-text, .wb-row-done .wb-row-glyph { color: var(--muted); }
-.wb-row-skipped .wb-row-text { color: var(--muted); text-decoration: line-through; }
-.wb-row-text { flex: 1 1 auto; min-width: 0; font-size: 12.5px; }
-.wb-row-open {
-  background: none; border: none; padding: 0; cursor: pointer;
-  color: var(--ink); font: inherit; text-decoration: none;
+/* --- the chain, as a plan ------------------------------------------------
+ * It was one flat `<ul>` of twenty-nine rows whose only distinguishing mark was
+ * a tick, on a page whose only heading was a count. Three things fix that, and
+ * all three read data that was already on the wire: the course's shape (a bar
+ * segmented by unit), the one row you can act on (lifted out of the list), and
+ * the units themselves (five sections of four to six instead of one list).
+ */
+.wb-cprog { margin: 4px 0 22px; }
+.wb-cprog-bar { display: flex; gap: 3px; height: 6px; margin-bottom: 9px; }
+/* One track per unit, grown by how many rows it holds — so the bar is a
+   picture of the course's proportions and not just of its ratio. */
+.wb-cprog-u {
+  flex: 1 1 0; background: var(--inset); border-radius: 3px; overflow: hidden;
 }
-.wb-row-done .wb-row-open, .wb-row-skipped .wb-row-open { color: var(--muted); }
-.wb-row-open:hover { color: var(--ink); }
+.wb-cprog-fill { display: block; height: 100%; background: var(--accent); }
+.wb-cprog-meta {
+  margin: 0; color: var(--ink-2); font: 400 var(--t-small)/1.6 var(--sans);
+}
+.wb-cprog-meta b { color: var(--ink); font-weight: 590; }
+.wb-cprog-meta a { color: var(--accent-ink); text-decoration: none; }
+.wb-cprog-meta a:hover { text-decoration: underline; }
+
+/* The frontier, lifted out of the list. It is the only row you can act on, and
+   it was the sixth identical line down the page with a small triangle. */
+.wb-resume {
+  padding: 18px 20px 16px; margin: 0 0 26px;
+  background: var(--surface);
+  border: 1px solid var(--panel-line); border-radius: var(--r-card);
+  box-shadow: var(--lift-2);
+}
+.wb-resume-eyebrow {
+  margin: 0 0 4px; color: var(--accent-ink);
+  font: 590 10.5px/1 var(--sans); letter-spacing: 0.07em; text-transform: uppercase;
+}
+.wb-resume-t { margin: 0 0 5px; font: 590 var(--t-seg)/1.3 var(--sans); color: var(--ink); }
+.wb-resume-meta { margin: 0 0 14px; color: var(--ink-2); font: 400 var(--t-meta)/1.5 var(--sans); }
+.wb-resume-act { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+
+/* --- a unit --------------------------------------------------------------- */
+.wb-unit { margin: 0 0 26px; }
+.wb-unit-h {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 14px;
+  padding: 0 0 7px; margin-bottom: 4px;
+  border-bottom: 1px solid var(--panel-line-dim);
+}
+.wb-unit-n {
+  margin: 0; display: flex; align-items: baseline; gap: 9px;
+  font: 590 var(--t-meta)/1.3 var(--sans); color: var(--ink);
+}
+.wb-unit-span { font: 400 11px/1 var(--mono); color: var(--muted); }
+.wb-unit-meta { color: var(--muted); font: 400 var(--t-small)/1.4 var(--sans); }
+/* A finished unit stays legible and stops competing — the same treatment a
+   skipped row gets, one level up. Nothing is hidden. */
+.wb-unit.is-done .wb-unit-n, .wb-unit.is-done .wb-rows { opacity: 0.55; }
+.wb-unit.is-done:hover .wb-unit-n, .wb-unit.is-done:hover .wb-rows { opacity: 1; }
+
+.wb-rows { list-style: none; margin: 0; padding: 0; }
+.wb-row { display: flex; align-items: stretch; gap: 2px; }
+.wb-row-mark {
+  flex: none; width: 16px; padding-top: 7px;
+  font: 400 11px/1 var(--mono); color: var(--muted); text-align: center;
+}
+.wb-frontier .wb-row-mark { color: var(--accent-ink); }
+/* The whole row is the target, not the words in it — a 900px line whose only
+   hit area is its title is a line you miss. */
+.wb-row-open {
+  flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: 11px;
+  padding: 5px 10px; cursor: pointer; text-align: left;
+  background: none; border: 1px solid transparent; border-radius: var(--r-ctl);
+  color: var(--ink); font: 400 var(--t-meta)/1.4 var(--sans);
+}
+.wb-row-open:hover { background: var(--inset); }
+.wb-row-open.is-flat { cursor: default; }
+.wb-row-open.is-flat:hover { background: none; }
+.wb-row-k {
+  flex: none; min-width: 20px; color: var(--muted);
+  font: 400 var(--t-small)/1.5 var(--mono); font-variant-numeric: tabular-nums;
+}
+.wb-row-t { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The facts that make one row different from the next. Quiet by default —
+   they are for choosing between rows, not for reading. */
+.wb-row-facts {
+  flex: none; display: flex; align-items: baseline; gap: 9px;
+  color: var(--muted); font: 400 var(--t-small)/1.5 var(--sans);
+}
+.wb-row-facts em { font-style: normal; white-space: nowrap; }
+.wb-row-warn { color: var(--amber); }
+.wb-frontier .wb-row-open {
+  background: var(--inset); border-color: var(--panel-line-dim); font-weight: 590;
+}
+.wb-row-done .wb-row-t, .wb-row-done .wb-row-k { color: var(--muted); }
+.wb-row-skipped .wb-row-t { color: var(--muted); text-decoration: line-through; }
+/* A checkpoint closes its unit rather than sitting in the middle of it looking
+   like a module: wider, marked, and named for what it assesses. */
+.wb-row-cp .wb-row-open {
+  margin-top: 5px; border-color: var(--panel-line-dim);
+  border-style: dashed; background: none;
+}
+.wb-row-cp .wb-row-k { color: var(--accent-ink); }
+.wb-row-cp .wb-row-t { font-weight: 590; }
+
 .wb-chip {
   font: 400 10px/1.5 var(--mono); color: var(--muted); font-style: normal;
   border: 1px solid var(--panel-line-dim); padding: 0 5px; margin-left: 8px;
   white-space: nowrap;
 }
-/* Under the row, indented to its text. Flush right these were a thousand
-   pixels from the words they act on, in a dialog sized for a lesson. */
-.wb-row-act { display: flex; gap: 10px; margin: 5px 0 1px 22px; }
-.wb-row-act .ghost { font-size: 12px; }
 
 /* --- the practice engine (study S3) -------------------------------------- */
 .wb-q { border: 1px solid var(--panel-line-dim); padding: 6px 10px; margin: 8px 0; }
