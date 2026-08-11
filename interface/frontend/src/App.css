@@ -1853,16 +1853,24 @@ button.legend-row:hover { border-color: var(--panel-line-dim); }
    for. Ink at full strength against the row's dimmed default, plus the bucket
    swatch, which is data and was always the real signal here. */
 button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
-.brain-filters { display: flex; gap: 6px; margin-top: 12px; }
+/* Wraps, because the HUD column is ~180px and a third control turned "changed
+   this week" into two crushed lines inside its own button. Wrapping the row
+   puts the drift toggle on its own line at full width instead. */
+.brain-filters { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 .brain-filters button {
   background: none; border: 1px solid var(--panel-line-dim); color: var(--ink-2);
   font: 11px var(--mono); padding: 4px 8px; cursor: pointer;
+  white-space: nowrap;
   pointer-events: auto;                /* see button.legend-row above */
 }
 .brain-filters button:hover:not(:disabled) { color: var(--ink); border-color: var(--panel-line); }
 /* Over the star field, so ink rather than a fill — the same reason
    `button.legend-row.on` above is not filled either. */
 .brain-filters button.on { color: var(--ink); border-color: var(--panel-line); }
+/* The drift toggle sits away from the two filters: they narrow *what you see*,
+   this changes *how it behaves*, and a row where the third button does a
+   different kind of thing should say so with a gap. */
+.brain-spin { margin-left: auto; font-variant-numeric: tabular-nums; }
 .brain-filters button:disabled { opacity: 0.35; cursor: default; }
 .brain-filter-note { margin: 8px 0 0; font-size: 11px; line-height: 1.5; }
 

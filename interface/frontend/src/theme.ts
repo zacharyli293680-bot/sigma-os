@@ -71,6 +71,15 @@ export interface BrainPalette {
    * it and are pixel-identical without it.
    */
   paper?: boolean;
+  /**
+   * Multiplier on the dim edge alpha. 1 by default, and the reason it exists is
+   * that the two blend modes are not equally efficient at the same alpha: on
+   * black, an additive bright line *adds* its whole value, while on paper a
+   * 0.035-alpha dark line multiplies to about a 2% darkening and 4,330 of them
+   * still read as nothing. Measured by eye at 3 for both paper themes — this is
+   * a taste value, so it is one number in one place rather than a new formula.
+   */
+  edgeGain?: number;
 }
 
 export interface Theme {
@@ -356,6 +365,7 @@ export const THEMES: Theme[] = [
       // One bronze again. The second value existed because #8A5A1E vanished on
       // a dark sky; on a light one the page's own bronze is the legible one.
       noSync: "#8A5A1E",
+      edgeGain: 3,
       edgeDim: "#5E7382", edgeFire: "#D9480F", edgeLit: "#0E7C99",
       dust: "#8FA3B2", labelInk: "#16212B", labelHalo: "#FFFFFF",
     },
@@ -433,6 +443,7 @@ export const THEMES: Theme[] = [
       },
       fallback: "#7A8194", fire: "#D9480F",
       noSync: "#8A5A1E",
+      edgeGain: 3,
       edgeDim: "#69708A", edgeFire: "#D9480F", edgeLit: "#4F46E5",
       dust: "#9AA1BA", labelInk: "#171A2B", labelHalo: "#FFFFFF",
     },

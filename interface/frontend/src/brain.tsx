@@ -255,14 +255,21 @@ type EdgeInks = { dim: string[]; fire: string[]; lit: string; dust: string };
 const EDGE_CACHE = new Map<string, EdgeInks>();
 
 function edgeInks(pal: BrainPalette): EdgeInks {
-  const key = `${pal.edgeDim}|${pal.edgeFire}|${pal.edgeLit}|${pal.dust}`;
+  // The gain is part of the identity: two palettes could share an edge colour
+  // and want different weights, and the cache would hand over the wrong one.
+  const gain = pal.edgeGain ?? 1;
+  const key = `${pal.edgeDim}|${pal.edgeFire}|${pal.edgeLit}|${pal.dust}|${gain}`;
   const hit = EDGE_CACHE.get(key);
   if (hit) return hit;
   const dimCh = channels(pal.edgeDim), fireCh = channels(pal.edgeFire);
   const dim: string[] = [], fire: string[] = [];
   for (let i = 0; i < EDGE_STEPS; i++) {
     const u = (i + 0.5) / EDGE_STEPS;
-    dim.push(`rgb(${dimCh} / ${(0.035 * (EDGE_FAR + (EDGE_NEAR - EDGE_FAR) * u)).toFixed(3)})`);
+    // Only the dim web is scaled. `fire` and `lit` are already strong enough to
+    // read in either mode, and lifting them too would flatten the difference
+    // between "there is a link here" and "this link just carried something".
+    const a = Math.min(0.9, 0.035 * gain * (EDGE_FAR + (EDGE_NEAR - EDGE_FAR) * u));
+    dim.push(`rgb(${dimCh} / ${a.toFixed(3)})`);
     fire.push(`rgb(${fireCh} / ${(0.06 + 0.5 * u).toFixed(3)})`);
   }
   const inks: EdgeInks = {
@@ -350,7 +357,7 @@ function facts(g: Graph): { mtimeMs: Float64Array; noSyncIdx: Int32Array } {
   return { mtimeMs, noSyncIdx: Int32Array.from(ns) };
 }
 
-export default function Brain({ graph, vault, fireRef, filter }: {
+export default function Brain({ graph, vault, fireRef, filter, spin }: {
   /** Fetched by App, like every other panel's data. The brain is a renderer. */
   graph: Graph | null;
   vault: string;
@@ -358,6 +365,9 @@ export default function Brain({ graph, vault, fireRef, filter }: {
   /** Lifted to App so the HUD can live outside this component: VaultHud is a
    *  sibling in the centre cell, not a child of the canvas. */
   filter: string | null;
+  /** Whether the camera drifts. Lifted to App for the same reason `filter` is:
+   *  the control that flips it lives in `VaultHud`, a sibling. */
+  spin: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // `ready` flips when the deferred layout has produced a world to draw. It is
@@ -377,6 +387,11 @@ export default function Brain({ graph, vault, fireRef, filter }: {
   // animation, and the loop needs the current value each frame.
   const filterRef = useRef<string | null>(null);
   filterRef.current = filter;
+  // Same argument again: flipping the spin must not restart the loop, or the
+  // world would be laid out afresh and the constellation would rearrange
+  // itself because you asked it to hold still.
+  const spinRef = useRef(true);
+  spinRef.current = spin;
   // The palette, by the same argument as the filter above and for a stronger
   // reason: the draw effect keys on [ready, vault], so putting the theme in its
   // dependencies would tear down the loop and relay the sky on every switch —
@@ -389,7 +404,7 @@ export default function Brain({ graph, vault, fireRef, filter }: {
   // without restarting it. Needed because a reduced-motion sky never repaints
   // on its own, so a filter change there would simply not show up.
   const redrawRef = useRef<(() => void) | null>(null);
-  useEffect(() => { redrawRef.current?.(); }, [filter, theme]);
+  useEffect(() => { redrawRef.current?.(); }, [filter, theme, spin]);
   const world = useRef<World | null>(null);
   const mouse = useRef({ x: 0, y: 0 });
   const hover = useRef<number | null>(null);
@@ -556,7 +571,10 @@ export default function Brain({ graph, vault, fireRef, filter }: {
     // that was actually read has to be visible even to someone who asked for
     // no ambient motion.
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const live = !reduced;
+    // Two ways to hold the sky still, and they are not the same thing: the OS
+    // preference is a standing request read once, the toggle is a decision you
+    // can change without the loop restarting. Firing paints through both.
+    const isLive = () => !reduced && spinRef.current;
     let raf = 0, prev = 0, dirty = true;
     let awake = !document.hidden;
     /** Scratch for `project` below — one triple for the whole loop. */
@@ -936,7 +954,7 @@ export default function Brain({ graph, vault, fireRef, filter }: {
       if (!awake) return;                       // hidden tab: cost nothing
 
       const hot = t < hotUntil.current;
-      const animating = live || hot;
+      const animating = isLive() || hot;
       if (!animating && !dirty) return;         // static and nothing changed
       if (animating && !hot && !dirty && t - lastPaint < AMBIENT_MS) return;
 
@@ -947,7 +965,10 @@ export default function Brain({ graph, vault, fireRef, filter }: {
       lastPaint = t;
 
       dirty = false;
-      if (animating) driftRef.current += dt * 0.000045;
+      // Keyed on the drift's own condition, not on `animating` — that is also
+      // true while a fire or a hover is repainting, and the sky would keep
+      // turning during exactly the interaction you held it still to look at.
+      if (isLive()) driftRef.current += dt * 0.000045;
       draw(t, animating);
     };
     raf = requestAnimationFrame(loop);
@@ -1047,10 +1068,12 @@ export default function Brain({ graph, vault, fireRef, filter }: {
  *  one state now, so there is one arrangement — and it shares the centre cell
  *  with the reactor rather than waiting for the panels to get out of the way.
  */
-export function VaultHud({ graph, filter, onFilter }: {
+export function VaultHud({ graph, filter, onFilter, spin, onSpin }: {
   graph: Graph | null;
   filter: string | null;
   onFilter: (f: string | null) => void;
+  spin: boolean;
+  onSpin: (v: boolean) => void;
 }) {
   // The legend's keys are the canvas's own colours, so it reads the same
   // palette the sky does rather than a copy that could drift from it.
@@ -1116,6 +1139,17 @@ export function VaultHud({ graph, filter, onFilter }: {
                 onClick={() => onFilter(filter === "week" ? null : "week")}
                 title="notes touched in the last 7 days">changed this week</button>
         <button onClick={() => onFilter(null)} disabled={!filter}>all</button>
+        {/* §5.1 — the state is readable as a word in both positions rather than
+            as one label that is sometimes highlighted. Held still, the sky
+            still repaints for a fire or a hover: this stops the drift, not the
+            instrument. */}
+        <button className={`brain-spin ${spin ? "on" : ""}`}
+                onClick={() => onSpin(!spin)}
+                title={spin
+                  ? "stop the camera drifting — firing and hover still repaint"
+                  : "let the camera drift again"}>
+          {spin ? "⟳ drifting" : "‖ held"}
+        </button>
       </div>
       {filter && (
         <p className="dim brain-filter-note">

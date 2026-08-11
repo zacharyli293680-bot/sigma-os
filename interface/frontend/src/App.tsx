@@ -79,6 +79,19 @@ export default function App() {
   // There is no second state and no expand: one stage, always the same size.
   const [graph, setGraph] = useState<Graph | null>(null);
   const [brainFilter, setBrainFilter] = useState<string | null>(null);
+  // Whether the sky drifts. Persisted like the palette, and for the same
+  // reason: a preference about ambient motion that resets on every reload is
+  // one you have to re-express every morning. Defaults to on, so nothing
+  // changes for anyone who never touches it.
+  const [spin, setSpin] = useState(() => {
+    try { return localStorage.getItem("sigma.brain.spin") !== "off"; }
+    catch { return true; }        // private mode — drift, just do not remember
+  });
+  const setSpinSaved = (v: boolean) => {
+    setSpin(v);
+    try { localStorage.setItem("sigma.brain.spin", v ? "on" : "off"); }
+    catch { /* see above */ }
+  };
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [ledgerOpen, setLedgerOpen] = useState(false);
   const [noSyncOpen, setNoSyncOpen] = useState(false);
@@ -352,11 +365,13 @@ export default function App() {
           darkened sky, and the vault's numbers run down the left margin. */}
       <section className="panel center">
         <h2>FLEET</h2>
-        <Brain graph={graph} vault={vault} fireRef={fireRef} filter={brainFilter} />
+        <Brain graph={graph} vault={vault} fireRef={fireRef} filter={brainFilter}
+               spin={spin} />
         <div className="core-scrim" aria-hidden="true" />
         <Reactor fleet={fleet ?? null} progress={progress} waitingCount={waitingCount}
                  guide={guideProg} />
-        <VaultHud graph={graph} filter={brainFilter} onFilter={setBrainFilter} />
+        <VaultHud graph={graph} filter={brainFilter} onFilter={setBrainFilter}
+                  spin={spin} onSpin={setSpinSaved} />
       </section>
       <div className="right">
         <WaitingPanel proposals={proposals ?? null} onReview={setReviewing} />
