@@ -80,25 +80,33 @@ function CourseCard({ c, gen, busy, onOpen, onGenerate }: {
       {queued ? ` · ${Math.min(done + 1, queued)} of ${queued}` : ""}</span>;
   } else if (!g || !g.blueprint) {
     action = (
-      <button className="ghost" disabled={busy} onClick={onGenerate}
+      <button className="wb-btn" disabled={busy} onClick={onGenerate}
               title="one model call — plans modules from this course's notes as a draft blueprint; nothing else runs until you approve it">
-        ✎ draft blueprint
+        ✎ Draft a plan
       </button>
     );
   } else if (g.blueprint === "draft") {
     action = <span className="dim">plan drafted — approve it to generate</span>;
   } else if (g.blueprint === "approved" && (g.missing ?? 0) > 0) {
     action = (
-      <button className="ghost" disabled={busy} onClick={onGenerate}
+      <button className="wb-btn" disabled={busy} onClick={onGenerate}
               title="authors the plan's missing notes — one revertible commit each; anything held surfaces in WAITING ON YOU">
-        ▶ generate {g.missing} missing
+        ▶ Generate {g.missing} missing
         {gen?.course === c.course && gen?.state === "paused" ? " (resume)" : ""}
       </button>
     );
   } else if (g.blueprint !== "approved") {
     action = <span className="dim">plan status is {g.blueprint}</span>;
   } else if (open > 0) {
-    action = <button className="ghost" onClick={onOpen} title="open the chain">study →</button>;
+    // The one filled control on the card, and the only one on most of this
+    // screen: §1.2's single primary action, which is also what the accent is
+    // for. Everything else here is a hairline button or a sentence.
+    action = (
+      <button className="wb-btn wb-btn-primary" onClick={onOpen}
+              title="open the chain">
+        Study<span aria-hidden="true"> →</span>
+      </button>
+    );
   } else if (total > 0) {
     action = <span className="dim">✓ chain complete</span>;
   }

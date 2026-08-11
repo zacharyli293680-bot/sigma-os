@@ -38,7 +38,7 @@
  * settle-refetch all have to survive switching between courses.
  */
 import { useEffect, useReducer, useRef, useState } from "react";
-import type { Dispatch, SetStateAction } from "react";
+import type { CSSProperties, Dispatch, ReactNode, SetStateAction } from "react";
 import { API, get, obsidianHref, post, ApiError } from "./api";
 import CoursesGrid from "./courses";
 import { MathBlock, MathInline } from "./math";
@@ -48,11 +48,17 @@ import type {
   LessonSegment, PracticeItem, Rollup,
 } from "./api";
 import { pythonReady, resetSql, runPython, runSql, warmPython } from "./sandbox";
+import Calculator from "./calc";
+import { useTheme } from "./theme";
 import type { PyRun, SqlRun } from "./sandbox";
 
 type Depth = "summary" | "normal" | "in_depth";
+/* Sentence case. These were shouted because the dashboard shouts — its labels
+ * are 10.5px mono caps so that forty of them read as one texture. The room has
+ * three of them, in a control the width of the rail, where caps cost a third
+ * more space for no legibility at all. */
 const DEPTH_LABEL: [Depth, string][] = [
-  ["summary", "SUMMARY"], ["normal", "NORMAL"], ["in_depth", "IN DEPTH"]];
+  ["summary", "Summary"], ["normal", "Normal"], ["in_depth", "In depth"]];
 const DEPTHS: Depth[] = ["summary", "normal", "in_depth"];
 
 type Result = "correct" | "wrong" | "skipped";
@@ -64,10 +70,17 @@ type PracticeSt = {
 };
 const P0: PracticeSt = { hints: 0, revealed: false, result: null, given: "" };
 
-/** The dock's four slots — exactly one open at a time (§11). */
-type Slot = "prov" | "work" | "code" | "tutor";
-const SLOT_LABEL: [Slot, string][] = [
-  ["prov", "[?] prov"], ["work", "✎ work"], ["code", "▸ code"], ["tutor", "✦ tutor"]];
+/** The dock's slots — exactly one open at a time (§11). Each carries a glyph
+ *  and a word: the rail has the room for both, and a row of glyphs alone is a
+ *  puzzle every time you come back to it after a week. */
+type Slot = "prov" | "work" | "code" | "tutor" | "calc";
+const SLOT_LABEL: [Slot, string, string][] = [
+  ["prov", "?", "Provenance"],
+  ["work", "✎", "Work pad"],
+  ["code", "▸", "Sandbox"],
+  ["tutor", "✦", "Tutor"],
+  ["calc", "∑", "Calculator"],
+];
 
 type Lang = "python" | "sql";
 const SCRATCH_MAX = 4000;
@@ -704,6 +717,211 @@ type Openable = {
   course: string; num: number; file: string; title: string;
 };
 
+/* --------------------------------------------------------------------------
+ * The rail — one fixed place for everything that is navigation.
+ *
+ * Its whole promise is that it does not move. The same 250px column, the same
+ * three bands (where you are · what is in here · what you can open with it) and
+ * the same footer, whichever of the three views is on the right. Chrome that
+ * relocates when the content changes is chrome you have to find again every
+ * time, which is what the old foot strip did — it sat under the prose, so it
+ * moved with every segment and scrolled away exactly when it was wanted.
+ * ------------------------------------------------------------------------ */
+type Scheme = "light" | "dark";
+const SCHEME_KEY = "sigma.study.scheme";
+
+/* --- making a borrowed accent legible ------------------------------------
+ * The room takes the dashboard's accent, and the seven were chosen to glow on
+ * a dark instrument — VOID's is `#22D3EE`, a cyan whose contrast against white
+ * is 1.7:1. Painted as a filled button with white text it is illegible, and as
+ * a word on paper it is worse.
+ *
+ * So neither of those colours is assumed. `--accent-fg` is whichever of black
+ * or white actually contrasts against the fill, and `--accent-ink` is the
+ * accent walked toward the ink — or toward the light, in dark mode — until it
+ * clears 4.5:1 against the ground it will sit on. The hue survives, which is
+ * the whole point of borrowing it; the luminance becomes the room's problem
+ * rather than the palette's.
+ *
+ * CSS can express the mixing (`color-mix`) but not the *test*, which is why
+ * this is arithmetic rather than a stylesheet rule.
+ */
+function rgbOf(h: string): [number, number, number] {
+  const t = h.replace("#", "").trim();
+  const full = t.length === 3 ? t.split("").map(c => c + c).join("") : t;
+  return [0, 2, 4].map(i => parseInt(full.slice(i, i + 2), 16) || 0) as [number, number, number];
+}
+function relLum([r, g, b]: [number, number, number]): number {
+  const f = (c: number) => {
+    const s = c / 255;
+    return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+}
+const ratio = (a: number, b: number) =>
+  (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+const asHex = ([r, g, b]: [number, number, number]) =>
+  "#" + [r, g, b].map(v => Math.round(v).toString(16).padStart(2, "0")).join("");
+
+/** The two colours derived from a borrowed accent: what to write *on* it, and
+ *  what it becomes when it is the text rather than the fill. */
+function accentPair(accent: string, scheme: Scheme): { fg: string; ink: string } {
+  const a = rgbOf(accent);
+  const la = relLum(a);
+  const fg = ratio(la, relLum([255, 255, 255])) >= ratio(la, relLum([16, 18, 26]))
+    ? "#FFFFFF" : "#101018";
+  const lg = relLum(rgbOf(scheme === "dark" ? "#1B1B1F" : "#FFFFFF"));
+  const toward: [number, number, number] = scheme === "dark" ? [255, 255, 255] : [10, 10, 14];
+  let ink = a;
+  for (let t = 0; t <= 1.0001; t += 0.05) {
+    ink = [0, 1, 2].map(i => a[i] + (toward[i] - a[i]) * t) as [number, number, number];
+    if (ratio(relLum(ink), lg) >= 4.5) break;
+  }
+  return { fg, ink: asHex(ink) };
+}
+
+function Rail(
+  { view, courses, course, lesson, st, depth, isCp, dispatch,
+    minsDone, minsTotal, practiceDone, practiceTotal, scheme, onScheme,
+    onCourses, onChain, onCourse }: {
+    view: "catalog" | "chain" | "lesson";
+    courses: Courses | null | undefined;
+    course: string | null;
+    lesson: Lesson | null | undefined;
+    st: WbState; depth: Depth; isCp: boolean;
+    dispatch: (a: WbAction) => void;
+    minsDone: number; minsTotal: number;
+    practiceDone: number; practiceTotal: number;
+    scheme: Scheme; onScheme: (s: Scheme) => void;
+    onCourses: () => void; onChain: () => void; onCourse: (c: string) => void;
+  },
+) {
+  const pct = minsTotal ? Math.round((minsDone / minsTotal) * 100) : 0;
+  return (
+    <nav className="wb-rail" aria-label="Study navigation">
+      <div className="wb-rail-top">
+        <span className="wb-rail-mark">Study</span>
+        {view !== "catalog" && (
+          <button className="wb-rail-back" onClick={view === "lesson" ? onChain : onCourses}
+                  title={view === "lesson" ? "Back to the chain (Esc)" : "All courses (Esc)"}>
+            ‹ {view === "lesson" ? course ?? "chain" : "Courses"}
+          </button>
+        )}
+      </div>
+
+      {view === "lesson" && lesson && (
+        <div className="wb-rail-now">
+          <p className="wb-rail-title">{lesson.title}</p>
+          <span className="wb-ring" role="img"
+                aria-label={`${minsDone} of ${minsTotal} minutes`}
+                style={{ "--pct": `${pct}` } as CSSProperties}>
+            <span className="wb-ring-n">{pct}<i>%</i></span>
+          </span>
+          <p className="wb-rail-meta">
+            {minsDone} of {minsTotal} min
+            {practiceTotal > 0 && <> · {practiceDone}/{practiceTotal} practice</>}
+          </p>
+        </div>
+      )}
+
+      <div className="wb-rail-scroll">
+        {view === "catalog" && (
+          <RailBand label="Courses">
+            {(courses?.courses ?? []).map(c => (
+              <button key={c.course} className="wb-rail-item"
+                      onClick={() => onCourse(c.course)}>
+                <span className="wb-rail-item-k">{c.course}</span>
+                <span className="wb-rail-item-v">{c.name}</span>
+              </button>
+            ))}
+          </RailBand>
+        )}
+
+        {view === "lesson" && lesson && (
+          <>
+            <RailBand label={isCp ? "Checkpoint" : "Contents"}>
+              {lesson.segments.map((s, i) => {
+                const items = s.practice.length;
+                const done = s.practice.filter(it => pr(st, it.id).result !== null).length;
+                const state = items === 0 ? "none" : done === 0 ? "open"
+                  : done < items ? "part" : "done";
+                return (
+                  <button key={s.n}
+                          className={`wb-rail-item wb-seg-item s-${state} ${i === st.seg ? "on" : ""}`}
+                          aria-current={i === st.seg ? "step" : undefined}
+                          onClick={() => dispatch({ t: "seg", i })}>
+                    <span className="wb-rail-item-k">{i + 1}</span>
+                    <span className="wb-rail-item-v">{s.title}</span>
+                    <span className="wb-rail-item-x">{s.minutes}m</span>
+                  </button>
+                );
+              })}
+            </RailBand>
+
+            {!isCp && (
+              <RailBand label="Depth">
+                <div className="wb-seg" role="tablist" aria-label="Depth">
+                  {DEPTH_LABEL.map(([d, label]) => (
+                    <button key={d} role="tab" aria-selected={depth === d}
+                            className={depth === d ? "on" : ""}
+                            onClick={() => dispatch({ t: "depth", i: st.seg, d })}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </RailBand>
+            )}
+
+            {!st.focus && (
+              <RailBand label="Tools">
+                {SLOT_LABEL.map(([s, glyph, label]) => (
+                  <button key={s}
+                          className={`wb-rail-item wb-tool ${st.dock === s ? "on" : ""}`}
+                          aria-pressed={st.dock === s}
+                          onClick={() => dispatch({ t: "dock", slot: st.dock === s ? null : s })}>
+                    <span className="wb-rail-item-k" aria-hidden="true">{glyph}</span>
+                    <span className="wb-rail-item-v">{label}</span>
+                  </button>
+                ))}
+              </RailBand>
+            )}
+          </>
+        )}
+
+        {view === "chain" && (
+          <RailBand label="Course">
+            <p className="wb-rail-hint">
+              Pick a module on the right. The chain is ordered — each one is
+              genuinely blocked by the one before it.
+            </p>
+          </RailBand>
+        )}
+      </div>
+
+      <div className="wb-rail-foot">
+        <div className="wb-seg wb-scheme" role="group" aria-label="Appearance">
+          <button className={scheme === "light" ? "on" : ""}
+                  onClick={() => onScheme("light")} title="Light">☀</button>
+          <button className={scheme === "dark" ? "on" : ""}
+                  onClick={() => onScheme("dark")} title="Dark">☾</button>
+        </div>
+        <span className="wb-rail-esc">
+          {view === "lesson" ? <><kbd>f</kbd> focus</> : <><kbd>Esc</kbd> back</>}
+        </span>
+      </div>
+    </nav>
+  );
+}
+
+function RailBand({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <section className="wb-band">
+      <h3 className="wb-band-h">{label}</h3>
+      {children}
+    </section>
+  );
+}
+
 export default function WorkbenchView({ open, vault, onClose, guideProg }: {
   open: boolean; vault: string; onClose: () => void;
   guideProg?: GuideProgress | null;
@@ -715,6 +933,23 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
   const [picked, setPicked] = useState<Openable | null>(null);
   const [lesson, setLesson] = useState<Lesson | null | undefined>(undefined);
   const [st, dispatch] = useReducer(reduce, START);
+  // Light or dark is a *reading* preference, not a theme: it belongs to the
+  // person and the hour, not to the install, so it is remembered here rather
+  // than derived from the dashboard's palette. Same store and same shape as
+  // `sigma.brain.spin`, for the same reason — a view preference that a reload
+  // forgets is a preference you set again every day.
+  const [scheme, setSchemeRaw] = useState<Scheme>(() => {
+    try { return localStorage.getItem(SCHEME_KEY) === "dark" ? "dark" : "light"; }
+    catch { return "light"; }
+  });
+  const setScheme = (s: Scheme) => {
+    setSchemeRaw(s);
+    try { localStorage.setItem(SCHEME_KEY, s); } catch { /* private mode */ }
+  };
+  // The accent, and nothing else, comes from the instrument (see the inline
+  // style on `.workbench` below).
+  const theme = useTheme();
+  const pair = accentPair(theme.tokens["--accent"] ?? "#2563EB", scheme);
   const [busy, setBusy] = useState(false);
   const [chainErr, setChainErr] = useState<string | null>(null);
   const [genNote, setGenNote] = useState<{ course: string; text: string } | null>(null);
@@ -1237,8 +1472,28 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
 
   return (
     <div className="palette-backdrop" onClick={onClose}>
-      <div className={`workbench ${st.focus ? "focus" : ""}`}
+      <div className={`workbench scheme-${scheme} ${st.focus ? "focus" : ""}`}
+           /* The one value the room borrows from the instrument. Grounds and
+              ink stay the room's own — that is what makes it a different place
+              — but the accent is the dashboard's, so study mode reads as part
+              of the same install rather than a white page someone bolted on.
+              A CSS custom property set inline is the only way a *value* can
+              cross from theme.ts into a region that otherwise declares its own. */
+           style={{ "--accent": theme.tokens["--accent"],
+                    "--accent-rgb": theme.tokens["--accent-rgb"],
+                    "--accent-fg": pair.fg,
+                    "--accent-ink": pair.ink } as CSSProperties}
            onClick={e => e.stopPropagation()} role="dialog" aria-label="Workbench">
+        <Rail view={inLesson ? "lesson" : course ? "chain" : "catalog"}
+              courses={courses} course={course} lesson={lesson} st={st}
+              depth={depth} isCp={isCp} dispatch={dispatch}
+              minsDone={minsDone} minsTotal={minsTotal}
+              practiceDone={practiceDone} practiceTotal={practiceTotal}
+              scheme={scheme} onScheme={setScheme}
+              onCourses={() => { setCourse(null); setPicked(null); }}
+              onChain={() => { setPicked(null); setLesson(undefined); }}
+              onCourse={setCourse} />
+        <div className="wb-main">
         <header className="study-head wb-head">
           {/* Two tiers, because one flat `·`-joined line had the course, the
               unit, the title, the estimate and the measured pace at equal
@@ -1638,64 +1893,24 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
                   )}
                 </div>
 
-                {/* Everything that is chrome, in one quiet strip at the foot:
-                    which segment, how deep, and the four tools. It is below the
-                    reading rather than around it, which is the whole point. */}
-                <div className="wb-strip">
-                  <nav className="wb-jump" aria-label="Segments">
-                    {lesson.segments.map((s, i) => {
-                      const items = s.practice.length;
-                      const done = s.practice.filter(
-                        it => pr(st, it.id).result !== null).length;
-                      // The rail's four states survive as a class rather than a
-                      // glyph — the number is the label now, and a glyph beside
-                      // it would be two things saying "segment 3".
-                      const state = items === 0 ? "none" : done === 0 ? "open"
-                        : done < items ? "part" : "done";
-                      return (
-                        <button key={s.n}
-                                className={`wb-jump-n s-${state} ${i === st.seg ? "on" : ""}`}
-                                aria-current={i === st.seg ? "step" : undefined}
-                                title={`${s.title} — ⏱ ${s.minutes} min`
-                                       + (items ? ` · ${done}/${items} practice` : "")}
-                                onClick={() => dispatch({ t: "seg", i })}>
-                          {i + 1}
-                        </button>
-                      );
-                    })}
-                  </nav>
-                  {!isCp && (
-                    <div className="wb-depths" role="tablist" aria-label="Depth">
-                      {DEPTH_LABEL.map(([d, label]) => (
-                        <button key={d} role="tab" aria-selected={depth === d}
-                                className={depth === d ? "active" : ""}
-                                onClick={() => dispatch({ t: "depth", i: st.seg, d })}>
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  {!st.focus && (
-                    <div className="wb-tools">
-                      {SLOT_LABEL.map(([s, label]) => (
-                        <button key={s} className={st.dock === s ? "on" : ""}
-                                title={`Open the ${s} slot`}
-                                onClick={() => dispatch({ t: "dock", slot: st.dock === s ? null : s })}>
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                {/* The strip that used to live here — segments, depth, tools —
+                    is the rail on the left now. It was chrome sitting under the
+                    reading, which meant it scrolled away exactly when you
+                    wanted it, and moved every time the prose changed length. */}
               </div>
               {!st.focus && st.dock && (
                 <aside className="wb-dock">
                   <div className="wb-slots" role="tablist" aria-label="Dock slot">
-                    {SLOT_LABEL.map(([s, label]) => (
+                    {/* The dock's own tabs stay short — five full names do not
+                        fit 420px and wrapped "Work pad" onto two lines. The
+                        rail carries the long form; here the key is enough,
+                        and the title attribute holds the rest. */}
+                    {SLOT_LABEL.map(([s, glyph, label]) => (
                       <button key={s} role="tab" aria-selected={st.dock === s}
                               className={st.dock === s ? "active" : ""}
+                              title={label}
                               onClick={() => dispatch({ t: "dock", slot: s })}>
-                        {label}
+                        <span aria-hidden="true">{glyph}</span> {s}
                       </button>
                     ))}
                     <button className="ghost wb-slot-x" title="Close the dock (Esc)"
@@ -1767,6 +1982,19 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
                                  onMode={setTutorMode} onAsk={q => void askTutor(q)} />
                     </div>
                   )}
+
+                  {/* The calculator writes into the work pad rather than owning
+                      a record of its own: the pad is already sidecar-persisted
+                      per module, and a second half-remembered history of your
+                      arithmetic is a worse answer than one you can see. */}
+                  {st.dock === "calc" && (
+                    <div className="wb-slotbody">
+                      <Calculator scratchAppend={line => dispatch({
+                        t: "scratch",
+                        text: (st.scratch ? st.scratch.replace(/\s*$/, "") + "\n" : "") + line,
+                      })} />
+                    </div>
+                  )}
                 </aside>
               )}
             </div>
@@ -1798,6 +2026,7 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
             <span className="wb-roll err">{rollup}</span>
           )}
         </footer>
+        </div>
       </div>
     </div>
   );
