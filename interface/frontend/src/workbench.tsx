@@ -1559,7 +1559,11 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
 
         {inLesson && lesson && !held && (
           <>
-            <div className="wb-body">
+            {/* `has-dock` is back, but it buys the opposite of what it bought
+                when the body was a grid: not a third track, but the offset that
+                keeps the reading column standing still while a column opens
+                beside it. */}
+            <div className={`wb-body ${st.dock ? "has-dock" : ""}`}>
               <div className="wb-read">
                 {/* The lede replaces the rail. A 176px spine spent permanent
                     width telling you which of five segments you were on; a line

@@ -2572,14 +2572,25 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
      text, fixed once. */
   --measure: 39rem;
   --pad: 40px;                /* the room's breathing room */
+  /* The reading column is capped at `--measure`; everything that is a *list*
+     rather than prose — the course grid, the chain — is capped at this. Going
+     full-screen without it would stretch a chain row to 1900px, which is a
+     worse read than the panel it replaced, not a better one. */
+  --room: 1180px;
+  /* One number, because two rules depend on it agreeing: the dock's own width,
+     and the offset that keeps the reading column still while it is open. */
+  --dock: 420px;
 
-  margin-top: 4vh; width: min(1180px, 94vw); max-height: 90vh;
-  align-self: flex-start;
+  /* Full screen. It was a 1180px panel floating on the dashboard's scrim, and
+     that width was what forced the dock to overlap the prose rather than open
+     beside it. The backdrop is `position: fixed; inset: 0`, so 100% of it is
+     the viewport exactly — `100vw` would include the scrollbar gutter and
+     produce a horizontal scroll on the one axis this room must never have. */
+  width: 100%; height: 100%; align-self: stretch;
   background: var(--surface);
-  border: 1px solid var(--panel-line);
-  border-radius: var(--r-card);
-  /* No bloom. A glow around the edge is the instrument's language for "this is
-     lit"; a sheet of paper is not lit, it is just nearer. */
+  /* No border, no radius, no bloom: at full bleed there is no edge to draw,
+     and a glow was already the instrument's language for "lit" rather than
+     paper's for "nearer". */
   display: flex; flex-direction: column; overflow: hidden;
   color: var(--ink);
   font-size: var(--t-body);
@@ -2610,8 +2621,22 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
    belongs to exam mode too and exam mode must not move. In the room it is
    navigation and nothing else: where you are, and the way back. The module's
    title and meta live in the lede now, beside the thing they describe. */
+/* The room's left edge, defined once for every full-bleed region in it.
+   Each of these spans the screen — so the header's hairline and the grid's
+   scrollbar reach the edges — while their *contents* line up on one margin.
+   `max()` collapses the whole thing to a plain `--pad` as soon as the window
+   is narrower than the room, so a small screen is unaffected.
+   The reading column is deliberately absent: it is centred on `--measure`,
+   which is a different and narrower constraint. */
+.workbench .study-head,
+.workbench .wb-foot,
+.workbench .wb-grid,
+.workbench .wb-chainbody {
+  padding-left: max(var(--pad), calc((100% - var(--room)) / 2));
+  padding-right: max(var(--pad), calc((100% - var(--room)) / 2));
+}
 .workbench .study-head {
-  align-items: center; padding: 16px var(--pad) 14px;
+  align-items: center; padding-top: 16px; padding-bottom: 14px;
   border-bottom: 1px solid var(--panel-line-dim);
 }
 .workbench .study-head .label {
@@ -2645,9 +2670,29 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
    A flex column cannot be undone that way, and it leaves each child's own
    padding alone, which is what keeps a `pre` aligned with the prose above it. */
 .wb-read {
-  flex: 1 1 auto; overflow-y: auto;
+  /* `min-width: 0` because a flex item defaults to `min-width: auto` and so
+     refuses to shrink below its content — a wide display equation held the
+     column open and pushed the dock 14px off the right edge of the screen. */
+  flex: 1 1 auto; min-width: 0; overflow-y: auto;
   display: flex; flex-direction: column; align-items: center;
   padding: 30px var(--pad) 44px;
+}
+/* Opening the dock takes `--dock` off this column's right, which re-centres the
+   prose by half that to the left — the same mid-sentence lurch that made the
+   dock a sheet in the first place, just in the other direction. Adding the
+   dock's width to the *left* padding puts the content box's centre back where
+   it was, so the sentence you are reading does not move at all.
+   The `min()` is the whole safety of it. A breakpoint was the first attempt and
+   it is the wrong tool twice over: it guesses the width at which the offset
+   stops fitting, and it silently does not apply under page zoom — measured, at
+   a 1200px zoomed viewport the query still read as wide and squeezed the column
+   to 283px. This asks the question directly instead. Percentages in `padding`
+   resolve against the containing block, `.wb-body`, which is the full width —
+   hence subtracting the dock here rather than assuming this column's own. */
+.wb-body.has-dock .wb-read {
+  padding-left: min(
+    calc(var(--pad) + var(--dock)),
+    max(var(--pad), calc(100% - var(--dock) - var(--measure) - var(--pad))));
 }
 /* `flex: none` is load-bearing, not tidiness. A column flex container shrinks
    its items to fit, and this one has a bounded height because it scrolls — so
@@ -2805,13 +2850,17 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 }
 .wb-depths, .wb-modes { margin: 0; }
 
-/* --- the dock, as a sheet ------------------------------------------------- */
-/* It used to be a third grid track, so opening it squeezed the reading column
-   by 400px mid-sentence. A sheet slides over instead: the reading stays exactly
-   where it was, and closing puts you back without a reflow. */
+/* --- the dock, as a column ------------------------------------------------ */
+/* Three shapes in three days, and the width of the room is what decided each.
+   As a grid track in a 1180px panel it squeezed the prose by 400px mid-
+   sentence; as a sheet it stopped squeezing but covered what you were reading,
+   which is the wrong half to hide when the dock's whole job is to answer a
+   question *about* that text. Full-screen removes the dilemma: at this width
+   the reading column keeps every pixel of its measure and the dock opens into
+   margin that was empty anyway. */
 .wb-dock {
-  position: absolute; top: 0; right: 0; bottom: 0; z-index: 3;
-  width: min(430px, 88%);
+  flex: none; z-index: 3;
+  width: min(var(--dock), 34%);
   background: var(--surface); border-left: 1px solid var(--panel-line);
   display: flex; flex-direction: column;
   padding: 16px 20px 18px; overflow-y: auto;
@@ -2830,7 +2879,8 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 
 /* Held is a word plus amber, never colour alone. */
 .wb-held {
-  margin: 20px var(--pad); border: 1px solid var(--amber); border-radius: var(--r-card);
+  margin: 20px auto; max-width: var(--room); width: calc(100% - 2 * var(--pad));
+  border: 1px solid var(--amber); border-radius: var(--r-card);
   padding: 14px 20px; overflow-y: auto;
 }
 .wb-held h3 { color: var(--amber); font-size: var(--t-meta); margin: 4px 0; }
@@ -2840,6 +2890,9 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
   flex: none; padding: 11px var(--pad); border-top: 1px solid var(--panel-line-dim);
   font-size: var(--t-small); display: flex; justify-content: space-between; gap: 12px;
 }
+/* The room-aligned padding above wins on the horizontal axis; this restores the
+   vertical, which the shorthand there would otherwise have dropped. */
+.workbench .wb-foot { padding-top: 11px; padding-bottom: 11px; }
 .wb-foot kbd {
   font-family: var(--mono); border: 1px solid var(--panel-line);
   border-radius: 4px; padding: 1px 5px;
@@ -2859,10 +2912,14 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 /* One card per active course. It inherits the room's grounds from `.workbench`
    for free — what it needed on top was the room's *scale*, because it was still
    speaking the dashboard's 10.5px letterspaced mono at a reading distance. */
+/* `auto-fit` against the full viewport would put five course cards in a row
+   with a sixth column of air; held to the room's width it stays the three or
+   four it was designed as. The room padding above does the holding, so the
+   scroll container and the capped box stay one element. */
 .wb-grid {
   flex: 1 1 auto; min-height: 0; overflow-y: auto; align-content: start;
   display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 26px 32px; padding: 30px var(--pad) 36px;
+  gap: 26px 32px; padding-top: 30px; padding-bottom: 36px;
 }
 
 /* The eyebrow goes. §2.2 calls an uppercase letterspaced mono label the thing a
@@ -2960,7 +3017,10 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 
 /* --- the chain view (study S2 — one course, drilled into) ---------------- */
 .wb-chain { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
-.wb-chainbody { padding: 2px 18px 14px; }
+/* On the room's margin rather than pinned to the left edge of a 1920px screen —
+   `.wb-rows` already caps a row at 78ch, so without this the chain reads as a
+   narrow strip in the corner of an empty page. */
+.wb-chainbody { padding-top: 2px; padding-bottom: 14px; }
 .wb-chainhead {
   display: flex; justify-content: space-between; align-items: baseline;
   gap: 12px; margin: 10px 0 6px; font-size: 12px;
