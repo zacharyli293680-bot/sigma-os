@@ -106,8 +106,10 @@ function CourseCard({ c, gen, busy, onOpen, onGenerate }: {
   return (
     <section className={`panel wb-card ${c.held ? "attn" : ""}`}>
       <h2>
+        {/* No `◇`. The diamond is the dashboard's mark for "a place in the
+            instrument", and the study room is the one place that is not it. */}
         <button className="wb-card-open" onClick={onOpen}
-                title={`open ${c.course}`}>◇ {c.course}</button>
+                title={`open ${c.course}`}>{c.course}</button>
         <span className="wb-card-count">
           {total > 0 ? `${g!.done}/${total}` : g?.planned ? `${g.planned} planned` : ""}
         </span>

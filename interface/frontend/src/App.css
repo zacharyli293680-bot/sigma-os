@@ -2509,18 +2509,93 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 .q-review-date { color: var(--muted); flex: none; }
 .q-review-facts { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* --- the study workbench (study mode S1) --------------------------------- */
+/* --- the study room (study mode S1) --------------------------------------- */
 
-/* Rail, reading column, dock. Wider than .study because a lesson is a document,
-   not a list; align-self keeps a short module at the top instead of floating in
-   the void (the .work lesson, relearned). */
+/*
+ * Study mode is not part of the instrument, and since 2026-08-10 it does not
+ * look like it. You come here to read prose and mathematics for forty-five
+ * minutes; the dashboard is for glancing at state. Those are different jobs and
+ * they get different rooms.
+ *
+ * **This is a region, not an eighth palette.** `.center` already established
+ * the pattern one level down — it remaps the base tokens to `--sky-*` in one
+ * block and every rule inside re-tokenises for free — and this is the same move
+ * for `.workbench`. No rule below keys on which theme is active, so the house
+ * rule holds: a *theme* is still a value swap and still never a stylesheet
+ * fork. What is new is that one region states its own values.
+ *
+ * Which is also why these are literal hexes rather than a Spec entry in
+ * theme.ts: the study room does not vary, cannot be picked, and must not become
+ * a seventh set of values every future palette has to fill in. It is paper in
+ * VOID and paper in QUARTZ, deliberately — the jolt when you open it is the
+ * signal that you have gone somewhere else.
+ *
+ * Almost everything below inherits from this block alone. The rules further
+ * down were already written against tokens, so re-colouring the room cost a
+ * swap rather than a rewrite; what those rules then needed was a *scale*, which
+ * is the second half of this block.
+ */
 .workbench {
-  margin-top: 4vh; width: min(1320px, 96vw); max-height: 88vh;
+  /* the room's grounds — §1.1's three, an order of magnitude lighter */
+  --void: #FBFBFD;            --void-rgb: 251 251 253;
+  --surface: #FFFFFF;         --surface-rgb: 255 255 255;
+  --inset: #F4F4F7;           --inset-rgb: 244 244 247;
+  /* ink, and only two steps of it: reading text, and everything subordinate */
+  --ink: #1D1D1F;
+  --ink-2: #55555E;
+  --muted: #A6A6AE;           --muted-rgb: 166 166 174;
+  /* One tint, spent on the primary action, progress, and the focus ring. */
+  --accent: #2563EB;          --accent-rgb: 37 99 235;
+  --glow-rgb: 37 99 235;
+  /* Hairlines as neutral as they get: on paper, a tinted rule reads as a
+     decision, and §3.2 wants separation done by space wherever it can be. */
+  --panel-line: rgb(0 0 0 / 0.11);
+  --panel-line-dim: rgb(0 0 0 / 0.06);
+  /* Status, darkened until each is legible on white. Same meanings, same
+     glyphs; bronze stays copper and stays clear of the accent (rule 1). */
+  --amber: #8A5A00;           --amber-rgb: 138 90 0;
+  --red: #B3261E;             --red-rgb: 179 38 30;
+  --add: #146C43;             --add-rgb: 20 108 67;
+  --bronze: #8A5A1E;          --bronze-rgb: 138 90 30;
+
+  /* The scale. Hierarchy by size, per §2.4 — the dashboard does it by weight
+     and density because it has 40 facts on screen; a lesson has one. */
+  --t-title: 27px;
+  --t-seg: 21px;
+  --t-body: 17px;
+  --t-meta: 14px;
+  --t-small: 12.5px;
+  /* The reading column. In `rem`, not `ch`: `ch` is resolved against *each
+     element's own* font, so a token of `68ch` gave the 17px prose 623px and the
+     14px monospace block 557px — two different columns, visibly stepped, from
+     one value that looked shared. 39rem is that same 68 characters of body
+     text, fixed once. */
+  --measure: 39rem;
+  --pad: 40px;                /* the room's breathing room */
+
+  margin-top: 4vh; width: min(1180px, 94vw); max-height: 90vh;
   align-self: flex-start;
-  background: var(--surface); border: 1px solid var(--panel-line);
-  box-shadow: 0 0 40px rgb(var(--glow-rgb) / 0.08);
+  background: var(--surface);
+  border: 1px solid var(--panel-line);
+  border-radius: var(--r-card);
+  /* No bloom. A glow around the edge is the instrument's language for "this is
+     lit"; a sheet of paper is not lit, it is just nearer. */
   display: flex; flex-direction: column; overflow: hidden;
+  color: var(--ink);
+  font-size: var(--t-body);
 }
+
+/* Maths, finally set as maths (see math.tsx). The display block gets its own
+   air because an equation quoted mid-paragraph is a sentence, and one on its
+   own line is a step in an argument. */
+.math-block {
+  margin: 22px 0; overflow-x: auto; overflow-y: hidden;
+  text-align: center; padding: 2px 0;
+}
+.math-inline { white-space: nowrap; }
+/* What a failed render degrades to — visible, local, and obviously wrong,
+   rather than a blank where an equation should be. */
+.math-raw { color: var(--red); font-family: var(--mono); font-size: 0.95em; }
 
 /* `.err` and `.pad` have no global rules — every view scopes its own
    (`.study .pad`, `.work .err`). The workbench used both in three places and
@@ -2531,11 +2606,20 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 .workbench .pad { padding: 14px 18px; }
 .workbench .err { color: var(--red); font-size: 12px; line-height: 1.5; }
 
-/* The header, two tiers. Every rule is scoped under `.workbench` because
-   `.study-head` belongs to exam mode as well, and exam mode must not move. */
-.workbench .study-head { align-items: flex-start; }
+/* The header. Scoped under `.workbench` throughout, because `.study-head`
+   belongs to exam mode too and exam mode must not move. In the room it is
+   navigation and nothing else: where you are, and the way back. The module's
+   title and meta live in the lede now, beside the thing they describe. */
+.workbench .study-head {
+  align-items: center; padding: 16px var(--pad) 14px;
+  border-bottom: 1px solid var(--panel-line-dim);
+}
+.workbench .study-head .label {
+  color: var(--ink-2); font: 400 var(--t-meta)/1.4 var(--sans);
+  letter-spacing: 0; text-transform: none;
+}
 .wb-head-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.wb-head-main .label { display: flex; align-items: baseline; gap: 6px; }
+.wb-head-main .label { display: flex; align-items: baseline; gap: 7px; }
 .wb-crumb {
   background: none; border: none; padding: 0; cursor: pointer;
   color: var(--ink-2); font: inherit; letter-spacing: inherit;
@@ -2544,165 +2628,246 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 .wb-crumb:disabled { color: var(--ink); cursor: default; }
 .wb-crumb-sep { color: var(--muted); }
 .wb-crumb-here { color: var(--ink); }
-.wb-head-title { font-size: 13px; color: var(--ink); }
-.wb-head-meta { font: 400 10.5px/1.5 var(--mono); }
+.wb-head-title { font-size: var(--t-meta); color: var(--ink); }
 .wb-head-act { flex: none; white-space: nowrap; }
+.workbench .study-head .ghost { font-size: var(--t-meta); color: var(--ink-2); }
+.workbench .study-head .ghost:hover { color: var(--ink); }
 
-.wb-min { color: var(--muted); font-family: var(--mono); font-size: 10.5px; }
+/* One column, and the dock floats over it. The old grid gave a 176px rail
+   permanent width to say which of five segments you were on, and a third track
+   to a dock that is shut most of the time. `position: relative` is what lets
+   the sheet below sit inside the body rather than over the whole dialog. */
+.wb-body { position: relative; display: flex; flex: 1 1 auto; min-height: 0; }
+/* Centred by the *container*, not by each child's auto margins. The first
+   attempt put `margin-left/right: auto` on `.wb-read > *` (0,1,0), and every
+   element with its own margin shorthand — `p`, `.wb-example`, `pre` — is a
+   (0,1,1) selector that resets those to 0, so the whole column sat hard left.
+   A flex column cannot be undone that way, and it leaves each child's own
+   padding alone, which is what keeps a `pre` aligned with the prose above it. */
+.wb-read {
+  flex: 1 1 auto; overflow-y: auto;
+  display: flex; flex-direction: column; align-items: center;
+  padding: 30px var(--pad) 44px;
+}
+/* `flex: none` is load-bearing, not tidiness. A column flex container shrinks
+   its items to fit, and this one has a bounded height because it scrolls — so
+   every `pre` collapsed to a single line with its own scrollbar. The container
+   scrolls; the children keep their natural height. */
+.wb-read > * { flex: none; width: 100%; max-width: var(--measure); }
+.workbench.focus .wb-strip { display: none; }
+.workbench.focus .wb-read { padding-top: 44px; }
 
-/* Reading-first: a fixed spine, a capped column, and a dock that only takes
-   width when it is open. `11fr 9fr` gave 45% of the dialog to a dock that was
-   usually closed, and a reading measure past ~80ch is worse, not better. */
-.wb-body {
-  display: grid; grid-template-columns: 176px minmax(0, 1fr);
-  flex: 1 1 auto; min-height: 0;
+/* --- the lede: what the rail used to say, as a sentence ------------------- */
+.wb-lede { margin-bottom: 26px; }
+.wb-lede-mod {
+  display: flex; align-items: baseline; gap: 10px;
+  margin: 0 0 6px; font-size: var(--t-small); color: var(--ink-2);
 }
-.wb-body.has-dock { grid-template-columns: 176px minmax(0, 1fr) minmax(320px, 400px); }
-.wb-read { overflow-y: auto; padding: 14px 26px 18px; }
-.wb-read > * { max-width: 78ch; }
-/* Focus is now "nothing but the reading": the rail goes too, or the toggle
-   would be a no-op against a dock that already starts closed. */
-.workbench.focus .wb-body { grid-template-columns: 1fr; }
-.workbench.focus .wb-rail { display: none; }
-.workbench.focus .wb-dockbar { display: none; }
-.workbench.focus .wb-head-meta { display: none; }
-.workbench.focus .wb-read { max-width: 78ch; margin: 0 auto; padding-top: 20px; }
+.wb-lede-pos {
+  margin-left: auto; flex: none; font-family: var(--mono);
+  color: var(--muted); font-variant-numeric: tabular-nums;
+}
+/* The size jump that carries the hierarchy. 590 rather than 600: it is the
+   weight that reads as "medium" in the system faces this stack asks for. */
+.wb-lede-seg {
+  margin: 0 0 14px; font: 590 var(--t-seg)/1.25 var(--sans);
+  color: var(--ink); letter-spacing: -0.01em;
+}
+.wb-lede-bar {
+  display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
+  margin: 0; font-size: var(--t-small); color: var(--ink-2);
+}
+.wb-lede-bar .cov-bar { flex: 0 0 132px; }
 
-/* The spine. Two lines per segment — the number and its minutes, then the
-   title — because a rail that only numbered them would be the chip row again,
-   turned on its side. */
-.wb-rail {
-  overflow-y: auto; border-right: 1px solid var(--panel-line-dim);
-  padding: 10px 0 12px;
-}
-.wb-rail ul { list-style: none; margin: 0; padding: 0; }
-.wb-rail button {
-  display: grid; grid-template-columns: 14px auto 1fr; gap: 0 6px;
-  width: 100%; text-align: left; cursor: pointer;
-  background: none; border: none; border-left: 2px solid transparent;
-  padding: 4px 10px 5px 8px; color: var(--ink-2);
-  font: 400 11.5px/1.4 var(--mono);
-}
-.wb-rail button:hover { color: var(--ink); }
-.wb-rail button.active { border-left-color: var(--accent); color: var(--ink); }
-.wb-rail-n { color: inherit; }
-.wb-rail-t {
-  grid-column: 2 / -1; font-family: var(--sans); font-size: 11px;
-  color: var(--muted); overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.wb-rail button.active .wb-rail-t { color: var(--ink-2); }
-/* Glyph first, colour second — the dot has to survive a light theme and a
-   glance. `○` (no practice here) is not the same claim as `·` (none done). */
-.wb-dot { font-family: var(--mono); }
-.wb-dot-done { color: var(--add); }
-.wb-dot-part { color: var(--accent); }
-.wb-dot-open { color: var(--muted); }
-.wb-dot-none { color: var(--muted); }
-.wb-railtop {
-  display: flex; flex-direction: column; gap: 4px;
-  padding: 0 10px 10px; margin-bottom: 6px;
-  border-bottom: 1px solid var(--panel-line-dim);
-  font: 400 10.5px/1.5 var(--mono);
-}
-.wb-railtop .cov-bar { width: 100%; }
-
-/* The closed dock, as a strip in the reading column's corner. */
-.wb-dockbar {
-  display: flex; gap: 6px; justify-content: flex-end;
-  max-width: none; margin-bottom: 2px;
-}
-.wb-dockbar button { font-size: 11px; }
-
-.wb-seghead { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
-.wb-seghead h3 { margin: 4px 0 2px; font-size: 14px; color: var(--ink); }
-.wb-read p { margin: 8px 0; line-height: 1.6; color: var(--ink); }
-/* Formula blocks. They were "bordered, never filled" — the vault's own style,
-   from before there was a third ground to fill them with. §1.1 gives them one,
-   and a pressed-in well is a truer picture of a formula quoted inside prose
-   than a box drawn around it. The hairline stays: the fill alone is a 3-value
-   step and vanishes on a projector. */
+/* --- the reading itself --------------------------------------------------- */
+.wb-read p { margin: 15px 0; line-height: 1.65; color: var(--ink); }
+.wb-read b, .wb-read strong { font-weight: 590; }
+/* A quoted block of monospace, the shape a module written before LaTeX still
+   uses. Kept working on purpose; new modules author display maths instead. */
 .wb-read pre {
-  font: 400 12px/1.6 var(--mono); color: var(--ink);
-  border: 1px solid var(--panel-line-dim); padding: 8px 12px; margin: 10px 0;
-  overflow-x: auto;
+  font: 400 14px/1.65 var(--mono); color: var(--ink);
+  border: none; border-radius: var(--r-ctl);
+  padding: 14px 18px; margin: 18px 0; overflow-x: auto;
   background: var(--inset);
 }
-.wb-link { color: var(--ink); }
+.wb-link { color: var(--ink); border-bottom: 1px solid var(--panel-line); }
 
-/* One chip. Five rows of them (segments, courses, depths, dock slots, tutor
-   modes) each carried a near-identical copy of this rule; the only genuine
-   differences were a font size and whether `.active` goes ink or accent, so
-   those are the only two things that vary now. */
-.wb-chips, .wb-depths, .wb-modes { display: flex; gap: 6px; flex-wrap: wrap; }
-.wb-chips button, .wb-depths button, .wb-modes button {
-  background: none; border: 1px solid var(--panel-line-dim); color: var(--ink-2);
-  font: 400 11.5px/1.5 var(--mono); padding: 2px 9px; cursor: pointer;
-  border-radius: var(--r-pill);
+/* Example and practice: filled wells rather than outlined boxes. Separation
+   goes in the surface step, and an outline inside an outline is the "boxes
+   inside boxes" the design language names outright. */
+.wb-example {
+  border: none; border-radius: var(--r-card);
+  background: var(--inset); padding: 4px 20px 14px; margin: 24px 0;
 }
-.wb-chips button:hover, .wb-depths button:hover, .wb-modes button:hover { color: var(--ink); }
-/* §1.3 — one active treatment across all three rows, filled with ink. The file
-   used to give chips an accent *border* and depths/modes accent *text*, on the
-   theory that a mode you are in differs from a place you are at. That is a real
-   distinction and this is still not where to spend the accent on it; the size
-   step below already carries it. */
-.wb-chips button.active, .wb-depths button.active, .wb-modes button.active {
-  background: var(--ink); border-color: var(--ink); color: var(--void);
-}
-.wb-depths, .wb-modes { margin: 6px 0 2px; }
-.wb-depths button, .wb-modes button { font-size: 10.5px; letter-spacing: 0.06em; }
-
-.wb-example { border: 1px solid var(--panel-line-dim); padding: 4px 12px 8px; margin: 12px 0; }
 .wb-example h4, .wb-practice h4, .wb-dock h4 {
-  margin: 8px 0 4px; font: 400 10.5px/1.5 var(--mono);
-  letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2);
+  margin: 16px 0 8px; font: 590 var(--t-small)/1.5 var(--sans);
+  letter-spacing: 0; text-transform: none; color: var(--ink-2);
 }
-
+.wb-practice { margin-top: 30px; border-top: 1px solid var(--panel-line-dim); }
 .wb-practice ul { list-style: none; margin: 0; padding: 0; }
-.wb-practice li { border: 1px solid var(--panel-line-dim); padding: 6px 10px; margin: 8px 0; }
-.wb-practice li p { margin: 4px 0; }
-.wb-kind { font: 400 10.5px/1.5 var(--mono); color: var(--muted); }
+.wb-practice li {
+  border: none; border-radius: var(--r-card); background: var(--inset);
+  padding: 14px 18px; margin: 12px 0;
+}
+.wb-practice li p { margin: 6px 0; }
+.wb-kind { font: 400 var(--t-small)/1.5 var(--mono); color: var(--muted); }
 
-.wb-nav { display: flex; align-items: center; justify-content: space-between; margin-top: 14px; }
+/* --- the one primary action ---------------------------------------------- */
+.wb-continue {
+  display: flex; align-items: center; justify-content: center; gap: 14px;
+  margin: 38px auto 8px;
+}
+/* The only filled control in the room. Everything else here is text. */
+.wb-go {
+  background: var(--accent); border: 1px solid var(--accent); color: var(--surface);
+  font: 590 var(--t-meta)/1 var(--sans);
+  padding: 13px 26px; border-radius: var(--r-ctl); cursor: pointer;
+}
+.wb-go:hover { filter: brightness(1.08); }
+.wb-back {
+  background: none; border: none; cursor: pointer;
+  color: var(--ink-2); font: 400 var(--t-meta)/1 var(--sans); padding: 13px 8px;
+}
+.wb-back:hover { color: var(--ink); }
 
-.wb-prov { list-style: none; margin: 0 0 10px; padding: 0; font-size: 12px; }
-.wb-prov li { margin: 4px 0; overflow-wrap: anywhere; }
-.wb-prov a { color: var(--ink); text-decoration: none; }
-.wb-prov a:hover { text-decoration: underline; }
+/* --- the chrome, in one strip at the foot --------------------------------- */
+/* Below the reading rather than around it. That is the whole re-architecture in
+   one rule: the things you touch occasionally stop framing the thing you came
+   to read. */
+.wb-strip {
+  display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  margin-top: 34px; padding-top: 16px;
+  border-top: 1px solid var(--panel-line-dim);
+}
+.wb-jump { display: flex; gap: 4px; }
+.wb-jump-n {
+  min-width: 28px; height: 28px; padding: 0 6px; cursor: pointer;
+  background: none; border: 1px solid transparent; border-radius: var(--r-ctl);
+  color: var(--ink-2); font: 400 var(--t-small)/1 var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.wb-jump-n:hover { background: var(--inset); color: var(--ink); }
+/* The ink inversion, at the one size where a filled control still reads calm. */
+.wb-jump-n.on {
+  background: var(--ink); border-color: var(--ink); color: var(--surface);
+}
+/* Practice state, as a mark under the number rather than a second glyph beside
+   it — the number already says "segment 3", and a dot would say it again. */
+.wb-jump-n.s-part { box-shadow: inset 0 -2px 0 var(--accent); }
+.wb-jump-n.s-done { box-shadow: inset 0 -2px 0 var(--add); }
+.wb-jump-n.s-open { box-shadow: inset 0 -2px 0 var(--muted); }
+.wb-jump-n.on.s-part, .wb-jump-n.on.s-done, .wb-jump-n.on.s-open { box-shadow: none; }
+
+.wb-tools { display: flex; gap: 4px; margin-left: auto; }
+.wb-tools button {
+  background: none; border: 1px solid transparent; border-radius: var(--r-ctl);
+  color: var(--ink-2); font: 400 var(--t-small)/1 var(--sans);
+  padding: 7px 10px; cursor: pointer;
+}
+.wb-tools button:hover { background: var(--inset); color: var(--ink); }
+.wb-tools button.on { background: var(--ink); color: var(--surface); }
+
+/* Chips, in the room's scale. The dashboard's are 10.5px mono pills because it
+   has forty of them on screen; a lesson has three. */
+.wb-chips, .wb-depths, .wb-modes { display: flex; gap: 5px; flex-wrap: wrap; }
+.wb-chips button, .wb-depths button, .wb-modes button {
+  background: none; border: 1px solid var(--panel-line); color: var(--ink-2);
+  font: 400 var(--t-small)/1.5 var(--sans); padding: 5px 12px; cursor: pointer;
+  border-radius: var(--r-pill); letter-spacing: 0; text-transform: lowercase;
+}
+.wb-chips button:hover, .wb-depths button:hover, .wb-modes button:hover {
+  color: var(--ink); background: var(--inset);
+}
+.wb-chips button.active, .wb-depths button.active, .wb-modes button.active {
+  background: var(--ink); border-color: var(--ink); color: var(--surface);
+}
+.wb-depths, .wb-modes { margin: 0; }
+
+/* --- the dock, as a sheet ------------------------------------------------- */
+/* It used to be a third grid track, so opening it squeezed the reading column
+   by 400px mid-sentence. A sheet slides over instead: the reading stays exactly
+   where it was, and closing puts you back without a reflow. */
+.wb-dock {
+  position: absolute; top: 0; right: 0; bottom: 0; z-index: 3;
+  width: min(430px, 88%);
+  background: var(--surface); border-left: 1px solid var(--panel-line);
+  display: flex; flex-direction: column;
+  padding: 16px 20px 18px; overflow-y: auto;
+  animation: wb-sheet-in 180ms ease-out both;
+}
+@keyframes wb-sheet-in {
+  from { transform: translateX(14px); opacity: 0; }
+  to   { transform: none; opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) { .wb-dock { animation: none; } }
+
+.wb-prov { list-style: none; margin: 0 0 10px; padding: 0; font-size: var(--t-small); }
+.wb-prov li { margin: 6px 0; overflow-wrap: anywhere; }
+.wb-prov a { color: var(--ink); text-decoration: none; border-bottom: 1px solid var(--panel-line); }
+.wb-prov a:hover { border-bottom-color: var(--ink); }
 
 /* Held is a word plus amber, never colour alone. */
-.wb-held { margin: 14px 18px; border: 1px solid var(--amber); padding: 8px 14px; overflow-y: auto; }
-.wb-held h3 { color: var(--amber); font-size: 13px; margin: 4px 0; }
-.wb-held ul { font: 400 11.5px/1.7 var(--mono); padding-left: 18px; }
+.wb-held {
+  margin: 20px var(--pad); border: 1px solid var(--amber); border-radius: var(--r-card);
+  padding: 14px 20px; overflow-y: auto;
+}
+.wb-held h3 { color: var(--amber); font-size: var(--t-meta); margin: 4px 0; }
+.wb-held ul { font: 400 var(--t-small)/1.7 var(--mono); padding-left: 18px; }
 
 .wb-foot {
-  flex: none; padding: 6px 18px; border-top: 1px solid var(--panel-line-dim);
-  font-size: 11px; display: flex; justify-content: space-between; gap: 12px;
+  flex: none; padding: 11px var(--pad); border-top: 1px solid var(--panel-line-dim);
+  font-size: var(--t-small); display: flex; justify-content: space-between; gap: 12px;
 }
-.wb-foot kbd { font-family: var(--mono); border: 1px solid var(--panel-line-dim); padding: 0 4px; }
-.wb-roll { font-family: var(--mono); font-size: 10.5px; }
+.wb-foot kbd {
+  font-family: var(--mono); border: 1px solid var(--panel-line);
+  border-radius: 4px; padding: 1px 5px;
+}
+.wb-roll { font-family: var(--mono); font-size: var(--t-small); }
 .wb-roll code { color: var(--ink); }
 .wb-roll.err { color: var(--red); }
 
-/* The measured pace (study S8). Deliberately the accent colour rather than
-   dim: a number that came from what actually happened should not read like a
-   caption beside the estimate it corrects. */
+/* The measured pace (study S8): a number that came from what actually happened
+   should not read like a caption beside the estimate it corrects. */
 .wb-pace { color: var(--ink); }
-.wb-pacebar {
-  font-family: var(--mono); font-size: 10.5px;
-  padding: 2px 0 0; margin: 0;
-}
+.wb-pacebar { font-family: var(--mono); font-size: var(--t-small); padding: 2px 0 0; margin: 0; }
 .wb-pacebar a { color: inherit; text-decoration: underline dotted; }
 .wb-pacebar a:hover { color: var(--ink); }
 
 /* --- the course grid (the study dashboard's landing view) ---------------- */
-/* One card per active course, in the dashboard's own panel vocabulary. Three
-   columns at 1320px: five courses and the add card make two clean rows. */
+/* One card per active course. It inherits the room's grounds from `.workbench`
+   for free — what it needed on top was the room's *scale*, because it was still
+   speaking the dashboard's 10.5px letterspaced mono at a reading distance. */
 .wb-grid {
   flex: 1 1 auto; min-height: 0; overflow-y: auto; align-content: start;
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
-  gap: 10px 24px; padding: 14px 18px 18px;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 26px 32px; padding: 30px var(--pad) 36px;
 }
+
+/* The eyebrow goes. §2.2 calls an uppercase letterspaced mono label the thing a
+   quiet room drops entirely — "in quiet, that job is done by a sentence-case
+   label at normal weight or by nothing at all" — and here the course code is
+   not a label above the content, it *is* the content's title. The hairline
+   running off it goes with it: separation is the grid gap now. */
+.workbench .wb-card > h2 {
+  color: var(--ink); font: 590 var(--t-body)/1.35 var(--sans);
+  letter-spacing: -0.01em; text-transform: none; margin: 0 0 2px; gap: 8px;
+}
+.workbench .wb-card > h2::after { display: none; }
+.workbench .wb-card-name { font-size: var(--t-meta); color: var(--ink-2); margin: 0 0 12px; }
+.workbench .wb-card-count,
+.workbench .wb-card-bar,
+.workbench .wb-card-meta { font: 400 var(--t-small)/1.55 var(--sans); letter-spacing: 0; }
+.workbench .wb-card-count { color: var(--muted); }
+.workbench .wb-card-bar { margin-bottom: 8px; }
+.workbench .wb-card-bar .cov-bar { width: 128px; }
+.workbench .wb-card-act { margin-top: 12px; font-size: var(--t-meta); }
+.workbench .wb-card-act .ghost { font-size: var(--t-meta); color: var(--accent); }
+.workbench .wb-card-act .ghost:hover { text-decoration: underline; }
+.workbench .wb-card-new {
+  border-radius: var(--r-card); font: 400 var(--t-meta)/1.5 var(--sans);
+  min-height: 120px;
+}
+.workbench .wb-card-adding { padding: 14px 16px; }
 /* §3.3, at zero courses only. Reuses `.empty-mark` from the chat drawer rather
    than declaring a second one: it is the same pattern doing the same job, and
    two of it would drift. The add form is capped so it does not stretch to the

@@ -41,6 +41,7 @@ import { useEffect, useReducer, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { API, get, obsidianHref, post, ApiError } from "./api";
 import CoursesGrid from "./courses";
+import { MathBlock, MathInline } from "./math";
 import type {
   Courses, Guide, GuideProgress, GuideRow, Lesson, LessonList,
   LessonSegment, PracticeItem, Rollup,
@@ -152,40 +153,87 @@ function reduce(st: WbState, a: WbAction): WbState {
  *  4-space-indented formula blocks, with bold, backticks and wikilinks
  *  inline. Rendering it needs no library, and adding one for this would be
  *  the first runtime dependency beyond react itself. */
+type Block = { k: "p" | "pre" | "math"; text: string };
+
 function Rich({ text }: { text: string }) {
-  const blocks: { pre: boolean; text: string }[] = [];
+  const blocks: Block[] = [];
   let para: string[] = [], pre: string[] = [];
+  // Display maths is a *mode*, not a line test: an `aligned` environment
+  // routinely runs to a dozen lines, and treating `$$` as a one-liner would
+  // render the first line as maths and the rest as prose.
+  let math: string[] | null = null;
   const flush = () => {
-    if (para.length) { blocks.push({ pre: false, text: para.join(" ") }); para = []; }
-    if (pre.length) { blocks.push({ pre: true, text: pre.join("\n") }); pre = []; }
+    if (para.length) { blocks.push({ k: "p", text: para.join(" ") }); para = []; }
+    if (pre.length) { blocks.push({ k: "pre", text: pre.join("\n") }); pre = []; }
   };
+  const closeMath = () => {
+    blocks.push({ k: "math", text: (math ?? []).join("\n").trim() });
+    math = null;
+  };
+
   for (const line of text.split("\n")) {
+    if (math !== null) {
+      if (line.trimEnd().endsWith("$$")) {
+        math.push(line.replace(/\$\$\s*$/, ""));
+        closeMath();
+      } else math.push(line);
+      continue;
+    }
+    const t = line.trim();
+    if (t.startsWith("$$")) {
+      flush();
+      const rest = t.slice(2);
+      if (rest.trimEnd().endsWith("$$")) blocks.push({ k: "math", text: rest.replace(/\$\$\s*$/, "").trim() });
+      else math = [rest];
+      continue;
+    }
+    // The pre path stays exactly as it was, so a module still written in the
+    // old Unicode style renders today the way it rendered yesterday.
     if (/^\s{4,}\S/.test(line)) {
       if (para.length) flush();
       pre.push(line.slice(4));
-    } else if (!line.trim()) flush();
+    } else if (!t) flush();
     else {
       if (pre.length) flush();
-      para.push(line.trim());
+      para.push(t);
     }
   }
+  // An unterminated `$$` is a typo in one note, not a reason to swallow the
+  // rest of the segment — close it and render what there is.
+  if (math !== null) closeMath();
   flush();
+
   return (
     <>
-      {blocks.map((b, i) => b.pre
-        ? <pre key={i}>{b.text}</pre>
+      {blocks.map((b, i) =>
+        b.k === "pre" ? <pre key={i}>{b.text}</pre>
+        : b.k === "math" ? <MathBlock key={i} tex={b.text} />
         : <p key={i}><Inline text={b.text} /></p>)}
     </>
   );
 }
 
 function Inline({ text }: { text: string }) {
-  const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`|\[\[[^\]]+\]\])/g);
+  // The code-span alternative deliberately precedes the maths one: `split`
+  // consumes left to right, so a `$` inside backticks is claimed as code and
+  // never seen as maths. `$PATH` in a shell snippet stays a shell variable.
+  // `**bold**` precedes `*italic*` so the greedier pair wins; both precede the
+  // maths alternative, and the code span precedes everything. Italics were
+  // missing entirely, which is why a sourced sentence rendered as
+  // "a magnitude *and* a direction" with the asterisks showing.
+  const parts = text.split(
+    /(\*\*[^*]+\*\*|\*[^*\n]+\*|`[^`]+`|\[\[[^\]]+\]\]|\$[^$\n]+\$)/g);
   return (
     <>
       {parts.map((p, i) => {
         if (p.startsWith("**") && p.endsWith("**")) return <b key={i}>{p.slice(2, -2)}</b>;
+        if (p.startsWith("*") && p.endsWith("*") && p.length > 2) {
+          return <i key={i}>{p.slice(1, -1)}</i>;
+        }
         if (p.startsWith("`") && p.endsWith("`")) return <code key={i}>{p.slice(1, -1)}</code>;
+        if (p.startsWith("$") && p.endsWith("$") && p.length > 2) {
+          return <MathInline key={i} tex={p.slice(1, -1)} />;
+        }
         if (p.startsWith("[[") && p.endsWith("]]")) {
           const inner = p.slice(2, -2);
           const bar = inner.indexOf("|");
@@ -364,11 +412,19 @@ function PracticeBox({ it, st, onHint, onReveal, onGiven, onResolve, onSandbox }
   );
 }
 
-function Segment({ seg, depth, st, cp, onDepth, dispatch, onResolve, onSandbox }: {
+/**
+ * One segment's content — and only its content.
+ *
+ * The heading and the depth chips used to live here, between the title and the
+ * first sentence. They are now the caller's: the title belongs to the lede that
+ * replaced the rail, and the depth is a preference you set once and rarely
+ * revisit, so it sits at the foot of the reading column with the other chrome
+ * rather than interrupting the thing you came to read.
+ */
+function Segment({ seg, depth, st, cp, dispatch, onResolve, onSandbox }: {
   seg: LessonSegment; depth: Depth; st: WbState;
   /** Checkpoint rendering: practice only — no depth tabs, no example (§5.4). */
   cp: boolean;
-  onDepth: (d: Depth) => void;
   dispatch: (a: WbAction) => void;
   onResolve: (it: PracticeItem, r: Result, given?: string) => void;
   onSandbox: (lang: Lang, code: string) => void;
@@ -376,19 +432,6 @@ function Segment({ seg, depth, st, cp, onDepth, dispatch, onResolve, onSandbox }
   const resolved = seg.practice.filter(it => pr(st, it.id).result !== null).length;
   return (
     <>
-      <div className="wb-seghead">
-        <h3>S{seg.n} · {seg.title}</h3>
-        <span className="wb-min">⏱ {seg.minutes} min</span>
-      </div>
-      {!cp && (
-        <div className="wb-depths" role="tablist" aria-label="Depth">
-          {DEPTH_LABEL.map(([d, label]) => (
-            <button key={d} role="tab" aria-selected={depth === d}
-                    className={depth === d ? "active" : ""}
-                    onClick={() => onDepth(d)}>{label}</button>
-          ))}
-        </div>
-      )}
       {!cp && <Rich text={seg[depth]} />}
       {!cp && seg.example && (
         <div className="wb-example">
@@ -1150,6 +1193,12 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
   const practiceTotal = practiceItems.length;
   const practiceDone = practiceItems.filter(
     it => pr(st, it.id).result !== null).length;
+  // Progress through the module in the unit the module itself is measured in.
+  // Summed from the segments rather than read from `estimate`, because the two
+  // are only equal in a module that validates — and a held one still renders.
+  const minsTotal = lesson?.segments.reduce((a, s) => a + s.minutes, 0) ?? 0;
+  const minsDone = lesson?.segments.slice(0, st.seg)
+    .reduce((a, s) => a + s.minutes, 0) ?? 0;
 
   return (
     <div className="palette-backdrop" onClick={onClose}>
@@ -1163,10 +1212,12 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
               exam mode shares `.study-head`. */}
           <span className="wb-head-main">
             <span className="label">
-              ◇ STUDY <span className="wb-crumb-sep">—</span>
+              {/* No `◇ STUDY —` prefix in the room. The diamond is the
+                  dashboard's mark for "a place in the instrument", and the one
+                  thing this room is for is not being that. */}
               <button className="wb-crumb" onClick={() => { setCourse(null); setPicked(null); }}
                       disabled={!course && !inLesson}
-                      title="all courses (Esc)">COURSES</button>
+                      title="all courses (Esc)">Courses</button>
               {course && (
                 <>
                   <span className="wb-crumb-sep">⟩</span>
@@ -1182,26 +1233,12 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
                 </>
               )}
             </span>
-            {inLesson && lesson && (
+            {/* The module's title and its meta used to sit here, and now sit in
+                the lede at the top of the reading column — where the thing they
+                describe actually is. A header that repeated them would be the
+                same words twice, six pixels apart. */}
+            {!inLesson && lesson && (
               <span className="wb-head-title">{lesson.title}</span>
-            )}
-            {inLesson && lesson && (
-              <span className="wb-head-meta dim">
-                {lesson.estimate ? <>⏱ {lesson.estimate} min</> : null}
-                {atPace ? (
-                  <span className="wb-pace"
-                        title={`measured: ${paceOf!.actual} min actually spent `
-                               + `against ${paceOf!.estimate} min estimated over `
-                               + `${paceOf!.n} finished module(s), `
-                               + `${paceOf!.basis === "vault"
-                                    ? "vault-wide" : "this course"}`}>
-                    {" "}→ ~{atPace} min at your pace
-                  </span>
-                ) : null}
-                {lesson.checkpoint != null && (lesson.covers?.length ?? 0) > 0
-                  ? ` · covers ${lesson.covers!.map(m => `M${String(m).padStart(2, "0")}`).join(", ")}`
-                  : ""}
-              </span>
             )}
           </span>
           <span className="wb-head-act">
@@ -1487,78 +1524,129 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
 
         {inLesson && lesson && !held && (
           <>
-            <div className={`wb-body ${st.dock ? "has-dock" : ""}`}>
-              {/* The spine. A horizontal chip row said which segment was
-                  active and nothing else; a rail says where you are, how far
-                  in, and which segments still have practice waiting — and it
-                  costs width the reading column did not want anyway. */}
-              <nav className="wb-rail" aria-label="Segments">
-                {practiceTotal > 0 && (
-                  <div className="wb-railtop">
-                    <span className="cov-bar" role="img"
-                          aria-label={`${practiceDone} of ${practiceTotal} practice resolved`}>
-                      <span className="cov-fill"
-                            style={{ width: `${Math.round((practiceDone / practiceTotal) * 100)}%` }} />
-                    </span>
-                    <span className="dim">{practiceDone}/{practiceTotal} practice</span>
-                  </div>
-                )}
-                <ul>
-                  {lesson.segments.map((s, i) => {
-                    const items = s.practice.length;
-                    const done = s.practice.filter(
-                      it => pr(st, it.id).result !== null).length;
-                    // Glyph first, colour second — a dot that only differed by
-                    // hue would say nothing in the light theme or to anyone
-                    // reading it at a glance.
-                    const dot = items === 0 ? "○" : done === 0 ? "·"
-                      : done < items ? "◐" : "✓";
-                    const state = items === 0 ? "none" : done === 0 ? "open"
-                      : done < items ? "part" : "done";
-                    return (
-                      <li key={s.n}>
-                        <button className={i === st.seg ? "active" : ""}
-                                title={`${s.title} — ⏱ ${s.minutes} min`
-                                       + (items ? ` · ${done}/${items} practice` : "")}
-                                onClick={() => dispatch({ t: "seg", i })}>
-                          <span className={`wb-dot wb-dot-${state}`}>{dot}</span>
-                          <span className="wb-rail-n">S{s.n}</span>
-                          <span className="wb-min">{s.minutes}′</span>
-                          <span className="wb-rail-t">{s.title}</span>
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </nav>
+            <div className="wb-body">
               <div className="wb-read">
-                {/* Closed, the dock is a strip in the reading column's own
-                    corner rather than an empty 45% of the dialog holding four
-                    right-aligned buttons. Reading-first is a layout claim, and
-                    it was not true while the closed state still paid rent. */}
-                {!st.focus && !st.dock && (
-                  <div className="wb-dockbar">
-                    {SLOT_LABEL.map(([s, label]) => (
-                      <button key={s} className="ghost"
-                              title={`Open the ${s} slot`}
-                              onClick={() => dispatch({ t: "dock", slot: s })}>
-                        {label}
-                      </button>
-                    ))}
+                {/* The lede replaces the rail. A 176px spine spent permanent
+                    width telling you which of five segments you were on; a line
+                    of text says the same thing, and the room it gives back goes
+                    to the reading measure. Where you are, how far in, and how
+                    long is left — the three facts the rail actually carried. */}
+                {seg && (
+                  <div className="wb-lede">
+                    <p className="wb-lede-mod">
+                      {lesson.title}
+                      <span className="wb-lede-pos">
+                        {isCp ? "checkpoint" : `${st.seg + 1} of ${lesson.segments.length}`}
+                      </span>
+                    </p>
+                    <h2 className="wb-lede-seg">{seg.title}</h2>
+                    <p className="wb-lede-bar">
+                      <span className="cov-bar" role="img"
+                            aria-label={`${minsDone} of ${minsTotal} minutes`}>
+                        <span className="cov-fill"
+                              style={{ width: `${minsTotal ? Math.round((minsDone / minsTotal) * 100) : 0}%` }} />
+                      </span>
+                      <span className="dim">{minsDone} of {minsTotal} min</span>
+                      {practiceTotal > 0 && (
+                        <span className="dim">· {practiceDone}/{practiceTotal} practice</span>
+                      )}
+                      {atPace ? (
+                        <span className="wb-pace"
+                              title={`measured: ${paceOf!.actual} min actually spent `
+                                     + `against ${paceOf!.estimate} min estimated over `
+                                     + `${paceOf!.n} finished module(s), `
+                                     + `${paceOf!.basis === "vault"
+                                          ? "vault-wide" : "this course"}`}>
+                          · ~{atPace} min at your pace
+                        </span>
+                      ) : null}
+                      {lesson.checkpoint != null && (lesson.covers?.length ?? 0) > 0 && (
+                        <span className="dim">
+                          · covers {lesson.covers!.map(m => `M${String(m).padStart(2, "0")}`).join(", ")}
+                        </span>
+                      )}
+                    </p>
                   </div>
                 )}
+
                 {seg && (
                   <Segment seg={seg} depth={depth} st={st} cp={isCp}
-                           onDepth={d => dispatch({ t: "depth", i: st.seg, d })}
                            dispatch={dispatch} onResolve={resolve}
                            onSandbox={toSandbox} />
                 )}
-                <div className="wb-nav">
-                  <button className="ghost" disabled={st.seg === 0}
-                          onClick={() => dispatch({ t: "seg", i: st.seg - 1 })}>← prev</button>
-                  <span className="dim">{st.seg + 1} / {lesson.segments.length}</span>
-                  <button className="ghost" disabled={st.seg >= lesson.segments.length - 1}
-                          onClick={() => dispatch({ t: "seg", i: st.seg + 1 })}>next →</button>
+
+                {/* The one filled control on the screen (§1.2's single primary
+                    action). On the last segment it stops pretending there is a
+                    next one and offers the way out instead. */}
+                <div className="wb-continue">
+                  {st.seg > 0 && (
+                    <button className="wb-back"
+                            onClick={() => dispatch({ t: "seg", i: st.seg - 1 })}>
+                      ← Back
+                    </button>
+                  )}
+                  {st.seg < lesson.segments.length - 1 ? (
+                    <button className="wb-go"
+                            onClick={() => dispatch({ t: "seg", i: st.seg + 1 })}>
+                      Continue →
+                    </button>
+                  ) : (
+                    <button className="wb-go"
+                            title="back to the chain — completing is still your click on the row"
+                            onClick={() => { setPicked(null); setLesson(undefined); }}>
+                      Done — back to the chain
+                    </button>
+                  )}
+                </div>
+
+                {/* Everything that is chrome, in one quiet strip at the foot:
+                    which segment, how deep, and the four tools. It is below the
+                    reading rather than around it, which is the whole point. */}
+                <div className="wb-strip">
+                  <nav className="wb-jump" aria-label="Segments">
+                    {lesson.segments.map((s, i) => {
+                      const items = s.practice.length;
+                      const done = s.practice.filter(
+                        it => pr(st, it.id).result !== null).length;
+                      // The rail's four states survive as a class rather than a
+                      // glyph — the number is the label now, and a glyph beside
+                      // it would be two things saying "segment 3".
+                      const state = items === 0 ? "none" : done === 0 ? "open"
+                        : done < items ? "part" : "done";
+                      return (
+                        <button key={s.n}
+                                className={`wb-jump-n s-${state} ${i === st.seg ? "on" : ""}`}
+                                aria-current={i === st.seg ? "step" : undefined}
+                                title={`${s.title} — ⏱ ${s.minutes} min`
+                                       + (items ? ` · ${done}/${items} practice` : "")}
+                                onClick={() => dispatch({ t: "seg", i })}>
+                          {i + 1}
+                        </button>
+                      );
+                    })}
+                  </nav>
+                  {!isCp && (
+                    <div className="wb-depths" role="tablist" aria-label="Depth">
+                      {DEPTH_LABEL.map(([d, label]) => (
+                        <button key={d} role="tab" aria-selected={depth === d}
+                                className={depth === d ? "active" : ""}
+                                onClick={() => dispatch({ t: "depth", i: st.seg, d })}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {!st.focus && (
+                    <div className="wb-tools">
+                      {SLOT_LABEL.map(([s, label]) => (
+                        <button key={s} className={st.dock === s ? "on" : ""}
+                                title={`Open the ${s} slot`}
+                                onClick={() => dispatch({ t: "dock", slot: st.dock === s ? null : s })}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
               {!st.focus && st.dock && (
