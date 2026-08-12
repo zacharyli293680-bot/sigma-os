@@ -971,6 +971,25 @@ export default function Brain({ graph, vault, fireRef, filter, spin }: {
       if (isLive()) driftRef.current += dt * 0.000045;
       draw(t, animating);
     };
+
+    /* One frame now, before any animation frame is asked for.
+     *
+     * The backing store is sized inside `draw`, so until a frame lands the
+     * canvas keeps the 300×150 default the HTML spec gives it and the sky is
+     * blank — and a frame is not promised promptly. A tab that loads in the
+     * background gets none at all until someone looks at it, and a machine
+     * under load can defer the first one well past the point where a reader
+     * has decided the view is broken. Painting synchronously costs exactly one
+     * draw and removes the whole class of "blank until something moves".
+     *
+     * Guarded on a real layout size: at zero width the transform below divides
+     * by it, and `Infinity` in `setTransform` poisons the context for every
+     * later frame. Zero size also means `dirty` stays true, so the loop paints
+     * as soon as there is something to paint on. */
+    if (canvas.clientWidth > 0 && canvas.clientHeight > 0) {
+      draw(performance.now(), false);
+      dirty = false;
+    }
     raf = requestAnimationFrame(loop);
 
     /* Waking and sleeping. A dashboard is left open all day; painting a
