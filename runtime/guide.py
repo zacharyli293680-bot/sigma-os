@@ -1094,28 +1094,43 @@ def reference_run(course: str, vault: Path = DEFAULT_VAULT, compose=None) -> int
     if refusal:
         print(refusal)
         return 1
-    rel = (folder / f"{course.lower()}-reference.md").relative_to(vault).as_posix()
-    existed = (vault / rel).is_file()
+    existed = reference_path(vault, course).is_file()
     run_id = f"ref-{datetime.datetime.now():%Y%m%d-%H%M%S}-{course.lower()}"
     print(f"{course}: writing the reference sheet from its modules and assessments")
+    ok, note = write_reference(vault, course, run_id, compose=compose)
+    print(f"reference: {note}"
+          + (" · replaced the previous sheet" if existed and ok else ""))
+    return 0 if ok else 1
+
+
+def reference_path(vault: Path, course: str) -> Path:
+    folder = ln.course_folder(vault, course)
+    return folder / f"{folder.name.lower()}-reference.md"
+
+
+def write_reference(vault: Path, course: str, run_id: str,
+                    compose=None) -> tuple[bool, str]:
+    """Author the sheet and put it through the proposal path, returning
+    (ok, one-line note). Shared by the standalone verb and by the tail of a
+    generation run — one implementation, so the sheet a pipeline writes is the
+    same artefact, in the same commit shape, as the one the verb writes."""
     text, errs = author_reference(vault, course, compose=compose)
     if text is None:
-        print(f"reference: failed — {errs[0] if errs else 'unknown'}")
-        return 1
+        return False, f"failed — {errs[0] if errs else 'unknown'}"
     d = ln.parse_reference(text)
     n_all = len(ln.reference_entries(d))
     n_exam = len(ln.reference_entries(d, "exam"))
     size = ln.reference_size(d)
+    rel = reference_path(vault, course).relative_to(vault).as_posix()
     r = _propose_and_apply(
-        f"{course} reference sheet",
+        f"{ln.course_folder(vault, course).name} reference sheet",
         rel, text,
         f"{n_all} entries, {n_exam} on the exam tier "
         f"({size}/{ln.EXAM_BUDGET} characters)", run_id)
     action = r.get("action")
-    print(f"reference: {action} ({r.get('sha', '')[:10]}) · {n_all} entries · "
-          f"{n_exam} exam ({size}/{ln.EXAM_BUDGET} chars)"
-          + (" · replaced the previous sheet" if existed else ""))
-    return 0 if action in ("create", "update") else 1
+    ok = action in ("create", "update")
+    return ok, (f"{action} ({r.get('sha', '')[:10]}) · {n_all} entries · "
+                f"{n_exam} exam ({size}/{ln.EXAM_BUDGET} chars)")
 
 
 # --------------------------------------------------------------------------
@@ -1276,6 +1291,15 @@ def run(course: str, vault: Path = DEFAULT_VAULT, compose=None,
                         else r["n"] not in have_c)]
         labels = [f"M{r['n']:02}" if r["kind"] == "module" else f"CP{r['n']}"
                   for r in todo]
+        # The reference sheet is the last job of a course's first generation.
+        # It has to be last: it is distilled from the modules' own Summary
+        # blocks, so writing it before they exist would produce a sheet about
+        # nothing. Only when the course has none — a second run must not spend
+        # a call rewriting a sheet nobody asked it to — and never on --redo,
+        # which is targeted re-authoring of named rows.
+        want_ref = bool(todo) and not redo and not reference_path(vault, course).is_file()
+        if want_ref:
+            labels.append("REF")
         prog = {"state": "running", "course": course, "run_id": run_id,
                 "phase": "modules", "queue": labels, "current": None,
                 "current_started": None,
@@ -1386,10 +1410,27 @@ def run(course: str, vault: Path = DEFAULT_VAULT, compose=None,
                 print(prog["note"])
                 return 1
 
+        # --- the reference sheet, once the modules it reads exist ------------
+        if want_ref:
+            prog.update(phase="reference", current="REF",
+                        current_started=datetime.datetime.now()
+                        .isoformat(timespec="seconds"))
+            write_progress(prog)
+            print("REF: writing the reference sheet from the modules just authored")
+            t0 = datetime.datetime.now()
+            ok, note = write_reference(vault, course, run_id, compose=compose)
+            prog["results"]["REF"] = {
+                "ok": ok, "action": "create" if ok else "failed", "note": note,
+                "seconds": int((datetime.datetime.now() - t0).total_seconds())}
+            prog["current"] = None
+            write_progress(prog)
+            print(f"REF: {note}")
+
         done = sum(1 for v in prog["results"].values() if v["ok"])
         held = sum(1 for v in prog["results"].values() if v["action"] == "held")
+        total = len(todo) + (1 if want_ref else 0)
         prog.update(state="done",
-                    note=f"{done} of {len(todo)} authored"
+                    note=f"{done} of {total} authored"
                          + (f" · {held} held" if held else ""))
         prog["finished"] = datetime.datetime.now().isoformat(timespec="seconds")
         write_progress(prog)

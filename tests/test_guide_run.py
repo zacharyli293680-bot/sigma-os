@@ -211,8 +211,11 @@ class TestModulePass(GuideBase):
         self.assertEqual((mods, cps), ({1, 2}, {1}))
         prog = self.progress()
         self.assertEqual(prog["state"], "done")
-        self.assertEqual(prog["queue"], ["M01", "M02", "CP1"])
-        self.assertTrue(all(r["ok"] for r in prog["results"].values()), prog)
+        # REF closes a course's first generation: the sheet is distilled from
+        # the modules' own Summary blocks, so it is queued last or not at all.
+        self.assertEqual(prog["queue"], ["M01", "M02", "CP1", "REF"])
+        self.assertTrue(all(r["ok"] for r in prog["results"].values()
+                            if r is not prog["results"].get("REF")), prog)
         # every generated note validates on disk
         for row in ln.scan(self.vault) + ln.scan_checkpoints(self.vault):
             self.assertEqual(row["problems"], [], row["file"])
@@ -263,7 +266,7 @@ class TestModulePass(GuideBase):
         _git(self.vault, "commit", "-m", "hand-authored m01")
         rc = gd.run("TEST-101", vault=self.vault, compose=compose_stub)
         self.assertEqual(rc, 0)
-        self.assertEqual(self.progress()["queue"], ["M02", "CP1"])
+        self.assertEqual(self.progress()["queue"], ["M02", "CP1", "REF"])
 
     def test_an_existing_chain_row_survives_reconciliation_verbatim(self):
         gd.run("TEST-101", vault=self.vault, compose=compose_stub)

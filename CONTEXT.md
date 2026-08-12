@@ -526,6 +526,8 @@ sigma devlog [run]          commits → the project hub's dev log     --project 
 sigma map [run]             a codebase → architecture notes         --project --dry-run --max N
 sigma guide status          blueprint + coverage per course
 sigma guide run COURSE      author what the approved blueprint misses   --redo M02,CP1
+                            a first generation ends by writing the reference sheet
+sigma guide reference CRS   (re)write one course's reference sheet on its own
 sigma new "<description>"   scaffold a project                      --dry-run
 sigma todo                  the four priority queues     --all --json --date --no-persist
 sigma review                score yesterday and write it down   --date --dry-run --status

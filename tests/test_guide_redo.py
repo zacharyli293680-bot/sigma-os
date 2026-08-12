@@ -165,3 +165,45 @@ class TestItRewrites(RedoBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheReferenceRidesTheRun(RedoBase):
+    """A course's first generation ends by writing its reference sheet.
+
+    Ordering is the whole constraint: the sheet is distilled from the modules'
+    own `Summary` blocks, so queued anywhere but last it would describe notes
+    that do not exist yet. The other two rules are about not spending a call
+    nobody asked for — a course that already has a sheet does not get a second
+    one, and `--redo` is targeted re-authoring of named rows, not a course
+    setup.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.approve_and_build()
+        self.ref = self.course / "test-101-reference.md"
+
+    def test_ref_is_queued_last(self):
+        import json
+        prog = json.loads(gd.PROGRESS_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(prog["queue"][-1], "REF")
+        self.assertNotIn("REF", prog["queue"][:-1])
+
+    def test_a_second_run_does_not_queue_it_again(self):
+        """Nothing is missing, so nothing is authored — and a sheet that
+        already exists must not be silently rewritten by a re-run."""
+        self.ref.write_text(
+            "---\ntype: reference\ncourse: TEST-101\ntags: [guide]\n---\n\n"
+            "## S\n\n### E\nkind:: equation\ntier:: exam\nbody\n",
+            encoding="utf-8")
+        _git(self.vault, "add", "-A")
+        _git(self.vault, "commit", "-m", "hand-written sheet")
+        before = self.ref.read_text(encoding="utf-8")
+        gd.run("TEST-101", vault=self.vault, compose=compose_stub)
+        self.assertEqual(self.ref.read_text(encoding="utf-8"), before)
+
+    def test_redo_never_queues_it(self):
+        import json
+        gd.run("TEST-101", vault=self.vault, compose=compose_stub, redo="M02")
+        prog = json.loads(gd.PROGRESS_PATH.read_text(encoding="utf-8"))
+        self.assertNotIn("REF", prog["queue"])
