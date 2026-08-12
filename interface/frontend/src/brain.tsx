@@ -37,7 +37,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { obsidianHref } from "./api";
 import type { Graph } from "./api";
-import { ITERS, cloudRadius, hash, mulberry32, relax, seedPositions } from "./layout";
+import { ITERS, cloudRadius, finite, hash, mulberry32, relax, seedPositions } from "./layout";
 import type { LayoutRequest } from "./layout";
 import { channels, useTheme } from "./theme";
 import type { BrainPalette } from "./theme";
@@ -120,7 +120,10 @@ function signature(g: Graph): number {
  *
  *  Versioned in the key: if the algorithm's constants are ever tuned, stale
  *  positions must not be resurrected from a previous build. Bump `v1`. */
-const LAYOUT_KEY = "sigma.brain.layout.v1";
+// v2: `relax` gained a per-iteration step clamp, so v1 positions are from a
+// different algorithm — and every v1 entry at this vault's size is NaN
+// anyway, which is the bug that clamp exists to prevent.
+const LAYOUT_KEY = "sigma.brain.layout.v2";
 
 function b64encode(f: Float32Array): string {
   const b = new Uint8Array(f.buffer, f.byteOffset, f.byteLength);
@@ -155,7 +158,13 @@ function cachedLayout(sig: number, n: number): Float32Array | null {
     // both have to land on null — a byte count that is not a multiple of four
     // throws inside `new Float32Array` and is caught below, and one that is
     // survives the constructor and is caught here.
-    return pos.length === n * 3 ? pos : null;
+    if (pos.length !== n * 3) return null;
+    // Values, not just length. A layout that diverged to NaN has exactly the
+    // right length and is exactly as useless as a truncated one — every star
+    // draws at NaN, which draws nothing, and the reader sees an empty sky with
+    // no way to tell it from a broken build. Cached once, it was then reused
+    // on every load forever, which is why reloading never helped.
+    return finite(pos) ? pos : null;
   } catch { return null; }
 }
 
@@ -493,6 +502,15 @@ export default function Brain({ graph, vault, fireRef, filter, spin }: {
       worker = new Worker(new URL("./layout-worker.ts", import.meta.url), { type: "module" });
       worker.onmessage = (e: MessageEvent<Float32Array>) => {
         const pos = e.data;
+        // Never cache a sky that cannot be drawn. A diverged layout is not a
+        // worse picture, it is no picture, and caching it makes the failure
+        // permanent across reloads.
+        if (!finite(pos)) {
+          worker?.terminate();
+          worker = null;
+          if (!cancelled) chunked();
+          return;
+        }
         cacheLayout(sig, g.nodes.length, pos);
         finish(pos);
         worker?.terminate();

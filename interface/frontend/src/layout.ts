@@ -60,6 +60,15 @@ export function seedPositions(ids: string[]): { pos: Float32Array; vel: Float32A
   return { pos, vel };
 }
 
+/** The furthest a node may travel in one iteration, before damping.
+ *
+ *  Generous — the relaxation's normal step is a fraction of this, so the clamp
+ *  is inert on every layout that was already stable and only bites the runaway
+ *  that would otherwise reach Infinity. Clamping rather than rejecting keeps
+ *  the layout deterministic, which is the property the position cache depends
+ *  on. */
+const MAX_STEP = 40;
+
 export function relax(
   links: [number, number][], n: number,
   pos: Float32Array, vel: Float32Array, iters: number,
@@ -92,6 +101,23 @@ export function relax(
       vel[i * 3] -= pos[i * 3] * 0.004;
       vel[i * 3 + 1] -= pos[i * 3 + 1] * 0.004;
       vel[i * 3 + 2] -= pos[i * 3 + 2] * 0.004;
+      // Clamp the step. Repulsion is O(n²) and unbounded in magnitude — at
+      // d²=1 a single pair contributes 620, and every node is paired with
+      // every other — so past a few hundred notes a node can accumulate a
+      // velocity that overflows float32 to Infinity. The next iteration
+      // subtracts one Infinity from another, that is NaN, and NaN spreads
+      // through the repulsion sum to every node in one pass. The sky then
+      // renders nothing at all, because every coordinate is NaN.
+      //
+      // Measured at 1098 notes: the whole cached layout was NaN. The damping
+      // below is not enough on its own, because it multiplies a number that
+      // has already left the representable range.
+      const vx = vel[i * 3], vy = vel[i * 3 + 1], vz = vel[i * 3 + 2];
+      const sp = Math.sqrt(vx * vx + vy * vy + vz * vz);
+      if (sp > MAX_STEP) {
+        const k = MAX_STEP / sp;
+        vel[i * 3] = vx * k; vel[i * 3 + 1] = vy * k; vel[i * 3 + 2] = vz * k;
+      }
       pos[i * 3] += (vel[i * 3] *= 0.82);
       pos[i * 3 + 1] += (vel[i * 3 + 1] *= 0.82);
       pos[i * 3 + 2] += (vel[i * 3 + 2] *= 0.82);
@@ -100,6 +126,14 @@ export function relax(
 }
 
 /** The whole layout, start to frozen. What the worker runs. */
+/** Is every coordinate a real number? A layout with one NaN in it is not a
+ *  slightly wrong sky, it is no sky: NaN coordinates draw nothing, and the
+ *  caller cannot tell that from an empty vault. */
+export function finite(pos: Float32Array): boolean {
+  for (let i = 0; i < pos.length; i++) if (!Number.isFinite(pos[i])) return false;
+  return true;
+}
+
 export function layout(req: LayoutRequest): Float32Array {
   const { pos, vel } = seedPositions(req.ids);
   relax(req.links, req.ids.length, pos, vel, ITERS);
