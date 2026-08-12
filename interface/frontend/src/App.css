@@ -3080,6 +3080,71 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 }
 .wb-modes { margin: 0; }
 
+/* --- the reference sheet -------------------------------------------------- */
+.ref { display: flex; flex-direction: column; gap: 12px; }
+.ref-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.ref-file {
+  color: var(--muted); font: 400 11px/1.4 var(--mono);
+  text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ref-file:hover { color: var(--accent-ink); }
+.ref-meta { margin: 0; font: 400 var(--t-small)/1.5 var(--sans); }
+/* "Does it fit on the sheet" is the simplified tier's only constraint and the
+   one thing a scrolling column cannot show — four pages and one page look
+   identical on screen. */
+.ref-gauge { display: flex; flex-direction: column; gap: 5px; font: 400 var(--t-small)/1.5 var(--sans); }
+.ref-gauge-bar {
+  display: block; height: 5px; border-radius: 3px;
+  background: var(--inset); overflow: hidden;
+}
+.ref-gauge-fill { display: block; height: 100%; background: var(--accent); }
+.ref-gauge.over .ref-gauge-fill { background: var(--amber); }
+.ref-gauge.over .dim { color: var(--amber); }
+.ref-held {
+  border: 1px solid var(--amber); border-radius: var(--r-ctl);
+  padding: 8px 11px; font: 400 var(--t-small)/1.55 var(--sans);
+}
+.ref-held p { margin: 0 0 4px; }
+.ref-held ul { margin: 0; padding-left: 16px; font-family: var(--mono); font-size: 11px; }
+.ref-none p { margin: 0 0 8px; font: 400 var(--t-small)/1.6 var(--sans); }
+.ref-none code {
+  font-family: var(--mono); background: var(--inset);
+  border-radius: 4px; padding: 1px 5px; font-size: 11.5px;
+}
+
+.ref-s { margin: 0; }
+.ref-s-h {
+  margin: 0 0 6px; padding-bottom: 4px;
+  border-bottom: 1px solid var(--panel-line-dim);
+  font: 590 11px/1.4 var(--sans); letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--muted);
+}
+.ref-e { padding: 7px 0; border-bottom: 1px solid var(--panel-line-dim); }
+.ref-e:last-child { border-bottom: none; }
+.ref-e-h {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  margin: 0 0 3px;
+}
+.ref-e-t { font: 590 var(--t-meta)/1.35 var(--sans); color: var(--ink); }
+.ref-e-k {
+  flex: none; color: var(--muted); font: 400 10px/1.4 var(--mono);
+  white-space: nowrap;
+}
+/* The dock is 420px, so the sheet reads a step tighter than the lesson column
+   without becoming a different typeface. */
+.ref-e-b { font-size: var(--t-small); }
+.ref-e-b p { margin: 4px 0; line-height: 1.55; }
+.ref-e-b table {
+  width: 100%; border-collapse: collapse; margin: 6px 0;
+  font-size: 11.5px;
+}
+.ref-e-b th, .ref-e-b td {
+  border: 1px solid var(--panel-line-dim); padding: 3px 6px; text-align: left;
+}
+.ref-e-b th { color: var(--ink-2); font-weight: 590; }
+.ref-e-b .katex-display { margin: 6px 0; font-size: 0.95em; }
+.ref-e-b pre { font-size: 11.5px; }
+
 /* --- the calculator ------------------------------------------------------- */
 .calc { display: flex; flex-direction: column; gap: 10px; }
 .calc-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }

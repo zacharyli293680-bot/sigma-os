@@ -53,6 +53,10 @@ log = make_logger(HERE / "guide.log", "sigma guide")
 MODEL = "sonnet"          # the authoring tier every other composer here uses
 BLUEPRINT_TIMEOUT = 420
 JOB_TIMEOUT = 600
+# A reference sheet is one call that writes a whole document — 45-70 entries
+# of dense LaTeX — where a module call writes one lesson. At the module's
+# 600s it timed out twice in a row on AA-210 with the model still producing.
+REFERENCE_TIMEOUT = 1500
 SOURCE_CAP = 12000        # chars pasted per source note — intake's lesson:
                           # one oversized paste must not blow the whole call
 PROGRESS_PATH = HERE / "guide.progress.json"
@@ -905,6 +909,216 @@ def _assemble_checkpoint(course: str, row: dict, body: str) -> str:
 
 
 # --------------------------------------------------------------------------
+# the reference pass — one sheet per course, two tiers in it (§S9)
+# --------------------------------------------------------------------------
+REFERENCE_PROMPT = """You are writing the reference sheet for the course {course}.
+
+This is not a lesson. It is the thing a person looks *up* while working a
+problem: the equations, definitions, constants, tables and procedures, with
+just enough words to say when each applies. Nothing is taught here and nothing
+is derived — a derivation belongs in a module.
+
+## Structure
+
+    ## <section — a topic, in teaching order>
+
+    ### <entry title — names the thing, not the sentence>
+    kind:: equation | definition | constant | table | procedure
+    tier:: exam | full
+    <the body>
+
+Group into 5-10 sections following the course's own order. Within a section,
+put the entries a person reaches for most first.
+
+## The two tiers, which is the whole point
+
+- `tier:: exam` — what survives onto ONE sheet of paper, both sides, carried
+  into a closed-book exam. Be ruthless: the governing equations, the constants
+  you cannot derive, the one table you would otherwise waste ten minutes
+  rebuilding, the sign conventions that are easy to get backwards.
+- `tier:: full` — everything else worth having to hand when the book is open.
+
+The exam tier is a HARD budget of about {budget} characters across all of its
+titles and bodies together. Going over means the sheet does not fit, which is
+the one thing this tier exists to guarantee. Aim for 70-80% of it.
+
+Every entry says the same thing in both views — the simplified sheet is a
+filter, never a rewrite. Do not write a short version and a long version of
+the same fact.
+
+## Writing an entry
+
+- **Mathematics is LaTeX**: `$…$` inline, `$$…$$` displayed. Never Unicode
+  maths art (`√ ² ‖ ₓ`), never a hand-aligned division bar.
+- An `equation` leads with the formula, then one or two lines saying what the
+  symbols are and when it applies.
+- A `definition` is one or two sentences. No history, no motivation.
+- A `constant` gives the value with its units, and the situation it is for.
+- A `table` is a markdown table. This is where centroids, moments of inertia,
+  support reactions and unit conversions belong.
+- A `procedure` is a short numbered list — the steps of a method, in order.
+- Say the conditions that make something valid ("rigid bodies only", "small
+  angles", "SI units"). A formula applied outside its conditions is the most
+  expensive kind of wrong.
+- No entry repeats another. Titles are unique across the whole sheet.
+
+Aim for 45-70 entries in total. This is a sheet, not a textbook: if a course
+seems to need more, the extras were not reference material.
+
+Write ONLY the body — sections and entries, starting at the first `## `. No
+frontmatter, no title, no commentary.
+
+Course material follows.
+
+{material}
+"""
+
+
+def _reference_material(vault: Path, folder: Path) -> tuple[str, list[str]]:
+    """What the sheet is written from — the modules, **distilled**.
+
+    Pasting module bodies whole neither scales nor helps. A 40-module course is
+    285k characters, most of it teaching: derivations, worked examples,
+    practice items and their solutions. None of that belongs on a reference
+    sheet, and all of it costs context that is then not spent writing one.
+
+    Each module contributes its title, its segment titles, and each segment's
+    `Summary` — which is exactly where a module states a result compactly,
+    because stating it compactly is what that depth is for. About a tenth of
+    the characters, at a far higher density of the thing being extracted.
+
+    The course's own assessment notes still ride along whole (capped): they are
+    what say which facts the course actually asks for, and that is how the exam
+    tier gets chosen rather than guessed.
+    """
+    mods = sorted((m for m in ln.scan(vault)
+                   if m["course"].lower() == folder.name.lower()),
+                  key=lambda m: m["module"] or 0)
+    chunks: list[str] = []
+    rels: list[str] = []
+    for m in mods:
+        rels.append(m["file"])
+        try:
+            d = ln.parse(_read_rel(vault, m["file"]))
+        except Exception:
+            continue
+        num = m["module"] or 0
+        out = [f"--- {m['file']} ---",
+               f"# M{num:02} · {d.get('title') or m['title']}"]
+        for seg in d.get("segments") or []:
+            out.append(f"## {seg['title']}")
+            if seg.get("summary"):
+                out.append(_cap(seg["summary"], 900))
+        chunks.append("\n".join(out))
+    extra = [n["rel"] for n in course_notes(vault, folder)
+             if n["type"] in ("exam-prep", "assignment", "resource")][:6]
+    for r in extra:
+        rels.append(r)
+        chunks.append(f"--- {r} ---\n{_cap(_read_rel(vault, r), 4000)}")
+    if not rels:
+        return "", []
+    return "\n\n".join(chunks), rels
+
+
+def _assemble_reference(course: str, body: str) -> str:
+    fm = ("---\n"
+          "type: reference\n"
+          f"course: {course}\n"
+          "tags: [guide]\n"
+          "---\n\n"
+          f"# {course} — reference\n\n")
+    return fm + body.rstrip("\n") + "\n"
+
+
+def author_reference(vault: Path, course: str,
+                     compose=None) -> tuple[str | None, list[str]]:
+    """One reference note for the course, validated before it is offered.
+
+    Same shape as the module and checkpoint jobs, including the one repair
+    attempt — and the repair matters more here than anywhere else, because the
+    exam tier's budget is a number the model has to hit and cannot see itself
+    missing until the validator says so.
+    """
+    folder = ln.course_folder(vault, course)
+    if folder is None:
+        return None, [f"no course folder for {course!r}"]
+    material, rels = _reference_material(vault, folder)
+    if not rels:
+        return None, ["no modules or notes to write a reference from"]
+    prompt = REFERENCE_PROMPT.format(course=folder.name,
+                                     budget=ln.EXAM_BUDGET,
+                                     material=material)
+    call = compose or (lambda p: call_model(p, MODEL, timeout=REFERENCE_TIMEOUT,
+                                            actor="guide"))
+    errs: list[str] = ["no reply"]
+    for attempt in (1, 2):
+        out = _call_safe(call, prompt)
+        if _just_rate_limited():
+            return None, ["rate limited"]
+        # An empty reply is a timeout or a dead call, NOT a malformed sheet.
+        # Running it through the validator produced "no sections, no entries,
+        # no exam tier" and then asked the model to *correct* a document it had
+        # never written — a second long call behind a misleading prompt.
+        # Measured on AA-210: both attempts burned their full timeout that way
+        # before this check existed.
+        if not (out or "").strip():
+            log(f"reference: empty reply on attempt {attempt} "
+                f"(timeout is {REFERENCE_TIMEOUT}s)")
+            errs = [f"no reply from the model within {REFERENCE_TIMEOUT}s"]
+            continue
+        text = _assemble_reference(folder.name, _strip_fence(out))
+        errs = ln.validate_reference(text, vault=vault)
+        if not errs:
+            return text, []
+        if attempt == 1:
+            prompt = (prompt + "\n\nYour previous attempt failed validation:\n"
+                      + "\n".join(f"- {e}" for e in errs[:12])
+                      + "\n\nWrite the corrected sheet again, in full.")
+            log(f"reference attempt 1 failed validation ({len(errs)}) — repairing")
+    return None, errs
+
+
+def reference_run(course: str, vault: Path = DEFAULT_VAULT, compose=None) -> int:
+    """`sigma guide reference <course>` — write or rewrite the course's sheet.
+
+    Deliberately outside the module pipeline's lock and progress file: it is
+    one call, it does not touch the chain, and it can be run while a
+    generation is in flight without either interfering with the other.
+    """
+    folder = ln.course_folder(vault, course)
+    if folder is None:
+        print(f"no course folder for {course!r} under 02-Areas/Academics/")
+        return 1
+    course = folder.name
+    refusal = window_refusal()
+    if refusal:
+        print(refusal)
+        return 1
+    rel = (folder / f"{course.lower()}-reference.md").relative_to(vault).as_posix()
+    existed = (vault / rel).is_file()
+    run_id = f"ref-{datetime.datetime.now():%Y%m%d-%H%M%S}-{course.lower()}"
+    print(f"{course}: writing the reference sheet from its modules and assessments")
+    text, errs = author_reference(vault, course, compose=compose)
+    if text is None:
+        print(f"reference: failed — {errs[0] if errs else 'unknown'}")
+        return 1
+    d = ln.parse_reference(text)
+    n_all = len(ln.reference_entries(d))
+    n_exam = len(ln.reference_entries(d, "exam"))
+    size = ln.reference_size(d)
+    r = _propose_and_apply(
+        f"{course} reference sheet",
+        rel, text,
+        f"{n_all} entries, {n_exam} on the exam tier "
+        f"({size}/{ln.EXAM_BUDGET} characters)", run_id)
+    action = r.get("action")
+    print(f"reference: {action} ({r.get('sha', '')[:10]}) · {n_all} entries · "
+          f"{n_exam} exam ({size}/{ln.EXAM_BUDGET} chars)"
+          + (" · replaced the previous sheet" if existed else ""))
+    return 0 if action in ("create", "update") else 1
+
+
+# --------------------------------------------------------------------------
 # the run — sequenced like the fleet, resumable from the notes on disk
 # --------------------------------------------------------------------------
 def _job_rel(vault: Path, course: str, row: dict) -> str:
@@ -1232,12 +1446,18 @@ def main(argv=None):
                          "commit. Refuses to create anything, and leaves the "
                          "chain and course index alone — so it does not need "
                          "the blueprint approved.")
+    ap.add_argument("--reference", action="store_true",
+                    help="write this course's reference sheet instead of its "
+                         "modules — one call, outside the pipeline's lock, "
+                         "and it never touches the chain")
     a = ap.parse_args(argv)
     if a.status or not a.course:
-        if a.redo:
-            print("--redo needs a course, e.g. `sigma guide AA-210 --redo M02`")
+        if a.redo or a.reference:
+            print("that needs a course, e.g. `sigma guide AA-210 --reference`")
             return 2
         return status()
+    if a.reference:
+        return reference_run(a.course)
     return run(a.course, redo=a.redo)
 
 

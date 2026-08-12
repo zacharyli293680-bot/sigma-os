@@ -324,6 +324,20 @@ export type CheckpointListRow = {
   date: string | null; title: string; file: string;
   segments: number; practice: number; problems: string[];
 };
+/** A course's reference sheet (study S9) — both tiers in one payload, because
+ *  the simplified view is a filter over the same entries rather than a second
+ *  document. `exam_chars` against `exam_budget` is what says whether the
+ *  simplified sheet still fits the one double-sided page it promises. */
+export type ReferenceEntry = {
+  title: string; kind: string; tier: string; body: string; line: number;
+};
+export type ReferenceSection = { title: string; entries: ReferenceEntry[] };
+export type Reference = {
+  course: string; file: string; sections: ReferenceSection[];
+  problems: string[];
+  exam_chars: number; exam_budget: number;
+  counts: { all: number; exam: number };
+};
 export type LessonList = {
   modules: LessonListRow[]; checkpoints: CheckpointListRow[];
 };

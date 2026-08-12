@@ -254,6 +254,8 @@ def cmd_guide(a):
         return run(GUIDE, "--status")
     # guide.py's model surface is `claude -p` via sigma.call_model — the
     # reflect/retro path, so the SDK interpreter is not demanded.
+    if a.guide_cmd == "reference":
+        return run(GUIDE, a.course, "--reference")
     redo = getattr(a, "redo", None)
     return run(GUIDE, a.course, *(["--redo", redo] if redo else []))
 
@@ -506,6 +508,9 @@ def build_parser():
     gd = sub.add_parser("guide", help="the S7 study-guide generation pipeline")
     gds = gd.add_subparsers(dest="guide_cmd")
     gds.add_parser("status", help="blueprint + coverage per course")
+    gdf = gds.add_parser("reference", help="write a course's reference sheet "
+                                          "— equations, definitions, tables")
+    gdf.add_argument("course", help="course code, e.g. AA-210")
     gdr = gds.add_parser("run", help="blueprint pass, or author what the "
                                      "approved blueprint still misses")
     gdr.add_argument("course", help="course code, e.g. AA-210")

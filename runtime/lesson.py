@@ -969,6 +969,8 @@ def validate_any(text: str, vault: Path | None = None) -> list[str]:
         return validate_checkpoint(text, vault=vault)
     if kind == "guide-blueprint":
         return validate_blueprint(text, vault=vault)
+    if kind == "reference":
+        return validate_reference(text, vault=vault)
     return validate(text, vault=vault)
 
 
@@ -1069,6 +1071,236 @@ BP_CP_RE = re.compile(r"^\s*-\s+CP(\d+)\s+·\s+(.*\S)\s*$")
 BP_UNIT_RE = re.compile(r"^##\s+Unit\s+(\d+)(?:\s+·\s+(.+?))?\s*$")
 BP_SRC_RE = re.compile(r"^\s+-\s+source::\s*(.+?)\s*$")
 BP_COVERS_RE = re.compile(r"^(?:(.*?)\s+·\s+)?covers\s+(.+?)$")
+
+# --------------------------------------------------------------------------
+# the reference sheet (study S9)
+# --------------------------------------------------------------------------
+# One note per course holding the things you look *up* rather than learn: the
+# equations, definitions, constants, tables and procedures a question needs to
+# hand. Two tiers live in the same note rather than two notes, for the reason
+# the module's three depths live in one segment — the second tier is a *view*
+# of the material, not a second body of it, and two files would drift the
+# moment one was edited.
+#
+#   ## <section>
+#
+#   ### <entry title>
+#   kind:: equation | definition | constant | table | procedure
+#   tier:: exam | full
+#   <body: LaTeX, prose, a markdown table>
+#
+# `exam` is the subset that survives onto the one double-sided sheet an exam
+# allows; `full` is everything else the detailed view adds. So the simplified
+# view is a *filter*, never a rewrite: an entry says the same thing in both,
+# and there is only one place to correct it.
+REF_SECTION_RE = re.compile(r"^##\s+(?!#)(.+?)\s*$")
+REF_ENTRY_RE = re.compile(r"^###\s+(.+?)\s*$")
+REF_KEY_RE = re.compile(r"^(kind|tier)::\s*(.*?)\s*$")
+REF_KINDS = {"equation", "definition", "constant", "table", "procedure"}
+REF_TIERS = {"exam", "full"}
+
+# What fits on one sheet of paper, both sides, at a density a person can still
+# read under time pressure. Measured against the real thing rather than guessed
+# at: ~55 lines a side at 10pt, ~62 characters a line, two sides — call it 6800
+# and round up for the fact that a display equation buys back the words it
+# replaces. It is a *problem* rather than a warning when the exam tier exceeds
+# it, because a simplified sheet that does not fit is the one thing this tier
+# exists to guarantee, and the generator's repair pass can act on a problem.
+EXAM_BUDGET = 7000
+
+
+def parse_reference(text: str) -> dict:
+    """A reference note → {course, sections:[{title, entries:[…]}], problems}.
+
+    Entries carry `kind`, `tier`, `title` and `body`. Unknown keys are left in
+    the body rather than dropped: a reference is prose a person also reads in
+    Obsidian, and silently eating a line there would be worse than showing it.
+    """
+    fm = frontmatter(text) or {}
+    out = {
+        "type": str(fm.get("type") or "").strip(),
+        "course": str(fm.get("course") or "").strip(),
+        "sections": [],
+        "problems": [],
+    }
+    problems = out["problems"]
+    lines = text.splitlines()
+    start = 0
+    if lines and lines[0].strip() == "---":
+        for i in range(1, len(lines)):
+            if lines[i].strip() == "---":
+                start = i + 1
+                break
+
+    section = None
+    entry = None
+    body: list[str] = []
+    in_fence = False
+
+    def close_entry():
+        nonlocal entry, body
+        if entry is not None:
+            entry["body"] = _trim_block(body)
+            if not entry["body"]:
+                problems.append(f"line {entry['line']}: entry "
+                                f"{entry['title']!r} has no body")
+            section["entries"].append(entry)
+        entry, body = None, []
+
+    for i in range(start, len(lines)):
+        line = lines[i]
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            if entry is not None:
+                body.append(line)
+            continue
+        if in_fence:
+            if entry is not None:
+                body.append(line)
+            continue
+
+        m = REF_ENTRY_RE.match(line)
+        if m:
+            if section is None:
+                problems.append(f"line {i + 1}: entry {m.group(1)!r} before "
+                                f"any '## ' section")
+                section = {"title": "(unsectioned)", "entries": []}
+                out["sections"].append(section)
+            close_entry()
+            entry = {"title": m.group(1), "kind": None, "tier": None,
+                     "line": i + 1, "body": ""}
+            continue
+
+        m = REF_SECTION_RE.match(line)
+        if m:
+            close_entry()
+            section = {"title": m.group(1), "entries": []}
+            out["sections"].append(section)
+            continue
+
+        if entry is not None:
+            km = REF_KEY_RE.match(line)
+            # A key only counts before the body starts. `tier:: exam` written
+            # halfway down a paragraph is prose about tiers, not a header.
+            if km and not body:
+                key, val = km.group(1), km.group(2)
+                if entry[key] is not None:
+                    problems.append(f"line {i + 1}: duplicate {key}:: in "
+                                    f"{entry['title']!r}")
+                else:
+                    entry[key] = val
+                continue
+            if line.strip() or body:
+                body.append(line)
+            continue
+
+        if line.strip() and section is not None:
+            problems.append(f"line {i + 1}: content before the first '### ' "
+                            f"entry of section {section['title']!r}")
+
+    close_entry()
+    return out
+
+
+def reference_entries(d: dict, tier: str | None = None) -> list[dict]:
+    """Every entry, flat, optionally filtered to a tier. `exam` returns the
+    exam subset; `full` returns everything, because the detailed view is the
+    whole sheet rather than the complement of the simplified one."""
+    out = []
+    for s in d.get("sections") or []:
+        for e in s.get("entries") or []:
+            if tier is None or tier == "full" or e.get("tier") == tier:
+                out.append({**e, "section": s["title"]})
+    return out
+
+
+def reference_size(d: dict) -> int:
+    """Characters on the exam sheet — titles and bodies, which is what a
+    person's eye and a printer both actually spend."""
+    return sum(len(e["title"]) + len(e["body"]) + 2
+               for e in reference_entries(d, "exam"))
+
+
+def validate_reference(text: str, vault: Path | None = None) -> list[str]:
+    """Structure only, like every other validator here: it never judges whether
+    an equation is *right*, which is Zach's job at review, and it never lets a
+    malformed sheet render as if it were fine."""
+    d = parse_reference(text)
+    problems = list(d["problems"])
+    fm = frontmatter(text) or {}
+
+    if d["type"] != "reference":
+        problems.append(f"frontmatter type is {d['type']!r}, expected 'reference'")
+    if not d["course"]:
+        problems.append("frontmatter has no course")
+    # `frontmatter()` here is deliberately flat — it returns `tags` as the raw
+    # string `[guide]`, never a list — so the membership test has to unwrap the
+    # brackets itself rather than assume a YAML parser ran.
+    tags = [t.strip().strip("'\"")
+            for t in str(fm.get("tags") or "").strip("[]").split(",")]
+    if "guide" not in tags:
+        problems.append("frontmatter tags must include 'guide'")
+
+    if not d["sections"]:
+        problems.append("no '## ' sections — a reference is grouped or it is a list")
+    seen: dict[str, int] = {}
+    entries = reference_entries(d)
+    if not entries:
+        problems.append("no entries")
+    for s in d["sections"]:
+        if not s["entries"]:
+            problems.append(f"section {s['title']!r} has no entries")
+    for e in entries:
+        tag = f"entry {e['title']!r} (line {e['line']})"
+        if e["kind"] not in REF_KINDS:
+            problems.append(f"{tag}: kind:: is {e['kind']!r}, expected one of "
+                            f"{', '.join(sorted(REF_KINDS))}")
+        if e["tier"] not in REF_TIERS:
+            problems.append(f"{tag}: tier:: is {e['tier']!r}, expected "
+                            f"'exam' or 'full'")
+        key = e["title"].strip().casefold()
+        if key in seen:
+            problems.append(f"{tag}: duplicate of the entry at line {seen[key]}")
+        else:
+            seen[key] = e["line"]
+
+    if not any(e["tier"] == "exam" for e in entries):
+        problems.append("no exam-tier entries — the simplified sheet would be "
+                        "empty, and it is the tier with the hard constraint")
+    size = reference_size(d)
+    if size > EXAM_BUDGET:
+        problems.append(f"the exam tier is {size} characters, over the "
+                        f"{EXAM_BUDGET} that fits one double-sided sheet — "
+                        f"move the least-needed entries to tier:: full")
+    return problems
+
+
+def load_reference(vault: Path, course: str, split=None) -> dict | None:
+    """The course's reference note, parsed, with its problems and its measured
+    exam-sheet size. None when the course has none."""
+    folder = course_folder(vault, course)
+    if folder is None:
+        return None
+    p = folder / f"{folder.name.lower()}-reference.md"
+    if not p.is_file():
+        return None
+    rel = p.relative_to(vault).as_posix()
+    if split is not None:
+        allowed, _ = split([rel])
+        if not allowed:
+            return None
+    text = p.read_text(encoding="utf-8-sig", errors="replace")
+    d = parse_reference(text)
+    d["file"] = rel
+    d["problems"] = validate_reference(text, vault=vault)
+    d["exam_chars"] = reference_size(d)
+    d["exam_budget"] = EXAM_BUDGET
+    d["counts"] = {
+        "all": len(reference_entries(d)),
+        "exam": len(reference_entries(d, "exam")),
+    }
+    return d
+
 
 # Units are earned by count, mechanically (§4): ≤8 modules → flat, no unit
 # sections; 9–30 → units of 4–6 drawn at the course's own seams.

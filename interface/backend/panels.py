@@ -1003,6 +1003,23 @@ def api_lesson(course: str, module_no: int):
     return d
 
 
+@router.get("/reference/{course}")
+def api_reference(course: str):
+    """The course's reference sheet (study S9). Parsed fresh like the lesson
+    detail and for the same reason: it is a note a person also edits by hand,
+    and a cached copy would let the workbench and Obsidian disagree.
+
+    Both tiers ride in one payload. The simplified view is a filter over the
+    same entries, so shipping it as a second request would be two reads of one
+    file that could differ between them."""
+    d = ln.load_reference(VAULT, course, split=_lesson_split)
+    if d is None:
+        return JSONResponse({"error": "no reference",
+                             "detail": f"{course} has no reference sheet yet"},
+                            status_code=404)
+    return d
+
+
 @router.get("/checkpoint/{course}/{cp_no}")
 def api_checkpoint(course: str, cp_no: int):
     # Fresh like the lesson detail, and for the same reason. The sidecar key

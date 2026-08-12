@@ -4,8 +4,8 @@ Multiple-choice options — the shape the prompt asks for, read by the renderer.
 
 This is a contract between two files in two languages. `MODULE_PROMPT` tells
 the model "for mcq include options A)-D)", and `workbench.tsx` has to find
-those options twice over: once in `Rich`, to keep each on its own line, and
-once in `mcqLetters`, to offer them as clickable choices.
+those options twice over: once in `Rich` (rich.tsx), to keep each on its own
+line, and once in `mcqLetters` (workbench.tsx), to offer them as choices.
 
 It was wrong in both places at once, and silently. `mcqLetters` matched
 `/\\(([a-h])\\)/` — parenthesised, lower case — which no generated note has ever
@@ -28,7 +28,7 @@ sys.path.insert(0, str(REPO / "runtime"))
 
 import guide as gd  # noqa: E402
 
-WORKBENCH = REPO / "interface" / "frontend" / "src" / "workbench.tsx"
+RICH = REPO / "interface" / "frontend" / "src" / "rich.tsx"
 
 
 def option_re() -> re.Pattern:
@@ -37,9 +37,9 @@ def option_re() -> re.Pattern:
     The two engines agree on this subset — anchors, a character class, an
     escaped literal class and `\\s`/`\\S` — so the pattern transfers verbatim.
     """
-    src = WORKBENCH.read_text(encoding="utf-8")
-    m = re.search(r"^const OPTION_RE = /(.+)/;\s*$", src, re.M)
-    assert m, "OPTION_RE not found in workbench.tsx"
+    src = RICH.read_text(encoding="utf-8")
+    m = re.search(r"^export const OPTION_RE = /(.+)/;\s*$", src, re.M)
+    assert m, "OPTION_RE not found in rich.tsx"
     return re.compile(m.group(1))
 
 
