@@ -1857,7 +1857,13 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
                             ? `~${(row.projected.minutes / 60).toFixed(1)} h left at your pace`
                             : `${(row.projected.estimate / 60).toFixed(1)} h left`}
                           {row.projected.unestimated
-                            ? ` (+${row.projected.unestimated} unwritten)` : ""}
+                            /* Not "unwritten". `unestimated` counts open rows
+                               whose target is not in the *module* scan, and a
+                               checkpoint never is — it carries no ⏱ at all. So
+                               a fully authored AA-210 read "+5 unwritten" when
+                               nothing was missing, and "+6" when the only real
+                               problem was one stale link in the chain. */
+                            ? ` · ${row.projected.unestimated} untimed` : ""}
                         </span>
                       )}
                       {row && row.recall.open > 0 && (
