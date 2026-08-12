@@ -17,7 +17,6 @@ import Ledger from "./ledger";
 import NoSyncView from "./nosync";
 import Palette from "./palette";
 import Review from "./review";
-import StudyView from "./study";
 import BuildView from "./build";
 import SoonView from "./soon";
 import WorkbenchView from "./workbench";
@@ -96,7 +95,6 @@ export default function App() {
   const [ledgerOpen, setLedgerOpen] = useState(false);
   const [noSyncOpen, setNoSyncOpen] = useState(false);
   const [reviewing, setReviewing] = useState<string | null>(null);
-  const [studyOpen, setStudyOpen] = useState(false);
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const [buildOpen, setBuildOpen] = useState(false);
   // Which unbuilt rail slot is showing its placeholder (§5.4). One piece of
@@ -278,7 +276,6 @@ export default function App() {
         // Agenda peels after work: it is normally entered from the work view or
         // from the today rail, so Esc unwinds in the order you arrived.
         else if (agendaOpen) setAgendaOpen(false);
-        else if (studyOpen) setStudyOpen(false);
         else if (buildOpen) setBuildOpen(false);
         else if (soonSlot) setSoonSlot(null);
         else if (paletteOpen) setPaletteOpen(false);
@@ -295,7 +292,7 @@ export default function App() {
     // functional form of setState and never read the old value — so the view
     // opens and closes on Ctrl+' while Esc silently skips its rung. `agendaOpen`
     // was missing exactly that way and it took driving the view to notice.
-  }, [paletteOpen, ledgerOpen, chatOpen, noSyncOpen, reviewing, studyOpen,
+  }, [paletteOpen, ledgerOpen, chatOpen, noSyncOpen, reviewing,
       workbenchOpen, buildOpen, workOpen, agendaOpen, captureOpen, brainFilter,
       soonSlot]);
 
@@ -351,7 +348,7 @@ export default function App() {
                 theme={theme.name} onTheme={() => setThemeOpen(o => !o)} />
       <Rail noSyncOpen={noSyncOpen} onNoSync={() => setNoSyncOpen(o => !o)}
             noSyncCount={noSync?.ok ? noSync.total : null}
-            studyOpen={studyOpen} onStudy={() => setStudyOpen(o => !o)}
+            studyOpen={workbenchOpen} onStudy={() => setWorkbenchOpen(o => !o)}
             buildOpen={buildOpen} onBuild={() => setBuildOpen(o => !o)}
             workOpen={workOpen} onWork={() => setWorkOpen(o => !o)}
             agendaOpen={agendaOpen} onAgenda={() => setAgendaOpen(o => !o)}
@@ -379,8 +376,11 @@ export default function App() {
                     onOpen={() => setWorkOpen(true)} />
       </div>
       <div className="lower">
+        {/* The free-hours button used to open exam mode. With that gone it
+            opens the workbench, which is where the hours it is counting would
+            actually be spent. */}
         <AgendaRail agenda={agenda ?? null} vault={vault}
-                    onOpen={() => setStudyOpen(true)} />
+                    onOpen={() => setWorkbenchOpen(true)} />
         <ProjectsPanel projects={projects?.projects ?? null} vault={vault} />
       </div>
       <Foot activity={dock}
@@ -397,8 +397,6 @@ export default function App() {
       <NoSyncView open={noSyncOpen} vault={vault} onClose={() => setNoSyncOpen(false)} />
       <Review name={reviewing} vault={vault} onClose={() => setReviewing(null)}
               onMutate={refresh} />
-      <StudyView open={studyOpen} vault={vault} onClose={() => setStudyOpen(false)}
-                 onWorkbench={() => { setStudyOpen(false); setWorkbenchOpen(true); }} />
       <WorkbenchView open={workbenchOpen} vault={vault}
                      onClose={() => setWorkbenchOpen(false)}
                      guideProg={guideProg} />

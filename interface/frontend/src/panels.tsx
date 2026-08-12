@@ -92,7 +92,7 @@ const RAIL: [string, string, "live" | "soon"][] = [
   ["AG", "Agents — designed, not built. Click to see what will go here", "soon"],
   ["CA", "Calendar — week, month and the 14-day list (Ctrl+')", "live"],
   ["WK", "Work — the four priority queues", "live"],
-  ["ST", "Study — exam mode", "live"],
+  ["ST", "Study — the workbench (Ctrl + backslash)", "live"],
   ["BD", "Build — repo awareness", "live"],
   ["CR", "Career — designed, not built. Click to see what will go here", "soon"],
   ["SY", "System — designed, not built. Click to see what will go here", "soon"],
