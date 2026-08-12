@@ -31,6 +31,12 @@ const KIND_GLYPH: Record<string, string> = {
   equation: "∑", definition: "≡", constant: "#", table: "▦", procedure: "→",
 };
 
+/** A DOM id from a section title. Titles are the sheet's own words, so they
+ *  are slugged rather than trusted — a `#` or a space in an id is legal in
+ *  HTML5 but a nuisance to everything that reads one. */
+const sectionId = (title: string) =>
+  "ref-s-" + title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+
 function Entry({ e }: { e: ReferenceEntry }) {
   return (
     <article className="ref-e">
@@ -154,8 +160,29 @@ export default function ReferenceDock(
       {shown.length === 0 && (
         <p className="dim">nothing on this tier</p>
       )}
+
+      {/* Ten sections and sixty entries is a document, and a document you
+          scroll blindly is one you stop opening. The index is built from what
+          is *shown*, so switching to the simplified tier drops the sections it
+          empties rather than offering a jump to nothing. */}
+      {shown.length > 1 && (
+        <nav className="ref-nav" aria-label="Sections">
+          {shown.map(s => (
+            <button key={s.title} onClick={() => {
+              const el = document.getElementById(sectionId(s.title));
+              // No smooth: it is dropped wherever animations are throttled,
+              // and a jump that sometimes does nothing is the worse control.
+              el?.scrollIntoView({ block: "start" });
+            }}>
+              {s.title}
+              <span className="ref-nav-n">{s.entries.length}</span>
+            </button>
+          ))}
+        </nav>
+      )}
+
       {shown.map(s => (
-        <section key={s.title} className="ref-s">
+        <section key={s.title} className="ref-s" id={sectionId(s.title)}>
           <h3 className="ref-s-h">{s.title}</h3>
           {s.entries.map(e => <Entry key={e.line} e={e} />)}
         </section>

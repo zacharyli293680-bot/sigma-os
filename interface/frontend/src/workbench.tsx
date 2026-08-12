@@ -2006,7 +2006,7 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
                     wanted it, and moved every time the prose changed length. */}
               </div>
               {!st.focus && st.dock && (
-                <aside className="wb-dock">
+                <aside className={`wb-dock ${st.dock === "ref" ? "is-ref" : ""}`}>
                   <div className="wb-slots" role="tablist" aria-label="Dock slot">
                     {/* The dock's own tabs stay short — five full names do not
                         fit 420px and wrapped "Work pad" onto two lines. The

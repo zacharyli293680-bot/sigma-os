@@ -2538,6 +2538,12 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 .workbench {
   /* the room's grounds — §1.1's three, an order of magnitude lighter */
   --void: #FBFBFD;            --void-rgb: 251 251 253;
+  /* The ground *behind* the page — the rail and the dock stand on it, the
+     reading column does not. Its own token rather than `--void` because
+     `--void` is also the ink-chip's text colour, where near-white is the
+     point; and four levels off white (which is what --void is) reads as
+     one continuous surface with hairlines drawn on it. */
+  --chrome: #EFEFF3;
   --surface: #FFFFFF;         --surface-rgb: 255 255 255;
   --inset: #F4F4F7;           --inset-rgb: 244 244 247;
   /* ink, and only two steps of it: reading text, and everything subordinate */
@@ -2648,6 +2654,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
   --ink: #F3F3F5;
   --ink-2: #A8A8B2;
   --muted: #6C6C76;           --muted-rgb: 108 108 118;
+  --chrome: #121215;
   --panel-line: rgb(255 255 255 / 0.14);
   --panel-line-dim: rgb(255 255 255 / 0.07);
   /* Mixed the other way for the same reason: on a dark ground the accents that
@@ -2746,23 +2753,12 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
   display: flex; flex-direction: column; align-items: center;
   padding: 30px var(--pad) 44px;
 }
-/* Opening the dock takes `--dock` off this column's right, which re-centres the
-   prose by half that to the left — the same mid-sentence lurch that made the
-   dock a sheet in the first place, just in the other direction. Adding the
-   dock's width to the *left* padding puts the content box's centre back where
-   it was, so the sentence you are reading does not move at all.
-   The `min()` is the whole safety of it. A breakpoint was the first attempt and
-   it is the wrong tool twice over: it guesses the width at which the offset
-   stops fitting, and it silently does not apply under page zoom — measured, at
-   a 1200px zoomed viewport the query still read as wide and squeezed the column
-   to 283px. This asks the question directly instead. Percentages in `padding`
-   resolve against the containing block, `.wb-body`, which is the full width —
-   hence subtracting the dock here rather than assuming this column's own. */
-.wb-body.has-dock .wb-read {
-  padding-left: min(
-    calc(var(--pad) + var(--dock)),
-    max(var(--pad), calc(100% - var(--dock) - var(--measure) - var(--pad))));
-}
+/* An offset used to live here that kept the prose from moving when the dock
+   opened — it added the dock's width to this column's left padding, so the
+   sentence you were reading stayed under your eye. It is gone on purpose: with
+   all three columns open it parked ~420px of dead gutter on the left while the
+   reference sheet was squeezed on the right, which is the opposite of what a
+   full-width room is for. Stillness lost to space, deliberately. */
 /* `flex: none` is load-bearing, not tidiness. A column flex container shrinks
    its items to fit, and this one has a bounded height because it scrolls — so
    every `pre` collapsed to a single line with its own scrollbar. The container
@@ -2941,11 +2937,17 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 }
 
 /* --- the rail ------------------------------------------------------------- */
+/* Three columns, three planes. The middle is the page — the lightest ground,
+   because it is the thing being read — and the two flanks are chrome, a step
+   back on `--void` with a full-strength hairline between. It was one surface
+   with two faint dividers, which read as one wide column with furniture in it
+   rather than as a rail, a page and a dock. Lightness does the work and the
+   line only confirms it: §1.1's rule, applied across rather than up. */
 .wb-rail {
   flex: none; width: 250px;
   display: flex; flex-direction: column;
-  background: var(--void);
-  border-right: 1px solid var(--panel-line-dim);
+  background: var(--chrome);
+  border-right: 1px solid var(--panel-line);
   padding: 14px 12px 12px;
   gap: 4px;
 }
@@ -3112,7 +3114,31 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
   border-radius: 4px; padding: 1px 5px; font-size: 11.5px;
 }
 
-.ref-s { margin: 0; }
+/* The section index. Wraps rather than scrolls sideways: at the reference
+   dock's width ten of these fit in three rows, and a horizontal scroller hides
+   exactly the sections you have not read yet. */
+.ref-nav {
+  display: flex; flex-wrap: wrap; gap: 4px;
+  padding: 8px 0 10px; border-bottom: 1px solid var(--panel-line-dim);
+}
+.ref-nav button {
+  display: inline-flex; align-items: baseline; gap: 5px;
+  padding: 4px 9px; cursor: pointer;
+  background: var(--surface); color: var(--ink-2);
+  border: 1px solid var(--panel-line-dim); border-radius: var(--r-pill);
+  font: 400 11.5px/1.4 var(--sans); text-align: left;
+}
+.ref-nav button:hover { color: var(--ink); border-color: var(--panel-line); }
+.ref-nav-n { color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+
+/* On the page's own ground, so a sheet of sixty entries reads as a document
+   inside the dock rather than as more chrome. */
+.ref-s {
+  margin: 0 0 4px; padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--panel-line-dim); border-radius: var(--r-card);
+  scroll-margin-top: 6px;
+}
 .ref-s-h {
   margin: 0 0 6px; padding-bottom: 4px;
   border-bottom: 1px solid var(--panel-line-dim);
@@ -3217,11 +3243,17 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 .wb-dock {
   flex: none; z-index: 3;
   width: min(var(--dock), 34%);
-  background: var(--surface); border-left: 1px solid var(--panel-line);
+  background: var(--chrome); border-left: 1px solid var(--panel-line);
   display: flex; flex-direction: column;
   padding: 16px 20px 18px; overflow-y: auto;
   animation: wb-sheet-in 180ms ease-out both;
 }
+/* The reference is a document, not a panel: tables, display equations and
+   sixty entries. At the tool width it showed four lines at a time, which is
+   why it was the one slot that was hard to read from. It gets its own width
+   and the room can afford it — the reading column keeps its full measure at
+   any screen this wide, and below that the `%` cap takes over. */
+.wb-dock.is-ref { width: min(680px, 46%); }
 @keyframes wb-sheet-in {
   from { transform: translateX(14px); opacity: 0; }
   to   { transform: none; opacity: 1; }
@@ -3574,10 +3606,13 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 .wb-slot-x { margin-left: auto; border: none !important; }
 /* One declaration, not two: `.wb-dock` was declared here and again 250 lines
    up, and the pair had to be read together to know what a dock was. */
+/* The second half of the same rule, further down the file since before the
+   room existed. Kept in agreement with the block above rather than quietly
+   overriding its border with a dimmer one. */
 .wb-dock {
   display: flex; flex-direction: column; min-height: 0;
-  overflow-y: auto; padding: 12px 16px;
-  border-left: 1px solid var(--panel-line-dim);
+  overflow-y: auto; padding: 14px 18px;
+  border-left: 1px solid var(--panel-line);
 }
 .wb-slotbody { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; }
 
