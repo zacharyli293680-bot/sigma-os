@@ -3143,6 +3143,12 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 }
 .ref-e-b th { color: var(--ink-2); font-weight: 590; }
 .ref-e-b .katex-display { margin: 6px 0; font-size: 0.95em; }
+/* A `procedure` entry is steps in order, so the numbers have to be there
+   and the steps have to be separate lines. */
+.ref-e-b ol, .ref-e-b ul { margin: 5px 0; padding-left: 20px; }
+.ref-e-b li { margin: 2px 0; line-height: 1.5; }
+.wb-read ol, .wb-read ul { margin: 12px 0; padding-left: 24px; }
+.wb-read li { margin: 4px 0; line-height: 1.6; }
 .ref-e-b pre { font-size: 11.5px; }
 
 /* --- the calculator ------------------------------------------------------- */

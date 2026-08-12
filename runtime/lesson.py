@@ -1285,10 +1285,14 @@ def load_reference(vault: Path, course: str, split=None) -> dict | None:
     if not p.is_file():
         return None
     rel = p.relative_to(vault).as_posix()
-    if split is not None:
-        allowed, _ = split([rel])
-        if not allowed:
-            return None
+    # `scan()`'s exact two lines, and they are easy to get inverted: the split
+    # returns what is SEALED first, not what is allowed. Read the other way, an
+    # empty first element — the normal case, nothing sealed — looks like
+    # "nothing is permitted" and the sheet silently 404s. Defaulting to
+    # `_default_split` keeps the fail-closed direction when no split is given.
+    sealed, _ = (split or _default_split)(vault, [rel])
+    if rel in sealed:
+        return None
     text = p.read_text(encoding="utf-8-sig", errors="replace")
     d = parse_reference(text)
     d["file"] = rel

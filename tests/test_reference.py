@@ -140,6 +140,53 @@ class TestItRefuses(unittest.TestCase):
                      "content before the first")
 
 
+class TestLoading(unittest.TestCase):
+    """`load_reference` against a real folder, including the privacy split.
+
+    This exists because the first version read the split's return backwards.
+    It hands back what is **sealed** first, not what is allowed — so the normal
+    case, an empty set meaning nothing is sealed, was read as "nothing is
+    permitted" and every reference sheet 404'd through the API while loading
+    perfectly in a unit test that passed no split at all.
+    """
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.vault = Path(self.tmp.name)
+        folder = self.vault / "02-Areas" / "Academics" / "AA-210"
+        folder.mkdir(parents=True)
+        (folder / "aa-210-reference.md").write_text(OK, encoding="utf-8")
+        self.rel = "02-Areas/Academics/AA-210/aa-210-reference.md"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_nothing_sealed_means_it_loads(self):
+        """The bug, pinned: an empty *sealed* set is the normal case and must
+        not read as an empty *allowed* set."""
+        d = ln.load_reference(self.vault, "AA-210",
+                              split=lambda _v, rels: (set(), set(rels)))
+        self.assertIsNotNone(d, "an empty sealed set must not hide the sheet")
+        self.assertEqual(d["file"], self.rel)
+        self.assertEqual(d["counts"], {"all": 3, "exam": 2})
+        self.assertEqual(d["exam_budget"], ln.EXAM_BUDGET)
+
+    def test_the_default_split_fails_closed(self):
+        """No split means `_default_split`, which seals everything when the
+        privacy module cannot answer for a vault — the loud direction, and the
+        same one `scan()` takes. A temp vault is exactly that case."""
+        self.assertIsNone(ln.load_reference(self.vault, "AA-210"))
+
+    def test_a_sealed_sheet_is_withheld(self):
+        d = ln.load_reference(self.vault, "AA-210",
+                              split=lambda _v, rels: (set(rels), set()))
+        self.assertIsNone(d)
+
+    def test_a_course_without_one(self):
+        self.assertIsNone(ln.load_reference(self.vault, "CSE-999"))
+
+
 class TestDispatch(unittest.TestCase):
     def test_validate_any_routes_by_the_note_s_own_type(self):
         """Running the module validator over a reference would report a dozen

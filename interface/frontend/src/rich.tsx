@@ -32,7 +32,8 @@ export const OPTION_RE = /^\(?([A-Ha-h])[).]\s+\S/;
  *  the first runtime dependency beyond react itself. */
 type Block =
   | { k: "p" | "pre" | "math" | "opt"; text: string }
-  | { k: "table"; rows: string[][] };
+  | { k: "table"; rows: string[][] }
+  | { k: "list"; items: string[]; ordered: boolean };
 
 /** A markdown table row → its cells. The outer pipes are optional, which is
  *  what a person types; an escaped `\|` stays a character, because a cell can
@@ -44,6 +45,12 @@ function cells(line: string): string[] {
 /** `|---|:--:|` — the row that turns two lines of pipes into a table. Without
  *  one, a line containing pipes is prose that contains pipes. */
 const RULE_RE = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
+
+/** A list item: `1. `, `1) `, `- ` or `* `. Needed for the reference sheet's
+ *  `procedure` entries, which are steps in order — joined into a paragraph
+ *  they read as "1. Choose the body. 2. Replace every support. 3. …", which is
+ *  the same failure the option list had and for the same reason. */
+const LIST_RE = /^\s*(?:(\d{1,2})[.)]|[-*])\s+(\S.*)$/;
 
 export function Rich({ text }: { text: string }) {
   const blocks: Block[] = [];
@@ -88,6 +95,22 @@ export function Rich({ text }: { text: string }) {
       blocks.push({ k: "table", rows });
       continue;
     }
+    const lm = LIST_RE.exec(line);
+    if (lm && !/^\s{4,}\S/.test(line)) {
+      flush();
+      const ordered = lm[1] !== undefined;
+      const items: string[] = [lm[2]];
+      while (li + 1 < lines.length) {
+        const nm = LIST_RE.exec(lines[li + 1]);
+        // A run ends at the first line that is not an item of the same kind,
+        // so an ordered list and a bulleted one below it stay two lists.
+        if (!nm || (nm[1] !== undefined) !== ordered) break;
+        items.push(nm[2]);
+        li += 1;
+      }
+      blocks.push({ k: "list", items, ordered });
+      continue;
+    }
     if (t.startsWith("$$")) {
       flush();
       const rest = t.slice(2);
@@ -123,6 +146,13 @@ export function Rich({ text }: { text: string }) {
         b.k === "pre" ? <pre key={i}>{b.text}</pre>
         : b.k === "math" ? <MathBlock key={i} tex={b.text} />
         : b.k === "opt" ? <p key={i} className="wb-opt"><Inline text={b.text} /></p>
+        : b.k === "list" ? (
+          b.ordered
+            ? <ol key={i}>{b.items.map((x, j) => (
+                <li key={j}><Inline text={x} /></li>))}</ol>
+            : <ul key={i}>{b.items.map((x, j) => (
+                <li key={j}><Inline text={x} /></li>))}</ul>
+        )
         : b.k === "table" ? (
           <table key={i}>
             <thead>
