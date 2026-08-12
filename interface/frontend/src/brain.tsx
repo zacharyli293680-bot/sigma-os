@@ -64,11 +64,16 @@ const AXON = 0.42;
  *  needs to know a pulse is in flight, because that is what keeps it painting
  *  through a `prefers-reduced-motion` static sky. */
 const HOT_MS = FIRE_MS + 300;
-/** The centre cell is a letterbox — roughly 2.4:1 — and the cloud is sized on
- *  its short side, so at 1.0 it sits as a discrete ball in the middle of a wide
- *  box with dead margins either side. Over-filling runs it off the left and
- *  right edges instead, where the mask feathers it out, and the sky reads as
- *  something the panel is a window onto rather than a picture hung in it.
+/** How much of the frame's short side the cloud's diameter spans. At 1.0 it
+ *  sits as a discrete ball in the middle of a 2.4:1 letterbox with dead margins
+ *  either side; over-filling runs it past the top and bottom, where the mask
+ *  feathers it out, and the sky reads as something the panel is a window onto
+ *  rather than a picture hung in it.
+ *
+ *  A proportion rather than a constant divisor since the scale started fitting
+ *  the cloud's measured radius — which is what makes it mean the same thing at
+ *  476 notes and at 1098. Measured at this vault: 93% of stars inside the frame,
+ *  against 72.8% when the divisor was fixed.
  *
  *  This was the `spread` prop, which took one value on the dashboard and
  *  another in the expanded view. There is no expanded view now, so there is
@@ -663,7 +668,13 @@ export default function Brain({ graph, vault, fireRef, filter, spin }: {
       const rotX = mouse.current.y * 0.22;
       const cy = Math.cos(rotY), sy = Math.sin(rotY);
       const cx = Math.cos(rotX), sx = Math.sin(rotX);
-      const scale = Math.min(W, H) / 560 * FILL;
+      // Fit the cloud, not a constant. `560` was roughly the relaxed cloud's
+      // diameter when this was written at ~476 notes, so the sky's size on
+      // screen was really a measurement of the vault: at 1098 notes the radius
+      // is 426 and only 72.8% of stars landed inside the frame. Dividing by
+      // the cloud's own radius makes the picture the same at any vault size —
+      // `w.radius` is already computed for the edge-layer threshold.
+      const scale = Math.min(W, H) / (2 * w.radius) * FILL;
 
       // Project once into flat arrays; everything below reads these. The result
       // lands in the scratch triple rather than a fresh tuple — this used to
