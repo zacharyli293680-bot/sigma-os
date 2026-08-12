@@ -2828,18 +2828,15 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
    inside boxes" the design language names outright. */
 .wb-example {
   border: none; border-radius: var(--r-card);
-  background: var(--inset); padding: 4px 20px 14px; margin: 24px 0;
+  background: var(--inset); padding: 16px 20px 14px; margin: 26px 0;
 }
-.wb-example h4, .wb-practice h4, .wb-dock h4 {
+.wb-dock h4 {
   margin: 16px 0 8px; font: 590 var(--t-small)/1.5 var(--sans);
   letter-spacing: 0; text-transform: none; color: var(--ink-2);
 }
-.wb-practice { margin-top: 30px; border-top: 1px solid var(--panel-line-dim); }
+.wb-practice { margin-top: 34px; padding-top: 18px; border-top: 1px solid var(--panel-line-dim); }
 .wb-practice ul { list-style: none; margin: 0; padding: 0; }
-.wb-practice li {
-  border: none; border-radius: var(--r-card); background: var(--inset);
-  padding: 14px 18px; margin: 12px 0;
-}
+/* the card is `.wb-q` now — the list is only a list */
 .wb-practice li p { margin: 6px 0; }
 .wb-kind { font: 400 var(--t-small)/1.5 var(--mono); color: var(--muted); }
 
@@ -3556,32 +3553,109 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
   white-space: nowrap;
 }
 
-/* --- the practice engine (study S3) -------------------------------------- */
-.wb-q { border: 1px solid var(--panel-line-dim); padding: 6px 10px; margin: 8px 0; }
-.wb-q-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
-.wb-q-mark { font: 400 10.5px/1.5 var(--mono); }
-.wb-q-mark.correct { color: var(--add); }
-.wb-q-mark.wrong { color: var(--amber); }
-.wb-q-mark.skipped { color: var(--muted); }
-.wb-q-correct { border-color: color-mix(in srgb, var(--add) 40%, transparent); }
-.wb-q-wrong { border-color: rgb(var(--amber-rgb) / 0.45); }
-.wb-q-skipped { opacity: 0.55; }
-.wb-hints { list-style: none; margin: 4px 0; padding: 0; }
-.wb-hints li {
-  font-size: 12px; color: var(--ink-2, var(--ink));
-  border-left: 2px solid var(--panel-line); padding: 1px 8px; margin: 4px 0;
+/* --- blocks inside a segment ---------------------------------------------
+ * A segment has three modes of reading in it — prose you absorb, an example you
+ * follow, questions you answer — and they were three `<h4>`s in the same grey.
+ * Each gets a mark and a ground now, so scrolling past tells you which is
+ * which without reading a word of it.
+ */
+.wb-block-h {
+  display: flex; align-items: baseline; gap: 8px;
+  margin: 0 0 10px; padding: 0;
+  font: 590 var(--t-meta)/1.4 var(--sans); color: var(--ink);
+  letter-spacing: 0; text-transform: none;
 }
-.wb-q-act { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0 2px; }
+.wb-block-m { color: var(--accent-ink); font-size: 12px; }
+/* The count is a fact about progress, so it sits where a badge sits and goes
+   green only when the section is actually finished. */
+.wb-count {
+  margin-left: auto; padding: 1px 8px; border-radius: var(--r-pill);
+  background: var(--inset); color: var(--ink-2);
+  font: 400 var(--t-small)/1.6 var(--sans); font-variant-numeric: tabular-nums;
+}
+.wb-count.is-done { background: rgb(var(--add-rgb) / 0.14); color: var(--add); }
+
+/* --- the practice engine (study S3) -------------------------------------- */
+.wb-q {
+  border: 1px solid var(--panel-line-dim); border-radius: var(--r-card);
+  background: var(--surface); box-shadow: var(--lift);
+  padding: 14px 18px 12px; margin: 12px 0;
+}
+.wb-q-head {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 10px; margin-bottom: 8px;
+}
+.wb-kind {
+  display: inline-flex; align-items: baseline; gap: 6px;
+  font: 400 var(--t-small)/1.5 var(--sans); color: var(--ink-2);
+  letter-spacing: 0;
+}
+.wb-kind-m { color: var(--accent-ink); font-size: 12px; }
+.wb-kind-id { color: var(--muted); font-family: var(--mono); font-size: 10.5px; }
+/* Resolved state as a badge rather than two grey words: a filled tint, its own
+   glyph, and the word — three signals, none of them colour alone. */
+.wb-q-mark {
+  flex: none; padding: 2px 9px; border-radius: var(--r-pill);
+  font: 590 11px/1.5 var(--sans);
+}
+.wb-q-mark.correct { color: var(--add); background: rgb(var(--add-rgb) / 0.14); }
+.wb-q-mark.wrong { color: var(--amber); background: rgb(var(--amber-rgb) / 0.14); }
+.wb-q-mark.skipped { color: var(--muted); background: var(--inset); }
+/* The card's own edge carries the result too, so a scrolled page shows which
+   questions are still open without reading a badge on each. */
+.wb-q-correct { border-color: rgb(var(--add-rgb) / 0.45); }
+.wb-q-wrong { border-color: rgb(var(--amber-rgb) / 0.5); }
+.wb-q-skipped { opacity: 0.6; }
+
+.wb-hints { list-style: none; margin: 10px 0; padding: 0; }
+.wb-hints li {
+  display: flex; gap: 8px; align-items: baseline;
+  font-size: var(--t-small); color: var(--ink-2);
+  background: var(--inset); border-radius: var(--r-ctl);
+  padding: 7px 11px; margin: 5px 0;
+}
+.wb-hint-m { flex: none; color: var(--amber); font-size: 10px; }
+
+.wb-q-act { display: flex; flex-direction: column; gap: 9px; margin: 12px 0 2px; }
+.wb-q-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+/* Multiple choice gets buttons the size of a target, laid out as a row of
+   equals — the letter is the whole label, so it can be big. */
+.wb-choices { display: flex; flex-wrap: wrap; gap: 8px; }
+.wb-choice {
+  min-width: 46px; padding: 9px 0; cursor: pointer;
+  background: var(--surface); color: var(--ink);
+  border: 1px solid var(--panel-line); border-radius: var(--r-ctl);
+  box-shadow: var(--lift);
+  font: 590 var(--t-meta)/1 var(--sans); font-variant-numeric: tabular-nums;
+  transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
+}
+.wb-choice:hover { background: var(--inset); border-color: var(--accent); }
+.wb-choice:active { transform: translateY(1px); box-shadow: none; }
+/* The two self-assessment verbs are opposites, so they are not the same
+   button — but the tint is a *border*, not a fill: neither is the primary
+   action, they are two halves of one honest answer. */
+.wb-btn-add { border-color: rgb(var(--add-rgb) / 0.55); color: var(--add); }
+.wb-btn-miss { border-color: rgb(var(--amber-rgb) / 0.55); color: var(--amber); }
 .wb-num {
-  background: none; border: 1px solid var(--panel-line-dim); color: var(--ink);
-  font: 400 12px/1.6 var(--mono); padding: 1px 8px; width: 12ch;
+  background: var(--surface); color: var(--ink);
+  border: 1px solid var(--panel-line); border-radius: var(--r-ctl);
+  font: 400 var(--t-meta)/1.4 var(--mono); padding: 8px 11px; width: 14ch;
+  box-shadow: var(--lift);
 }
 .wb-num:focus { outline: none; border-color: var(--accent); }
-.wb-mcq { font-family: var(--mono); }
-.wb-q-skip { color: var(--muted); }
+.wb-q-skip { margin-left: auto; }
+
 .wb-solution {
-  border-top: 1px dashed var(--panel-line-dim); margin-top: 6px; padding-top: 4px;
+  border-top: 1px solid var(--panel-line-dim); margin-top: 12px; padding-top: 10px;
 }
+.wb-solution-h {
+  display: flex; align-items: baseline; gap: 7px; margin: 0 0 4px;
+  font: 590 var(--t-small)/1.5 var(--sans); color: var(--add);
+}
+.wb-solution-h.dim { color: var(--muted); font-weight: 400; }
+.wb-answer { margin: 0 0 10px; font-size: var(--t-meta); color: var(--ink); }
+.wb-working { margin-top: 8px; }
+.wb-working p { font-size: var(--t-small); color: var(--ink-2); }
 
 /* the guide head's marker in the Courses queue card (study S2) */
 .q-guide {

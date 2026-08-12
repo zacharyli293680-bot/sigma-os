@@ -84,6 +84,13 @@ const SLOT_LABEL: [Slot, string, string][] = [
   ["ref", "▤", "Reference"],
 ];
 
+/** A glyph per practice kind. Beside the word, never instead of it — the
+ *  glyph is for recognising the shape of a question at a glance while
+ *  scrolling; the word is for knowing what it is. */
+const KIND_MARK: Record<string, string> = {
+  mcq: "◉", numeric: "#", short: "✎", code: "▸", proof: "∴",
+};
+
 type Lang = "python" | "sql";
 const SCRATCH_MAX = 4000;
 
@@ -256,11 +263,15 @@ function PracticeBox({ it, st, onHint, onReveal, onGiven, onResolve, onSandbox }
   return (
     <li className={`wb-q ${done ? `wb-q-${st.result}` : ""}`}>
       <div className="wb-q-head">
-        <span className="wb-kind">{it.id} · {it.kind}</span>
+        <span className="wb-kind">
+          <span className="wb-kind-m" aria-hidden="true">{KIND_MARK[it.kind] ?? "·"}</span>
+          {it.kind}
+          <span className="wb-kind-id">{it.id}</span>
+        </span>
         {done && (
           <span className={`wb-q-mark ${st.result}`}>
-            {st.result === "correct" ? "✓ correct"
-              : st.result === "wrong" ? "✗ missed" : "− skipped"}
+            {st.result === "correct" ? "✓ Correct"
+              : st.result === "wrong" ? "✗ Missed" : "− Skipped"}
           </span>
         )}
       </div>
@@ -269,73 +280,97 @@ function PracticeBox({ it, st, onHint, onReveal, onGiven, onResolve, onSandbox }
       {st.hints > 0 && (
         <ul className="wb-hints">
           {it.hints.slice(0, st.hints).map((h, i) => (
-            <li key={i}><Inline text={h} /></li>
+            <li key={i}>
+              <span className="wb-hint-m" aria-hidden="true">◆</span>
+              <span><Inline text={h} /></span>
+            </li>
           ))}
         </ul>
       )}
 
       {!done && (
+        /* One filled control per state — the thing to do next — and everything
+           else a hairline button. It was six `ghost` links in a row, which is
+           six equal-weight choices when only ever one of them is the answer. */
         <div className="wb-q-act">
-          {it.hints.length > st.hints && (
-            <button className="ghost" onClick={onHint}
-                    title="one hint at a time — each opened hint is recorded with the attempt">
-              hint {st.hints + 1}/{it.hints.length}
-            </button>
+          {autoMcq && (
+            <div className="wb-choices" role="group" aria-label={`options for ${it.id}`}>
+              {letters.map(l => (
+                <button key={l} className="wb-choice"
+                        onClick={() => {
+                          onGiven(l);
+                          onResolve(l === ans ? "correct" : "wrong", l);
+                        }}>
+                  {l.toUpperCase()}
+                </button>
+              ))}
+            </div>
           )}
-          {autoNumeric && (
-            <>
-              <input className="wb-num" value={st.given} placeholder="answer…"
-                     aria-label={`answer for ${it.id}`}
-                     onChange={e => onGiven(e.target.value)}
-                     onKeyDown={e => { if (e.key === "Enter") check(); }} />
-              <button className="ghost" disabled={!st.given.trim()} onClick={check}>
-                check
+          <div className="wb-q-row">
+            {autoNumeric && (
+              <>
+                <input className="wb-num" value={st.given} placeholder="your answer"
+                       aria-label={`answer for ${it.id}`}
+                       onChange={e => onGiven(e.target.value)}
+                       onKeyDown={e => { if (e.key === "Enter") check(); }} />
+                <button className="wb-btn wb-btn-primary" disabled={!st.given.trim()}
+                        onClick={check}>Check</button>
+              </>
+            )}
+            {it.kind === "code" && onSandbox && (() => {
+              const f = fenced(it.prompt);
+              return f.runnable ? (
+                <button className="wb-btn" title="load this item into the code dock"
+                        onClick={() => onSandbox(f.lang, f.code)}>
+                  <span aria-hidden="true">▸</span> Open in sandbox
+                </button>
+              ) : (
+                <em className="wb-chip dim"
+                    title="only python and sql run in the dock — everything else renders, never runs">
+                  {f.tag} — not runnable
+                </em>
+              );
+            })()}
+            {!auto && !st.revealed && (
+              <button className="wb-btn wb-btn-primary" onClick={onReveal}>
+                Reveal answer
               </button>
-            </>
-          )}
-          {autoMcq && letters.map(l => (
-            <button key={l} className="ghost wb-mcq"
-                    onClick={() => {
-                      onGiven(l);
-                      onResolve(l === ans ? "correct" : "wrong", l);
-                    }}>
-              ({l})
-            </button>
-          ))}
-          {it.kind === "code" && onSandbox && (() => {
-            const f = fenced(it.prompt);
-            return f.runnable ? (
-              <button className="ghost" title="load this item into the code dock"
-                      onClick={() => onSandbox(f.lang, f.code)}>
-                ▸ open in sandbox
+            )}
+            {!auto && st.revealed && (
+              <>
+                <button className="wb-btn wb-btn-add"
+                        onClick={() => onResolve("correct")}>✓ I had it</button>
+                <button className="wb-btn wb-btn-miss"
+                        onClick={() => onResolve("wrong")}>✗ I missed it</button>
+              </>
+            )}
+            {it.hints.length > st.hints && (
+              <button className="wb-btn wb-btn-quiet" onClick={onHint}
+                      title="one hint at a time — each opened hint is recorded with the attempt">
+                <span aria-hidden="true">◆</span> Hint {st.hints + 1} of {it.hints.length}
               </button>
-            ) : (
-              <em className="wb-chip dim"
-                  title="only python and sql run in the dock — everything else renders, never runs">
-                {f.tag} — not runnable
-              </em>
-            );
-          })()}
-          {!auto && !st.revealed && (
-            <button className="ghost" onClick={onReveal}>reveal answer</button>
-          )}
-          {!auto && st.revealed && (
-            <>
-              <button className="ghost" onClick={() => onResolve("correct")}>✓ I had it</button>
-              <button className="ghost" onClick={() => onResolve("wrong")}>✗ I missed it</button>
-            </>
-          )}
-          <button className="ghost wb-q-skip" onClick={() => onResolve("skipped")}
-                  title="recorded as skipped — visible in the attempt log, never counted as missed">
-            skip
-          </button>
+            )}
+            <button className="wb-btn wb-btn-quiet wb-q-skip"
+                    onClick={() => onResolve("skipped")}
+                    title="recorded as skipped — visible in the attempt log, never counted as missed">
+              Skip
+            </button>
+          </div>
         </div>
       )}
 
       {(st.revealed || (done && st.result !== "skipped")) && (
         <div className="wb-solution">
-          <p><b>Answer:</b> <Inline text={it.answer ?? ""} /></p>
-          {it.solution && <Rich text={it.solution} />}
+          <p className="wb-solution-h">
+            <span aria-hidden="true">✓</span> Answer
+          </p>
+          <p className="wb-answer"><Inline text={it.answer ?? ""} /></p>
+          {it.solution && (
+            <div className="wb-working">
+              <p className="wb-solution-h dim">Working</p>
+              <Rich text={it.solution} />
+            </div>
+          )}
         </div>
       )}
     </li>
@@ -369,13 +404,23 @@ function Segment({ seg, depth, st, cp, dispatch, onResolve, onSandbox }: {
       {!cp && <Rich text={seg[depth]} />}
       {!cp && seg.example && (
         <div className="wb-example">
-          <h4>Example</h4>
+          {/* A worked example is a different *mode* of reading from the prose
+              above it — you follow it rather than absorb it — so it gets a
+              mark and a ground of its own instead of a bold word. */}
+          <h4 className="wb-block-h">
+            <span className="wb-block-m" aria-hidden="true">▶</span> Worked example
+          </h4>
           <Rich text={seg.example} />
         </div>
       )}
       {seg.practice.length > 0 && (
         <div className="wb-practice">
-          <h4>Practice — {resolved}/{seg.practice.length}</h4>
+          <h4 className="wb-block-h">
+            <span className="wb-block-m" aria-hidden="true">◉</span> Practice
+            <span className={`wb-count ${resolved === seg.practice.length ? "is-done" : ""}`}>
+              {resolved} / {seg.practice.length}
+            </span>
+          </h4>
           <ul>
             {seg.practice.map(it => (
               <PracticeBox key={it.id} it={it} st={pr(st, it.id)}
