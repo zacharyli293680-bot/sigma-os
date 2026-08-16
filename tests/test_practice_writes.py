@@ -231,6 +231,20 @@ class TestAttempt(PracticeWritesBase):
         self.attempt()
         self.assertEqual(_run(self.vault, "rev-parse", "HEAD").stdout, before)
 
+    def test_tries_is_recorded_and_filled_in_per_result_when_absent(self):
+        """The retry flow's one new fact. A row from a client that predates it
+        reads as the one try an answered question always had — and as *no*
+        tries when it was skipped, because a 1 there would read as a wrong
+        answer walked away from, which raises a recall card."""
+        self.attempt(qid="q-1-1", result="correct", tries=3)
+        self.attempt(qid="q-1-2", result="correct")
+        self.attempt(qid="q-1-3", result="skipped")
+        rows = [json.loads(x) for x in
+                Path(ln.ATTEMPTS_PATH).read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(rows[0]["tries"], 3)
+        self.assertEqual(rows[1]["tries"], 1)
+        self.assertEqual(rows[2]["tries"], 0)
+
 
 class TestCheckpointPractice(PracticeWritesBase):
     """Checkpoint attempts share the one attempt log and the one state
@@ -330,6 +344,23 @@ class TestSessionEnd(PracticeWritesBase):
         self.assertIn("study session rollup", subject)
         led = self.client.get("/api/activity").json()["entries"]
         self.assertIn("1 missed", led[0]["summary"])
+
+    def test_a_recovered_answer_counts_as_correct_and_says_what_it_cost(self):
+        """Right on the second go. It is a correct answer — the count says so
+        — and it is not a clean one, which is what `recovered` is for. Without
+        that number the retry flow would be a way to improve your own row."""
+        self.attempt(qid="q-1-1", result="correct", tries=2)
+        self.attempt(qid="q-1-2", result="correct")
+        body = self.end().json()
+        self.assertTrue(body["wrote"])
+        self.assertIn("2 answered, 2 correct · missed 0 · recovered 1", body["raw"])
+
+    def test_a_clean_session_writes_no_recovered_bit_at_all(self):
+        """The row's shape is unchanged for every session that had no retry —
+        which is every session in the study logs written before this."""
+        self.attempt(qid="q-1-1", result="correct")
+        body = self.end().json()
+        self.assertNotIn("recovered", body["raw"])
 
     def test_firing_twice_writes_once(self):
         self.attempt()

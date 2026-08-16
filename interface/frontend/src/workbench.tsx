@@ -68,20 +68,30 @@ type PracticeSt = {
   revealed: boolean;        // the answer was shown before resolving
   result: Result | null;    // resolved state — null while still live
   given: string;            // what was typed or picked
+  /** Answers that were checked and found wrong, oldest first. An auto-graded
+   *  item is no longer resolved by its first miss — see `PracticeBox` — so
+   *  this is both what the second attempt is told and what the attempt log is
+   *  told, since "right on the third go" and "right" are different facts. */
+  missed: string[];
 };
-const P0: PracticeSt = { hints: 0, revealed: false, result: null, given: "" };
+const P0: PracticeSt = { hints: 0, revealed: false, result: null, given: "", missed: [] };
 
 /** The dock's slots — exactly one open at a time (§11). Each carries a glyph
  *  and a word: the rail has the room for both, and a row of glyphs alone is a
- *  puzzle every time you come back to it after a week. */
+ *  puzzle every time you come back to it after a week.
+ *
+ *  The fourth field is the line under the heading. Every slot has one, and
+ *  they are the same length on purpose: six tools that each opened with a
+ *  different amount of furniture read as six different rooms rather than six
+ *  drawers of one desk. */
 type Slot = "prov" | "work" | "code" | "tutor" | "calc" | "ref";
-const SLOT_LABEL: [Slot, string, string][] = [
-  ["prov", "?", "Provenance"],
-  ["work", "✎", "Work pad"],
-  ["code", "▸", "Sandbox"],
-  ["tutor", "✦", "Tutor"],
-  ["calc", "∑", "Calculator"],
-  ["ref", "▤", "Reference"],
+const SLOT_LABEL: [Slot, string, string, string][] = [
+  ["prov", "?", "Sources", "where this segment comes from — the claim is only as good as the note it cites"],
+  ["work", "✎", "Work", "scratch space, kept per module on this machine — never a note"],
+  ["code", "▸", "Sandbox", "python and sql, run in the page — nothing leaves the machine"],
+  ["tutor", "✦", "Tutor", "asks about this module, with what you last answered pinned to it"],
+  ["calc", "∑", "Calculator", "arithmetic, graphs and algebra, parsed here — never evaluated"],
+  ["ref", "▤", "Reference", "the course's own sheet: equations, definitions, constants, tables"],
 ];
 
 /** A glyph per practice kind. Beside the word, never instead of it — the
@@ -122,6 +132,7 @@ type WbAction =
   | { t: "hint"; qid: string }
   | { t: "reveal"; qid: string }
   | { t: "given"; qid: string; text: string }
+  | { t: "miss"; qid: string; given: string }
   | { t: "result"; qid: string; r: Result }
   | { t: "scratch"; text: string }
   | { t: "code"; lang?: Lang; text?: string };
@@ -163,6 +174,15 @@ function reduce(st: WbState, a: WbAction): WbState {
       // 413 would drop ALL resume state, not just the long answer.
       return { ...st, lastQid: a.qid, practice: { ...st.practice,
         [a.qid]: { ...pr(st, a.qid), given: a.text.slice(0, 500) } } };
+    case "miss":
+      // A wrong answer is recorded and the item stays live. Capped at eight so
+      // a held-down Enter cannot grow the mirrored state blob without bound —
+      // and eight rather than a smaller number because an mcq has at most
+      // eight options (a–h), so the cap can never let one you already spent
+      // come back as clickable.
+      return { ...st, lastQid: a.qid, practice: { ...st.practice,
+        [a.qid]: { ...pr(st, a.qid),
+                   missed: [...pr(st, a.qid).missed, a.given.slice(0, 60)].slice(-8) } } };
     case "result":
       return { ...st, lastQid: a.qid, practice: { ...st.practice,
         [a.qid]: { ...pr(st, a.qid), result: a.r } } };
@@ -233,12 +253,26 @@ function fenced(prompt: string):
 
 /** One practice item, live. Auto-checked where the decision list allows
  *  (MCQ, numeric with tolerance), self-assessed everywhere else — a model
- *  never grades free response, and neither does a regex pretending to. */
-function PracticeBox({ it, st, onHint, onReveal, onGiven, onResolve, onSandbox }: {
+ *  never grades free response, and neither does a regex pretending to.
+ *
+ *  **A wrong answer is not the end of the question.** It used to be: one miss
+ *  resolved the item, the answer appeared, and the only thing left to do was
+ *  scroll. That grades well and teaches nothing — the moment you have just
+ *  discovered you are wrong is the moment the second attempt is worth the
+ *  most. So a miss now offers both doors, *try again* and *reveal*, and the
+ *  item stays live until you take one of them.
+ *
+ *  What gets recorded is unchanged in kind and richer in fact: the attempt log
+ *  carries how many tries it took, and `tries > 1` still raises a recall card,
+ *  because a question you got on the third go is a question you missed. The
+ *  alternative — counting a recovered answer as clean — would have made this
+ *  feature a way to quietly improve your own numbers. */
+function PracticeBox({ it, st, onHint, onReveal, onGiven, onMiss, onResolve, onSandbox }: {
   it: PracticeItem; st: PracticeSt;
   onHint: () => void; onReveal: () => void;
   onGiven: (s: string) => void;
-  onResolve: (r: Result, given?: string) => void;
+  onMiss: (given: string) => void;
+  onResolve: (r: Result, given?: string, revealed?: boolean) => void;
   onSandbox?: (lang: Lang, code: string) => void;
 }) {
   const expected = it.kind === "numeric" ? parseNumeric(it.answer ?? "") : null;
@@ -252,16 +286,19 @@ function PracticeBox({ it, st, onHint, onReveal, onGiven, onResolve, onSandbox }
     && ans !== null && letters.includes(ans);
   const auto = autoNumeric || autoMcq;
   const done = st.result !== null;
+  const tries = st.missed.length;
+  const retrying = !done && tries > 0;
 
   const check = () => {
     const u = parseNumeric(st.given);
     if (u === null || expected === null) return;
     const ok = Math.abs(u - expected) <= Math.max(0.01, Math.abs(expected) * 0.015);
-    onResolve(ok ? "correct" : "wrong", st.given);
+    if (ok) onResolve("correct", st.given);
+    else onMiss(st.given);
   };
 
   return (
-    <li className={`wb-q ${done ? `wb-q-${st.result}` : ""}`}>
+    <li className={`wb-q ${done ? `wb-q-${st.result}` : ""} ${retrying ? "wb-q-again" : ""}`}>
       <div className="wb-q-head">
         <span className="wb-kind">
           <span className="wb-kind-m" aria-hidden="true">{KIND_MARK[it.kind] ?? "·"}</span>
@@ -270,7 +307,8 @@ function PracticeBox({ it, st, onHint, onReveal, onGiven, onResolve, onSandbox }
         </span>
         {done && (
           <span className={`wb-q-mark ${st.result}`}>
-            {st.result === "correct" ? "✓ Correct"
+            {st.result === "correct"
+              ? (tries ? `✓ Correct on try ${tries + 1}` : "✓ Correct")
               : st.result === "wrong" ? "✗ Missed" : "− Skipped"}
           </span>
         )}
@@ -293,17 +331,39 @@ function PracticeBox({ it, st, onHint, onReveal, onGiven, onResolve, onSandbox }
            else a hairline button. It was six `ghost` links in a row, which is
            six equal-weight choices when only ever one of them is the answer. */
         <div className="wb-q-act">
+          {retrying && (
+            /* Amber and a word, never colour alone — the same rule the held
+               banner and the confidence dots are written under. */
+            <p className="wb-q-retry">
+              <span aria-hidden="true">↻</span>
+              <b>Not quite.</b>{" "}
+              {autoMcq ? "Pick a different option" : "Change your answer and check again"}
+              {it.hints.length > st.hints ? ", open a hint," : ""} or reveal the
+              answer and move on.
+              <span className="wb-q-tried">
+                {tries === 1 ? "tried" : `${tries} tries`}: {st.missed.join(", ")}
+              </span>
+            </p>
+          )}
           {autoMcq && (
             <div className="wb-choices" role="group" aria-label={`options for ${it.id}`}>
-              {letters.map(l => (
-                <button key={l} className="wb-choice"
-                        onClick={() => {
-                          onGiven(l);
-                          onResolve(l === ans ? "correct" : "wrong", l);
-                        }}>
-                  {l.toUpperCase()}
-                </button>
-              ))}
+              {letters.map(l => {
+                // An option already tried is struck through rather than
+                // removed: what you have ruled out is part of the question now.
+                const spent = st.missed.includes(l);
+                return (
+                  <button key={l} className={`wb-choice ${spent ? "spent" : ""}`}
+                          disabled={spent}
+                          title={spent ? "already tried, and wrong" : undefined}
+                          onClick={() => {
+                            onGiven(l);
+                            if (l === ans) onResolve("correct", l);
+                            else onMiss(l);
+                          }}>
+                    {l.toUpperCase()}
+                  </button>
+                );
+              })}
             </div>
           )}
           <div className="wb-q-row">
@@ -314,8 +374,18 @@ function PracticeBox({ it, st, onHint, onReveal, onGiven, onResolve, onSandbox }
                        onChange={e => onGiven(e.target.value)}
                        onKeyDown={e => { if (e.key === "Enter") check(); }} />
                 <button className="wb-btn wb-btn-primary" disabled={!st.given.trim()}
-                        onClick={check}>Check</button>
+                        onClick={check}>{retrying ? "Check again" : "Check"}</button>
               </>
+            )}
+            {auto && retrying && (
+              /* Giving up is a resolution, and it is the *missed* one — the
+                 answer is on screen from here, so nothing after this could be
+                 graded. */
+              <button className="wb-btn wb-btn-miss"
+                      title="show the answer and record this one as missed"
+                      onClick={() => { onReveal(); onResolve("wrong", st.given, true); }}>
+                Reveal answer
+              </button>
             )}
             {it.kind === "code" && onSandbox && (() => {
               const f = fenced(it.prompt);
@@ -352,7 +422,15 @@ function PracticeBox({ it, st, onHint, onReveal, onGiven, onResolve, onSandbox }
             )}
             <button className="wb-btn wb-btn-quiet wb-q-skip"
                     onClick={() => onResolve("skipped")}
-                    title="recorded as skipped — visible in the attempt log, never counted as missed">
+                    title={retrying
+                      // The counts still say "skipped, not missed". The recall
+                      // card does not, and the button has to say so rather
+                      // than repeat a promise that stopped holding the moment
+                      // you answered — see recall.py's `wanted_from`.
+                      ? "recorded as skipped — but the wrong answer already "
+                        + "given still raises a recall card"
+                      : "recorded as skipped — visible in the attempt log, "
+                        + "never counted as missed"}>
               Skip
             </button>
           </div>
@@ -391,7 +469,7 @@ function Segment({ seg, depth, st, cp, dispatch, onResolve, onSandbox }: {
   /** Checkpoint rendering: practice only — no depth tabs, no example (§5.4). */
   cp: boolean;
   dispatch: (a: WbAction) => void;
-  onResolve: (it: PracticeItem, r: Result, given?: string) => void;
+  onResolve: (it: PracticeItem, r: Result, given?: string, revealed?: boolean) => void;
   onSandbox: (lang: Lang, code: string) => void;
 }) {
   const resolved = seg.practice.filter(it => pr(st, it.id).result !== null).length;
@@ -427,7 +505,8 @@ function Segment({ seg, depth, st, cp, dispatch, onResolve, onSandbox }: {
                 onHint={() => dispatch({ t: "hint", qid: it.id })}
                 onReveal={() => dispatch({ t: "reveal", qid: it.id })}
                 onGiven={s => dispatch({ t: "given", qid: it.id, text: s })}
-                onResolve={(r, given) => onResolve(it, r, given)}
+                onMiss={given => dispatch({ t: "miss", qid: it.id, given })}
+                onResolve={(r, given, revealed) => onResolve(it, r, given, revealed)}
                 onSandbox={onSandbox} />
             ))}
           </ul>
@@ -825,8 +904,8 @@ function Rail(
 
             {!st.focus && (
               <RailBand label="Tools">
-                {SLOT_LABEL.map(([s, glyph, label]) => (
-                  <button key={s}
+                {SLOT_LABEL.map(([s, glyph, label, blurb]) => (
+                  <button key={s} title={blurb}
                           className={`wb-rail-item wb-tool ${st.dock === s ? "on" : ""}`}
                           aria-pressed={st.dock === s}
                           onClick={() => dispatch({ t: "dock", slot: st.dock === s ? null : s })}>
@@ -1135,6 +1214,11 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
             result: p.result === "correct" || p.result === "wrong"
               || p.result === "skipped" ? p.result : null,
             given: typeof p.given === "string" ? p.given : "",
+            // Written since the retry flow landed; a module left open by an
+            // older build simply resumes with no misses behind it.
+            missed: Array.isArray(p.missed)
+              ? p.missed.filter((m): m is string => typeof m === "string").slice(-8)
+              : [],
           };
         }
         dispatch({ t: "hydrate", depth,
@@ -1355,16 +1439,24 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
     }
   };
 
-  const resolve = (it: PracticeItem, r: Result, given?: string) => {
+  const resolve = (it: PracticeItem, r: Result, given?: string, revealed?: boolean) => {
     if (!lesson || pr(st, it.id).result !== null) return;
     dispatch({ t: "result", qid: it.id, r });
     touched.current.add(lesson.course);
+    const missed = pr(st, it.id).missed.length;
     void post("lesson/attempt", {
       course: lesson.course,
       ...(lesson.checkpoint != null
         ? { checkpoint: lesson.checkpoint } : { module: lesson.module }),
       qid: it.id, result: r,
-      hints: pr(st, it.id).hints, revealed: pr(st, it.id).revealed,
+      hints: pr(st, it.id).hints,
+      // `revealed` is passed in by the one caller that reveals and resolves in
+      // the same click: the dispatch above has not landed in `st` yet, so
+      // reading it back here would record `false` every time.
+      revealed: revealed ?? pr(st, it.id).revealed,
+      // How many answers were actually checked. A reveal is not an attempt, so
+      // it does not add one — the misses before it are the whole count.
+      tries: missed + (r === "correct" ? 1 : 0),
       answer: given ?? null,
     }).catch(() => {});
   };
@@ -2050,30 +2142,48 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
                     reading, which meant it scrolled away exactly when you
                     wanted it, and moved every time the prose changed length. */}
               </div>
+              {/* One width for every slot. The reference used to open wider
+                  than the other five because it is a document rather than a
+                  panel — which was true, and made the dock jump 260px sideways
+                  every time you moved between the sheet and the tutor. The
+                  fixed width is the wide one, so nothing lost room: reading a
+                  table and reading a keypad both want the same 560px, and the
+                  reading column keeps its full measure either way. */}
               {!st.focus && st.dock && (
-                <aside className={`wb-dock ${st.dock === "ref" ? "is-ref" : ""}`}>
+                <aside className="wb-dock">
                   <div className="wb-slots" role="tablist" aria-label="Dock slot">
-                    {/* The dock's own tabs stay short — five full names do not
-                        fit 420px and wrapped "Work pad" onto two lines. The
-                        rail carries the long form; here the key is enough,
-                        and the title attribute holds the rest. */}
+                    {/* Full words, not the state key. `prov` and `ref` were
+                        abbreviations of an internal name showing through the
+                        interface — at 420px there was no room for better, and
+                        at this width there is. */}
                     {SLOT_LABEL.map(([s, glyph, label]) => (
                       <button key={s} role="tab" aria-selected={st.dock === s}
                               className={st.dock === s ? "active" : ""}
                               title={label}
                               onClick={() => dispatch({ t: "dock", slot: s })}>
-                        <span aria-hidden="true">{glyph}</span> {s}
+                        <span aria-hidden="true">{glyph}</span> {label}
                       </button>
                     ))}
                     <button className="ghost wb-slot-x" title="Close the dock (Esc)"
                             onClick={() => dispatch({ t: "dock", slot: null })}>✕</button>
                   </div>
 
+                  {/* One heading, written once, for whichever slot is open —
+                      rather than each slot opening with its own idea of a
+                      title, which is how three of the six came to have none. */}
+                  {(() => {
+                    const [, glyph, label, blurb] =
+                      SLOT_LABEL.find(([s]) => s === st.dock)!;
+                    return (
+                      <div className="wb-slot-h">
+                        <h4><span className="wb-slot-m" aria-hidden="true">{glyph}</span> {label}</h4>
+                        <p>{blurb}</p>
+                      </div>
+                    );
+                  })()}
+
                   {st.dock === "prov" && seg && (
                     <div className="wb-slotbody">
-                      <h4>[?] Provenance</h4>
-                      <p className="dim">where this segment comes from — the claim is
-                      only as good as the note it cites</p>
                       <ul className="wb-prov">
                         {seg.sources.map(src => (
                           <li key={`${src.path}:${src.line}`}>
@@ -2110,7 +2220,6 @@ export default function WorkbenchView({ open, vault, onClose, guideProg }: {
 
                   {st.dock === "work" && (
                     <div className="wb-slotbody wb-work">
-                      <h4>✎ Work</h4>
                       <textarea className="wb-editor" value={st.scratch}
                                 aria-label="work pad" spellCheck={false}
                                 placeholder="scratch space — resolve components, set up the FBD, keep the arithmetic honest…"

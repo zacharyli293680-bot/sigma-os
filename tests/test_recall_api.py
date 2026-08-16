@@ -64,6 +64,43 @@ class TestCardsFromASession(RecallApiBase):
         self.assertIn(REL, touched.stdout)
         self.assertIn("test-101-study-log.md", touched.stdout)
 
+    def test_a_question_got_on_the_second_go_still_raises_its_card(self):
+        """The retry flow's load-bearing consequence. Before it, every wrong
+        answer was final and every one raised a card; if a recovered answer
+        raised none, then trying again — the thing the flow exists to
+        encourage — would quietly cost you the card telling you to come back
+        to it. A question you got on the third go is a question you missed."""
+        self.attempt(qid="q-1-1", result="correct", tries=3)   # segment 1
+        self.attempt(qid="q-1-2", result="correct")            # clean, same segment
+        body = self.end().json()
+        self.assertEqual(body["recall"]["raised"], 1)
+        self.assertEqual([c["seg"] for c in self.cards()], ["Topic 1"])
+
+    def test_a_session_with_nothing_missed_or_recovered_raises_nothing(self):
+        self.attempt(qid="q-1-1", result="correct")
+        body = self.end().json()
+        self.assertEqual(body["recall"], None)
+        self.assertEqual(self.cards(), [])
+
+    def test_answering_wrong_and_then_skipping_is_not_a_way_out_of_the_card(self):
+        """The hole the retry flow would otherwise open. Skipping is "never
+        counted as missed" — that promise is about a question you did not
+        attempt. Attempting one, getting it wrong and walking away is a miss,
+        and before the item stayed open after a wrong answer it was not even
+        reachable."""
+        self.attempt(qid="q-1-1", result="skipped", tries=2)
+        body = self.end().json()
+        self.assertEqual(body["recall"]["raised"], 1)
+        self.assertEqual([c["seg"] for c in self.cards()], ["Topic 1"])
+        # …and the counts still say what they always said about a skip.
+        self.assertIn("0 answered, 0 correct · skipped 1 · missed 0", body["raw"])
+
+    def test_a_plain_skip_raises_nothing_and_needs_no_tries_field(self):
+        self.attempt(qid="q-1-1", result="skipped")
+        body = self.end().json()
+        self.assertEqual(body["recall"], None)
+        self.assertEqual(self.cards(), [])
+
     def test_the_row_records_the_measured_minutes(self):
         self.miss()
         r = self.end(seconds=22 * 60 + 10).json()

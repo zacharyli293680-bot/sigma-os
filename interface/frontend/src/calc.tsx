@@ -1,248 +1,148 @@
 /*
- * calc.tsx — the workbench's calculator slot: arithmetic, and a plot.
+ * calc.tsx — the workbench's calculator slot: a keypad, a grapher and an
+ * algebra pane.
  *
- * **No `eval`, and no library.** The app's standing rule is that a vault note
- * is data to a parser and never something a browser executes — `chat.tsx`
- * states it for HTML, `math.tsx` for TeX, `figure.tsx` for SVG. An expression
- * typed here is the same kind of thing, so it gets the same treatment: a
- * tokeniser and a recursive-descent parser, and the only things it can name are
- * the constants and functions on the table below. `eval` would have been three
- * lines and would have handed the page's whole scope to a text field.
+ * **No `eval`, and no library.** The app's standing rule is that a string
+ * typed here is data to a parser and never something the browser executes —
+ * `chat.tsx` states it for HTML, `math.tsx` for TeX, `figure.tsx` for SVG. The
+ * parser and the algebra live next door in `expr.ts` and `cas.ts`; this file
+ * is only the room they are used in.
  *
- * The parse produces a closure over `x`, which is what makes one implementation
- * serve both halves: `2 + 2 * 3` is that closure sampled once, and `sin(x)/x`
- * is the same closure sampled six hundred times across a range. There is no
- * separate "graphing mode" — an expression mentioning `x` simply gets a plot
- * under the answer.
+ * ## Why three panes and not one
  *
- * Everything is deliberately kept to what a statics course actually needs at
- * the desk: degrees as well as radians (bearings and angles of incline are
- * written in degrees in every AA-210 note), a running tape, and `ans` for the
- * previous result.
+ * The first version had no modes at all: one field, and an expression that
+ * mentioned `x` grew a plot under its answer. That is a lovely trick and it
+ * quietly capped what the thing could be. A grapher wants *several* functions
+ * and a window you can move; a CAS wants an operation and a variable to
+ * perform it in. Neither fits under a single field, and pretending otherwise
+ * cost the two features that were actually missing.
+ *
+ * So: **Calc** is a calculator, keys and all — the arithmetic you do beside a
+ * problem, with a tape and a memory. **Graph** is a plot of up to six curves
+ * with a window you drag, zoom and read off. **Algebra** is `cas.ts` with a
+ * verb attached: simplify, expand, factor, differentiate, integrate, solve.
+ *
+ * The three share one expression language, so an answer moves between them —
+ * solve for x here, graph it there, and any of them appends its line to the
+ * work pad, which is the module's own sidecar-persisted record. The calculator
+ * still keeps no durable history of its own for that reason.
+ *
+ * ## Degrees
+ *
+ * The keypad and the grapher honour deg/rad, because a bearing in a statics
+ * problem is written in degrees and always will be. The algebra pane does not
+ * and says so on screen: d/dx sin(x) = cos(x) is false in degrees, and a CAS
+ * that silently followed a display toggle would hand back a wrong derivative.
  */
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  type Node, parse, parseEquation, evaluate, sampler, show, varsOf, sub, ZERO,
+} from "./expr";
+import { type CasOut, type Op, run as casRun } from "./cas";
+import { MathBlock } from "./math";
+
+type Mode = "calc" | "graph" | "algebra";
+const MODE_KEY = "sigma.study.calcmode";
+const DEG_KEY = "sigma.study.calcdeg";
+
+const CURVES = 6;    // as many as six distinguishable colours, and no more
 
 // --------------------------------------------------------------------------
-// the language
+// the keypad
 // --------------------------------------------------------------------------
 
-/** Everything a name is allowed to mean. A name that is not here is an error
- *  naming itself, never a silent zero — `sni(30)` should say what is wrong,
- *  not quietly plot the x-axis. */
-const CONSTS: Record<string, number> = {
-  pi: Math.PI, e: Math.E, tau: Math.PI * 2,
-  g: 9.81,          // the one piece of course furniture: m/s²
+type Key = {
+  /** What the key says. */
+  t: string;
+  /** What it puts in the field. A `#` in the string is where the caret lands. */
+  ins?: string;
+  /** The second-function label and insert, revealed by `2nd`. */
+  t2?: string;
+  ins2?: string;
+  /** An action key rather than an insert. */
+  act?: "clear" | "back" | "equals" | "sign" | "deg" | "inv"
+      | "mc" | "mr" | "mplus" | "mminus";
+  /** Which family it belongs to, for colour. */
+  cls?: "fn" | "op" | "num" | "go" | "warn";
+  title?: string;
 };
 
-type Fn1 = (v: number) => number;
-const FNS: Record<string, Fn1 | ((...a: number[]) => number)> = {
-  sin: Math.sin, cos: Math.cos, tan: Math.tan,
-  asin: Math.asin, acos: Math.acos, atan: Math.atan,
-  sinh: Math.sinh, cosh: Math.cosh, tanh: Math.tanh,
-  sqrt: Math.sqrt, cbrt: Math.cbrt, abs: Math.abs,
-  ln: Math.log, log: Math.log10, log2: Math.log2, exp: Math.exp,
-  floor: Math.floor, ceil: Math.ceil, round: Math.round, sign: Math.sign,
-  atan2: Math.atan2, min: Math.min, max: Math.max, hypot: Math.hypot,
-  mod: (a: number, b: number) => a % b,
-};
-/** Functions whose argument is an angle, and those whose *result* is one — the
- *  two lists degree mode has to bend, in opposite directions. */
-const TAKES_ANGLE = new Set(["sin", "cos", "tan"]);
-const GIVES_ANGLE = new Set(["asin", "acos", "atan", "atan2"]);
+/** Six columns, and the order a hand expects: digits in a block on the left of
+ *  the lower half, operators down the right edge, functions above. A keypad is
+ *  muscle memory or it is nothing, so this is the layout every scientific
+ *  calculator has shipped since 1985 rather than a nicer one. */
+const KEYS: Key[] = [
+  { t: "2nd", act: "inv", cls: "fn", title: "the second function on each key" },
+  { t: "deg", act: "deg", cls: "fn", title: "degrees or radians" },
+  { t: "(", ins: "(", cls: "op" }, { t: ")", ins: ")", cls: "op" },
+  { t: "⌫", act: "back", cls: "warn", title: "delete the last character" },
+  { t: "AC", act: "clear", cls: "warn", title: "clear the field" },
 
-type Tok =
-  | { k: "num"; v: number }
-  | { k: "name"; v: string }
-  | { k: "op"; v: string };
+  { t: "sin", ins: "sin(#)", t2: "sin⁻¹", ins2: "asin(#)", cls: "fn" },
+  { t: "cos", ins: "cos(#)", t2: "cos⁻¹", ins2: "acos(#)", cls: "fn" },
+  { t: "tan", ins: "tan(#)", t2: "tan⁻¹", ins2: "atan(#)", cls: "fn" },
+  { t: "ln", ins: "ln(#)", t2: "eˣ", ins2: "exp(#)", cls: "fn" },
+  { t: "log", ins: "log(#)", t2: "10ˣ", ins2: "10^(#)", cls: "fn" },
+  { t: "÷", ins: "/", cls: "op" },
 
-function tokenize(src: string): Tok[] {
-  const out: Tok[] = [];
-  let i = 0;
-  while (i < src.length) {
-    const c = src[i];
-    if (c === " " || c === "\t" || c === "_" || c === ",") {
-      // `_` and `,` are digit separators a person types in 12_000 or 12,000.
-      if (c === ",") out.push({ k: "op", v: "," });
-      i++;
-      continue;
-    }
-    if (/[0-9.]/.test(c)) {
-      const m = /^\d*\.?\d+(?:[eE][+-]?\d+)?/.exec(src.slice(i));
-      if (!m) throw new Error(`can't read a number at "${src.slice(i, i + 6)}"`);
-      out.push({ k: "num", v: Number(m[0]) });
-      i += m[0].length;
-      continue;
-    }
-    if (/[a-zA-Z]/.test(c)) {
-      const m = /^[a-zA-Z][a-zA-Z0-9]*/.exec(src.slice(i))!;
-      out.push({ k: "name", v: m[0] });
-      i += m[0].length;
-      continue;
-    }
-    if ("+-*/^%()".includes(c)) {
-      // `**` is how a keyboard-minded person writes a power.
-      if (c === "*" && src[i + 1] === "*") { out.push({ k: "op", v: "^" }); i += 2; continue; }
-      out.push({ k: "op", v: c });
-      i++;
-      continue;
-    }
-    if (c === "×") { out.push({ k: "op", v: "*" }); i++; continue; }
-    if (c === "÷") { out.push({ k: "op", v: "/" }); i++; continue; }
-    if (c === "−") { out.push({ k: "op", v: "-" }); i++; continue; }
-    throw new Error(`"${c}" is not something I can read`);
-  }
-  return out;
-}
+  { t: "x²", ins: "^2", t2: "x³", ins2: "^3", cls: "fn" },
+  { t: "xʸ", ins: "^", t2: "ʸ√x", ins2: "root(#, )", cls: "fn" },
+  { t: "√", ins: "sqrt(#)", t2: "∛", ins2: "cbrt(#)", cls: "fn" },
+  { t: "1/x", ins: "^-1", t2: "|x|", ins2: "abs(#)", cls: "fn" },
+  { t: "n!", ins: "!", t2: "nCr", ins2: "ncr(#, )", cls: "fn" },
+  { t: "×", ins: "*", cls: "op" },
 
-type Compiled = {
-  /** Evaluate at an x. Expressions with no `x` ignore it. */
-  at: (x: number) => number;
-  /** Whether `x` appears — the one thing that decides plot or no plot. */
-  usesX: boolean;
-};
+  { t: "7", ins: "7", cls: "num" }, { t: "8", ins: "8", cls: "num" },
+  { t: "9", ins: "9", cls: "num" },
+  { t: "π", ins: "pi", t2: "τ", ins2: "tau", cls: "fn" },
+  { t: "e", ins: "e", t2: "g", ins2: "g", cls: "fn", title: "e — or g, 9.81 m/s²" },
+  { t: "−", ins: "-", cls: "op" },
 
-/** Parse to a closure. Throws with a human sentence; the caller shows it. */
-function compile(src: string, deg: boolean, ans: number): Compiled {
-  const toks = tokenize(src);
-  let p = 0;
-  let usesX = false;
-  const peek = () => toks[p];
-  const eat = (v: string) => {
-    const t = toks[p];
-    if (t && t.k === "op" && t.v === v) { p++; return true; }
-    return false;
-  };
-  const toRad = (v: number) => (deg ? (v * Math.PI) / 180 : v);
-  const fromRad = (v: number) => (deg ? (v * 180) / Math.PI : v);
+  { t: "4", ins: "4", cls: "num" }, { t: "5", ins: "5", cls: "num" },
+  { t: "6", ins: "6", cls: "num" },
+  { t: "ans", ins: "ans", cls: "fn", title: "the previous result" },
+  { t: "EXP", ins: "e", t2: "mod", ins2: "mod(#, )", cls: "fn",
+    title: "×10ⁿ — 2e5 is 200000" },
+  { t: "+", ins: "+", cls: "op" },
 
-  type Node = (x: number) => number;
+  { t: "1", ins: "1", cls: "num" }, { t: "2", ins: "2", cls: "num" },
+  { t: "3", ins: "3", cls: "num" },
+  { t: "x", ins: "x", cls: "fn", title: "a variable — graph it or solve for it" },
+  { t: "%", ins: "%", cls: "fn", title: "percent after a value, modulo between two" },
+  { t: "=", act: "equals", cls: "go" },
 
-  function expr(): Node {
-    let left = term();
-    for (;;) {
-      if (eat("+")) { const r = term(), l = left; left = x => l(x) + r(x); }
-      else if (eat("-")) { const r = term(), l = left; left = x => l(x) - r(x); }
-      else return left;
-    }
-  }
-  function term(): Node {
-    let left = unary();
-    for (;;) {
-      if (eat("*")) { const r = unary(), l = left; left = x => l(x) * r(x); }
-      else if (eat("/")) { const r = unary(), l = left; left = x => l(x) / r(x); }
-      else if (eat("%")) { const r = unary(), l = left; left = x => l(x) % r(x); }
-      else if (implicitFollows()) {
-        // `2x`, `3(x+1)`, `2sin(x)` — written constantly on paper, and a
-        // calculator that refuses them is a calculator you stop using.
-        const r = unary(), l = left; left = x => l(x) * r(x);
-      } else return left;
-    }
-  }
-  /** Is the next token one that may begin a factor with no operator before it?
-   *  Deliberately not a name directly after a name: `x pi` is a typo, not a
-   *  product, and reading it as one hides the typo. */
-  function implicitFollows(): boolean {
-    const t = peek();
-    if (!t) return false;
-    const prev = toks[p - 1];
-    if (t.k === "num") return prev?.k === "name" || (prev?.k === "op" && prev.v === ")");
-    if (t.k === "name") return prev?.k === "num" || (prev?.k === "op" && prev.v === ")");
-    if (t.k === "op" && t.v === "(") return prev?.k === "num" || (prev?.k === "op" && prev.v === ")");
-    return false;
-  }
-  function unary(): Node {
-    if (eat("-")) { const r = unary(); return x => -r(x); }
-    if (eat("+")) return unary();
-    return power();
-  }
-  function power(): Node {
-    const base = atom();
-    if (eat("^")) { const ex = unary(); return x => Math.pow(base(x), ex(x)); }
-    return base;
-  }
-  function atom(): Node {
-    const t = peek();
-    if (!t) throw new Error("the expression stops early");
-    if (t.k === "num") { p++; return () => t.v; }
-    if (t.k === "op" && t.v === "(") {
-      p++;
-      const inner = expr();
-      if (!eat(")")) throw new Error("a ( is never closed");
-      return inner;
-    }
-    if (t.k === "name") {
-      p++;
-      const name = t.v;
-      const lower = name.toLowerCase();
-      if (peek()?.k === "op" && (peek() as { v: string }).v === "(") {
-        p++;
-        const args: Node[] = [];
-        if (!eat(")")) {
-          do { args.push(expr()); } while (eat(","));
-          if (!eat(")")) throw new Error(`${name}( is never closed`);
-        }
-        const fn = FNS[lower];
-        if (!fn) throw new Error(`I don't know a function called "${name}"`);
-        const takes = TAKES_ANGLE.has(lower), gives = GIVES_ANGLE.has(lower);
-        return x => {
-          const vs = args.map(a => a(x));
-          const call = takes ? [toRad(vs[0]), ...vs.slice(1)] : vs;
-          const out = (fn as (...a: number[]) => number)(...call);
-          return gives ? fromRad(out) : out;
-        };
-      }
-      if (lower === "x") { usesX = true; return x => x; }
-      if (lower === "ans") return () => ans;
-      if (lower in CONSTS) return () => CONSTS[lower];
-      throw new Error(`I don't know what "${name}" is`);
-    }
-    throw new Error(`"${(t as { v: string | number }).v}" can't start a value`);
-  }
-
-  const root = expr();
-  if (p < toks.length) {
-    const t = toks[p] as { v: string | number };
-    throw new Error(`there is a stray "${t.v}" at the end`);
-  }
-  return { at: root, usesX };
-}
-
-/** A number as a person would write it: enough precision to be useful, no
- *  floating-point lint (`0.30000000000000004`), and exponent form only when
- *  the plain form would be unreadable. */
-function show(v: number): string {
-  if (!Number.isFinite(v)) return Number.isNaN(v) ? "undefined" : (v > 0 ? "∞" : "−∞");
-  if (v === 0) return "0";
-  const a = Math.abs(v);
-  if (a >= 1e10 || a < 1e-6) return v.toExponential(6).replace(/e([+-])/, "e$1");
-  const r = Number(v.toPrecision(12));
-  return String(r);
-}
+  { t: "0", ins: "0", cls: "num" }, { t: ".", ins: ".", cls: "num" },
+  { t: "±", act: "sign", cls: "num", title: "negate what is in the field" },
+  { t: "MR", act: "mr", cls: "fn", title: "recall the memory" },
+  { t: "M+", act: "mplus", cls: "fn", title: "add the answer to memory" },
+  { t: "M−", act: "mminus", cls: "fn", title: "subtract the answer from memory" },
+];
 
 // --------------------------------------------------------------------------
 // the plot
 // --------------------------------------------------------------------------
 
-const SAMPLES = 600;
+const SAMPLES = 700;
 
-/** Sample `f` across [x0,x1] and return SVG path segments, split wherever the
- *  curve leaves the world — a vertical asymptote must be a gap, not a stroke
- *  drawn straight down through the plot. */
-function paths(f: (x: number) => number, x0: number, x1: number,
-               y0: number, y1: number, w: number, h: number): string[] {
+type Win = { x0: number; x1: number; y0: number; y1: number };
+
+/** Sample `f` across the window and return SVG path segments, split wherever
+ *  the curve leaves the world — a vertical asymptote must be a gap, not a
+ *  stroke drawn straight down through the plot. */
+function paths(f: (x: number) => number, w: Win, pw: number, ph: number): string[] {
   const out: string[] = [];
   let cur: string[] = [];
-  const px = (x: number) => ((x - x0) / (x1 - x0)) * w;
-  const py = (y: number) => h - ((y - y0) / (y1 - y0)) * h;
+  const px = (x: number) => ((x - w.x0) / (w.x1 - w.x0)) * pw;
+  const py = (y: number) => ph - ((y - w.y0) / (w.y1 - w.y0)) * ph;
+  const span = w.y1 - w.y0;
   let prev: number | null = null;
   for (let i = 0; i <= SAMPLES; i++) {
-    const x = x0 + ((x1 - x0) * i) / SAMPLES;
-    let y: number;
-    try { y = f(x); } catch { y = NaN; }
-    const inWorld = Number.isFinite(y) && y >= y0 - (y1 - y0) && y <= y1 + (y1 - y0);
-    // A jump larger than the whole visible height between two adjacent samples
+    const x = w.x0 + ((w.x1 - w.x0) * i) / SAMPLES;
+    const y = f(x);
+    const inWorld = Number.isFinite(y) && y >= w.y0 - span && y <= w.y1 + span;
+    // A jump larger than twice the visible height between two adjacent samples
     // is a pole, not a line. Break rather than draw the join.
-    const jumped = prev !== null && Number.isFinite(y) && Math.abs(y - prev) > (y1 - y0) * 2;
+    const jumped = prev !== null && Number.isFinite(y) && Math.abs(y - prev) > span * 2;
     if (!inWorld || jumped) {
       if (cur.length > 1) out.push(cur.join(" "));
       cur = [];
@@ -256,17 +156,18 @@ function paths(f: (x: number) => number, x0: number, x1: number,
   return out;
 }
 
-/** A y-window that shows the function rather than its worst sample. The median
- *  absolute value sets the scale, so one spike near an asymptote cannot flatten
- *  everything else into a horizontal line. */
-function yWindow(f: (x: number) => number, x0: number, x1: number): [number, number] {
+/** A y-window that shows the functions rather than their worst sample. The
+ *  2nd–98th percentile sets the scale, so one spike near an asymptote cannot
+ *  flatten everything else into a horizontal line. */
+function autoY(fs: ((x: number) => number)[], x0: number, x1: number): [number, number] {
   const vals: number[] = [];
-  for (let i = 0; i <= 200; i++) {
-    let v: number;
-    try { v = f(x0 + ((x1 - x0) * i) / 200); } catch { continue; }
-    if (Number.isFinite(v)) vals.push(v);
+  for (const f of fs) {
+    for (let i = 0; i <= 240; i++) {
+      const v = f(x0 + ((x1 - x0) * i) / 240);
+      if (Number.isFinite(v)) vals.push(v);
+    }
   }
-  if (!vals.length) return [-1, 1];
+  if (!vals.length) return [-10, 10];
   const sorted = [...vals].sort((a, b) => a - b);
   const lo = sorted[Math.floor(sorted.length * 0.02)];
   const hi = sorted[Math.ceil(sorted.length * 0.98) - 1];
@@ -278,63 +179,185 @@ function yWindow(f: (x: number) => number, x0: number, x1: number): [number, num
 
 /** Round grid steps a person recognises: 1, 2, 5 and their decades. */
 function step(span: number): number {
-  const raw = span / 6;
+  const raw = span / 7;
   const mag = Math.pow(10, Math.floor(Math.log10(raw)));
   const n = raw / mag;
   return (n >= 5 ? 5 : n >= 2 ? 2 : 1) * mag;
 }
 
-/** A tick label, short. A plot axis has no room for `6.283185307179586`, and
- *  the point of the number is the scale rather than the value. */
+/** A tick label, short. An axis has no room for `6.283185307179586`, and the
+ *  point of the number is the scale rather than the value. */
 function tick(v: number): string {
-  if (v === 0) return "0";
+  if (Math.abs(v) < 1e-12) return "0";
   const a = Math.abs(v);
   if (a >= 1e5 || a < 1e-3) return v.toExponential(0);
   return String(Number(v.toPrecision(4)));
 }
 
-function Plot({ f, x0, x1 }: { f: (x: number) => number; x0: number; x1: number }) {
+type Curve = { id: number; src: string; on: boolean };
+
+function Plot({ curves, nodes, win, setWin, deg }: {
+  curves: Curve[];
+  nodes: (Node | null)[];
+  win: Win;
+  setWin: (w: Win) => void;
+  deg: boolean;
+}) {
   // Margins, because a plot without numbered axes is a picture of a curve
   // rather than a reading of one. `sin(x)/x` in degree mode over ±10 is a flat
-  // line at y ≈ 0.019 — correct, and indistinguishable from a broken plot until
-  // the axis says 0.019.
-  const W = 380, H = 232, L = 42, B = 20, T = 8, R = 8;
+  // line at y ≈ 0.019 — correct, and indistinguishable from a broken plot
+  // until the axis says 0.019.
+  const W = 520, H = 340, L = 46, B = 24, T = 10, R = 10;
   const pw = W - L - R, ph = H - T - B;
-  const [y0, y1] = useMemo(() => yWindow(f, x0, x1), [f, x0, x1]);
-  const segs = useMemo(() => paths(f, x0, x1, y0, y1, pw, ph), [f, x0, x1, y0, y1, pw, ph]);
-  const px = (x: number) => L + ((x - x0) / (x1 - x0)) * pw;
-  const py = (y: number) => T + ph - ((y - y0) / (y1 - y0)) * ph;
-  const sx = step(x1 - x0), sy = step(y1 - y0);
+  const svg = useRef<SVGSVGElement>(null);
+  const [trace, setTrace] = useState<number | null>(null);
+  const drag = useRef<{ x: number; y: number; win: Win } | null>(null);
+
+  const fs = useMemo(
+    () => nodes.map(n => (n ? sampler(n, "x", { deg }) : () => NaN)),
+    [nodes, deg]);
+
+  const segs = useMemo(
+    () => fs.map((f, i) => (curves[i]?.on && nodes[i] ? paths(f, win, pw, ph) : [])),
+    [fs, curves, nodes, win, pw, ph]);
+
+  const px = (x: number) => L + ((x - win.x0) / (win.x1 - win.x0)) * pw;
+  const py = (y: number) => T + ph - ((y - win.y0) / (win.y1 - win.y0)) * ph;
+  const sx = step(win.x1 - win.x0), sy = step(win.y1 - win.y0);
   const xs: number[] = [], ys: number[] = [];
-  for (let v = Math.ceil(x0 / sx) * sx; v <= x1 + 1e-9; v += sx) xs.push(Number(v.toFixed(10)));
-  for (let v = Math.ceil(y0 / sy) * sy; v <= y1 + 1e-9; v += sy) ys.push(Number(v.toFixed(10)));
+  for (let v = Math.ceil(win.x0 / sx) * sx; v <= win.x1 + 1e-9; v += sx)
+    xs.push(Number(v.toFixed(10)));
+  for (let v = Math.ceil(win.y0 / sy) * sy; v <= win.y1 + 1e-9; v += sy)
+    ys.push(Number(v.toFixed(10)));
+
+  /** Viewport pixels → world units. The SVG scales to its box, so the ratio
+   *  has to come from the live rect rather than from W and H. */
+  const world = (ev: { clientX: number; clientY: number }) => {
+    const r = svg.current?.getBoundingClientRect();
+    if (!r) return null;
+    const vx = ((ev.clientX - r.left) / r.width) * W;
+    const vy = ((ev.clientY - r.top) / r.height) * H;
+    return {
+      x: win.x0 + ((vx - L) / pw) * (win.x1 - win.x0),
+      y: win.y0 + ((T + ph - vy) / ph) * (win.y1 - win.y0),
+      vx, vy,
+    };
+  };
+
+  const onMove = (ev: React.PointerEvent) => {
+    const w = world(ev);
+    if (!w) return;
+    if (drag.current) {
+      // Pan: the point under the pointer stays under the pointer.
+      const dx = ((ev.clientX - drag.current.x) / (svg.current!.getBoundingClientRect().width))
+                 * W / pw * (drag.current.win.x1 - drag.current.win.x0);
+      const dy = ((ev.clientY - drag.current.y) / (svg.current!.getBoundingClientRect().height))
+                 * H / ph * (drag.current.win.y1 - drag.current.win.y0);
+      const b = drag.current.win;
+      setWin({ x0: b.x0 - dx, x1: b.x1 - dx, y0: b.y0 + dy, y1: b.y1 + dy });
+      return;
+    }
+    setTrace(w.vx >= L && w.vx <= L + pw ? w.x : null);
+  };
+
+  const zoom = (k: number, at?: { x: number; y: number }) => {
+    const cx = at?.x ?? (win.x0 + win.x1) / 2;
+    const cy = at?.y ?? (win.y0 + win.y1) / 2;
+    setWin({
+      x0: cx + (win.x0 - cx) * k, x1: cx + (win.x1 - cx) * k,
+      y0: cy + (win.y0 - cy) * k, y1: cy + (win.y1 - cy) * k,
+    });
+  };
+
+  // Wheel-zoom is bound by hand rather than with `onWheel`, because React
+  // registers wheel at the root as a *passive* listener: the zoom would work
+  // and the dock would scroll underneath it at the same time. A plot that
+  // slides away while you zoom into it is worse than one that does not zoom.
+  useEffect(() => {
+    const el = svg.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const w = world(e);
+      zoom(e.deltaY > 0 ? 1.15 : 1 / 1.15, w ?? undefined);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  });
 
   return (
-    <svg className="calc-plot" viewBox={`0 0 ${W} ${H}`} role="img"
-         aria-label={`plot from x = ${show(x0)} to x = ${show(x1)}, `
-                     + `y from ${show(y0)} to ${show(y1)}`}>
-      {xs.map(v => (
-        <g key={`x${v}`}>
-          <line className="calc-grid" x1={px(v)} y1={T} x2={px(v)} y2={T + ph} />
-          <text className="calc-tick" x={px(v)} y={H - 6} textAnchor="middle">{tick(v)}</text>
+    <div className="calc-plotwrap">
+      <svg ref={svg} className="calc-plot" viewBox={`0 0 ${W} ${H}`}
+           role="img" aria-label={`plot, x from ${show(win.x0)} to ${show(win.x1)}, `
+                                  + `y from ${show(win.y0)} to ${show(win.y1)}`}
+           onPointerDown={e => {
+             drag.current = { x: e.clientX, y: e.clientY, win };
+             (e.target as Element).setPointerCapture?.(e.pointerId);
+           }}
+           onPointerUp={e => {
+             drag.current = null;
+             (e.target as Element).releasePointerCapture?.(e.pointerId);
+           }}
+           onPointerLeave={() => { drag.current = null; setTrace(null); }}
+           onPointerMove={onMove}>
+        {xs.map(v => (
+          <g key={`x${v}`}>
+            <line className="calc-grid" x1={px(v)} y1={T} x2={px(v)} y2={T + ph} />
+            <text className="calc-tick" x={px(v)} y={H - 8} textAnchor="middle">{tick(v)}</text>
+          </g>
+        ))}
+        {ys.map(v => (
+          <g key={`y${v}`}>
+            <line className="calc-grid" x1={L} y1={py(v)} x2={L + pw} y2={py(v)} />
+            <text className="calc-tick" x={L - 6} y={py(v) + 4} textAnchor="end">{tick(v)}</text>
+          </g>
+        ))}
+        {win.y0 <= 0 && win.y1 >= 0 && (
+          <line className="calc-axis" x1={L} y1={py(0)} x2={L + pw} y2={py(0)} />
+        )}
+        {win.x0 <= 0 && win.x1 >= 0 && (
+          <line className="calc-axis" x1={px(0)} y1={T} x2={px(0)} y2={T + ph} />
+        )}
+        <g transform={`translate(${L} ${T})`}>
+          {segs.map((ss, i) => ss.map((d, j) => (
+            <path key={`${i}-${j}`} className="calc-curve" d={d}
+                  style={{ stroke: `var(--curve-${(i % CURVES) + 1})` }} />
+          )))}
         </g>
-      ))}
-      {ys.map(v => (
-        <g key={`y${v}`}>
-          <line className="calc-grid" x1={L} y1={py(v)} x2={L + pw} y2={py(v)} />
-          <text className="calc-tick" x={L - 5} y={py(v) + 3} textAnchor="end">{tick(v)}</text>
-        </g>
-      ))}
-      {y0 <= 0 && y1 >= 0 && (
-        <line className="calc-axis" x1={L} y1={py(0)} x2={L + pw} y2={py(0)} />
-      )}
-      {x0 <= 0 && x1 >= 0 && (
-        <line className="calc-axis" x1={px(0)} y1={T} x2={px(0)} y2={T + ph} />
-      )}
-      <g transform={`translate(${L} ${T})`}>
-        {segs.map((d, i) => <path key={i} className="calc-curve" d={d} />)}
-      </g>
-    </svg>
+        {trace !== null && (
+          <g className="calc-trace">
+            <line x1={px(trace)} y1={T} x2={px(trace)} y2={T + ph} />
+            {fs.map((f, i) => {
+              if (!curves[i]?.on || !nodes[i]) return null;
+              const y = f(trace);
+              if (!Number.isFinite(y) || y < win.y0 || y > win.y1) return null;
+              return <circle key={i} cx={px(trace)} cy={py(y)} r={3.5}
+                             style={{ fill: `var(--curve-${(i % CURVES) + 1})` }} />;
+            })}
+          </g>
+        )}
+      </svg>
+
+      <div className="calc-readout">
+        {trace === null ? (
+          <span className="dim">drag to pan · scroll to zoom · hover to read a value</span>
+        ) : (
+          <>
+            <span className="calc-at">x = {show(trace, 6)}</span>
+            {fs.map((f, i) => {
+              if (!curves[i]?.on || !nodes[i]) return null;
+              const y = f(trace);
+              return (
+                <span key={i} className="calc-yv">
+                  <i style={{ background: `var(--curve-${(i % CURVES) + 1})` }} />
+                  {Number.isFinite(y) ? show(y, 6) : "—"}
+                </span>
+              );
+            })}
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -344,22 +367,45 @@ function Plot({ f, x0, x1 }: { f: (x: number) => number; x0: number; x1: number 
 
 type Tape = { src: string; out: string; ok: boolean };
 
-/** The keypad. Only the keys that are faster to hit than to type — a full
- *  0–9 grid next to a focused text field is furniture, not a feature. */
-const KEYS: [string, string][] = [
-  ["(", "("], [")", ")"], ["^", "^"], ["√", "sqrt("],
-  ["π", "pi"], ["sin", "sin("], ["cos", "cos("], ["tan", "tan("],
-];
-
 export default function Calculator(
   { scratchAppend }: { scratchAppend?: (line: string) => void },
 ) {
+  const [mode, setMode] = useState<Mode>(() => {
+    try {
+      const m = localStorage.getItem(MODE_KEY);
+      return m === "graph" || m === "algebra" ? m : "calc";
+    } catch { return "calc"; }
+  });
+  const [deg, setDeg] = useState(() => {
+    try { return localStorage.getItem(DEG_KEY) !== "rad"; } catch { return true; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(MODE_KEY, mode); } catch { /* private mode */ }
+  }, [mode]);
+  useEffect(() => {
+    try { localStorage.setItem(DEG_KEY, deg ? "deg" : "rad"); } catch { /* private mode */ }
+  }, [deg]);
+
+  // ---- calc pane
   const [src, setSrc] = useState("");
-  const [deg, setDeg] = useState(true);
   const [tape, setTape] = useState<Tape[]>([]);
   const [ans, setAns] = useState(0);
-  const [range, setRange] = useState<[number, number]>([-10, 10]);
+  const [mem, setMem] = useState(0);
+  const [inv, setInv] = useState(false);
   const input = useRef<HTMLInputElement>(null);
+
+  // ---- graph pane
+  const [curves, setCurves] = useState<Curve[]>([{ id: 1, src: "", on: true }]);
+  const [win, setWin] = useState<Win>({ x0: -10, x1: 10, y0: -10, y1: 10 });
+  const [autoWin, setAutoWin] = useState(true);
+
+  // ---- algebra pane
+  const [aSrc, setASrc] = useState("");
+  const [aVar, setAVar] = useState("x");
+  const [out, setOut] = useState<CasOut | null>(null);
+  const [aErr, setAErr] = useState<string | null>(null);
+
+  /* ----------------------------------------------------------- calc pane */
 
   // Compiled on every keystroke so the answer is live, and so an error names
   // itself while you are still looking at the thing that caused it.
@@ -367,117 +413,441 @@ export default function Calculator(
     const s = src.trim();
     if (!s) return null;
     try {
-      const c = compile(s, deg, ans);
-      return { c, err: null as string | null };
+      const node = parse(s);
+      return { node, err: null as string | null };
     } catch (e) {
-      return { c: null, err: e instanceof Error ? e.message : String(e) };
+      return { node: null, err: e instanceof Error ? e.message : String(e) };
     }
-  }, [src, deg, ans]);
+  }, [src]);
 
-  const value = live?.c && !live.c.usesX ? live.c.at(0) : null;
+  const freeVars = live?.node ? varsOf(live.node).filter(v => v !== "ans") : [];
+  const value = useMemo(() => {
+    if (!live?.node || freeVars.length) return null;
+    try {
+      const v = evaluate(live.node, { deg, env: { ans } });
+      return Number.isNaN(v) ? null : v;
+    } catch { return null; }
+  }, [live, deg, ans, freeVars.length]);
+
+  const insert = (frag: string) => {
+    const el = input.current;
+    const caret = frag.indexOf("#");
+    const text = frag.replace("#", "");
+    if (!el) { setSrc(s => s + text); return; }
+    const a = el.selectionStart ?? src.length, b = el.selectionEnd ?? src.length;
+    const next = src.slice(0, a) + text + src.slice(b);
+    setSrc(next);
+    // The caret lands where the `#` was — inside `sin(|)`, not after it.
+    const at = a + (caret >= 0 ? caret : text.length);
+    requestAnimationFrame(() => { el.focus(); el.setSelectionRange(at, at); });
+  };
 
   const commit = () => {
     if (!live) return;
-    if (live.err) { setTape(t => [...t, { src, out: live.err!, ok: false }].slice(-40)); return; }
-    const c = live.c!;
-    const out = c.usesX ? "plotted" : show(c.at(0));
-    if (!c.usesX) setAns(c.at(0));
-    setTape(t => [...t, { src, out, ok: true }].slice(-40));
+    if (live.err) {
+      setTape(t => [...t, { src, out: live.err!, ok: false }].slice(-40));
+      return;
+    }
+    if (freeVars.length) {
+      // A field with an `x` in it is a function, and the answer to a function
+      // is a graph. Hand it to the pane that draws one rather than refusing.
+      toGraph(src.trim());
+      return;
+    }
+    const v = evaluate(live.node!, { deg, env: { ans } });
+    setAns(v);
+    setTape(t => [...t, { src, out: show(v), ok: true }].slice(-40));
     setSrc("");
   };
 
-  const insert = (frag: string) => {
-    setSrc(s => s + frag);
-    input.current?.focus();
+  const act = (a: NonNullable<Key["act"]>) => {
+    switch (a) {
+      case "clear": setSrc(""); input.current?.focus(); break;
+      case "back": {
+        const el = input.current;
+        const at = el?.selectionStart ?? src.length;
+        if (at > 0) {
+          setSrc(src.slice(0, at - 1) + src.slice(el?.selectionEnd ?? at));
+          requestAnimationFrame(() => {
+            el?.focus(); el?.setSelectionRange(at - 1, at - 1);
+          });
+        }
+        break;
+      }
+      case "equals": commit(); break;
+      case "sign": setSrc(s => (s.startsWith("-(") && s.endsWith(")")
+        ? s.slice(2, -1) : s.trim() ? `-(${s})` : "-")); break;
+      case "deg": setDeg(d => !d); break;
+      case "inv": setInv(i => !i); break;
+      case "mc": setMem(0); break;
+      case "mr": insert(show(mem)); break;
+      case "mplus": setMem(m => m + (value ?? ans)); break;
+      case "mminus": setMem(m => m - (value ?? ans)); break;
+    }
   };
+
+  /* ---------------------------------------------------------- graph pane */
+
+  const nodes = useMemo(
+    () => curves.map(c => {
+      const s = c.src.trim();
+      if (!s) return null;
+      try { return parse(s); } catch { return null; }
+    }), [curves]);
+
+  const errs = useMemo(
+    () => curves.map(c => {
+      const s = c.src.trim();
+      if (!s) return null;
+      try { parse(s); return null; }
+      catch (e) { return e instanceof Error ? e.message : String(e); }
+    }), [curves]);
+
+  // The y-window follows the curves while it is on auto, and stops the moment
+  // you touch a number or drag the plot — an auto-fit that keeps snapping back
+  // over your own pan is a plot you cannot steer.
+  useEffect(() => {
+    if (!autoWin) return;
+    const fs = nodes
+      .map((n, i) => (n && curves[i].on ? sampler(n, "x", { deg }) : null))
+      .filter((f): f is (x: number) => number => f !== null);
+    if (!fs.length) return;
+    const [y0, y1] = autoY(fs, win.x0, win.x1);
+    setWin(w => (Math.abs(w.y0 - y0) < 1e-9 && Math.abs(w.y1 - y1) < 1e-9
+      ? w : { ...w, y0, y1 }));
+  }, [nodes, curves, deg, autoWin, win.x0, win.x1]);
+
+  const toGraph = (s: string) => {
+    setCurves(cs => {
+      const empty = cs.findIndex(c => !c.src.trim());
+      if (empty >= 0) {
+        const next = [...cs];
+        next[empty] = { ...next[empty], src: s, on: true };
+        return next;
+      }
+      if (cs.length >= CURVES) return [...cs.slice(0, -1), { ...cs[cs.length - 1], src: s, on: true }];
+      return [...cs, { id: Math.max(0, ...cs.map(c => c.id)) + 1, src: s, on: true }];
+    });
+    setMode("graph");
+  };
+
+  /* -------------------------------------------------------- algebra pane */
+
+  const aVars = useMemo(() => {
+    try {
+      const { lhs, rhs } = parseEquation(aSrc);
+      const vs = [...varsOf(lhs), ...varsOf(rhs)].filter((v, i, a) => a.indexOf(v) === i);
+      return vs.length ? vs : ["x"];
+    } catch { return ["x"]; }
+  }, [aSrc]);
+  useEffect(() => {
+    if (!aVars.includes(aVar)) setAVar(aVars[0]);
+  }, [aVars, aVar]);
+
+  const doOp = (op: Op) => {
+    setAErr(null);
+    try {
+      const { lhs, rhs } = parseEquation(aSrc);
+      if (op === "solve" || !aSrc.includes("=")) {
+        setOut(casRun(op, lhs, rhs, aVar));
+        return;
+      }
+      // An equation handed to simplify/expand/factor/d/dx is two expressions,
+      // and doing the operation to the left side alone would silently drop
+      // half the input. Move it all to one side first, and say so.
+      setOut({
+        ...casRun(op, sub(lhs, rhs), ZERO, aVar),
+        note: "applied to (left − right), since you gave an equation",
+      });
+    } catch (e) {
+      setOut(null);
+      setAErr(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  /* ------------------------------------------------------------- render */
 
   return (
     <div className="calc">
-      <div className="calc-head">
-        <div className="wb-seg" role="group" aria-label="Angle unit">
-          <button className={deg ? "on" : ""} onClick={() => setDeg(true)}>deg</button>
-          <button className={!deg ? "on" : ""} onClick={() => setDeg(false)}>rad</button>
-        </div>
-        {tape.length > 0 && (
-          <button className="wb-btn wb-btn-quiet" onClick={() => setTape([])}>clear tape</button>
-        )}
-      </div>
-
-      {tape.length > 0 && (
-        <ol className="calc-tape">
-          {tape.map((t, i) => (
-            <li key={i} className={t.ok ? "" : "bad"}>
-              <button className="calc-recall" title="put this back in the field"
-                      onClick={() => insert(t.src)}>{t.src}</button>
-              <span className="calc-out">{t.ok ? `= ${t.out}` : t.out}</span>
-            </li>
-          ))}
-        </ol>
-      )}
-
-      <input ref={input} className="calc-in" value={src} spellCheck={false}
-             placeholder="40 * 0.3   ·   sin(30)   ·   x^2 - 4"
-             aria-label="Expression"
-             onChange={e => setSrc(e.target.value)}
-             onKeyDown={e => {
-               if (e.key === "Enter") { e.preventDefault(); commit(); }
-               // The workbench binds single letters; a calculator field must
-               // keep its own keystrokes.
-               e.stopPropagation();
-             }} />
-
-      <div className="calc-keys">
-        {KEYS.map(([label, frag]) => (
-          <button key={label} className="wb-btn" onClick={() => insert(frag)}>{label}</button>
+      <div className="calc-modes wb-seg" role="tablist" aria-label="Calculator mode">
+        {(["calc", "graph", "algebra"] as Mode[]).map(m => (
+          <button key={m} role="tab" aria-selected={mode === m}
+                  className={mode === m ? "on" : ""}
+                  onClick={() => setMode(m)}>
+            {m === "calc" ? "Calculator" : m === "graph" ? "Graph" : "Algebra"}
+          </button>
         ))}
       </div>
 
-      {live?.err && src.trim() && <p className="calc-err">{live.err}</p>}
+      {mode === "calc" && (
+        <>
+          <div className="calc-head">
+            <div className="wb-seg" role="group" aria-label="Angle unit">
+              <button className={deg ? "on" : ""} onClick={() => setDeg(true)}>deg</button>
+              <button className={!deg ? "on" : ""} onClick={() => setDeg(false)}>rad</button>
+            </div>
+            {mem !== 0 && (
+              <button className="wb-btn wb-btn-quiet" onClick={() => act("mc")}
+                      title="clear the memory">M = {show(mem, 6)} ✕</button>
+            )}
+            {tape.length > 0 && (
+              <button className="wb-btn wb-btn-quiet" onClick={() => setTape([])}>
+                clear tape
+              </button>
+            )}
+          </div>
 
-      {value !== null && (
-        <p className="calc-now">
-          <span className="calc-eq">=</span>
-          <span className="calc-val">{show(value)}</span>
-          {scratchAppend && (
-            <button className="wb-btn wb-btn-quiet"
-                    title="append this line to the work pad"
-                    onClick={() => scratchAppend(`${src.trim()} = ${show(value)}`)}>
-              → work
-            </button>
+          {tape.length > 0 && (
+            <ol className="calc-tape">
+              {tape.map((t, i) => (
+                <li key={i} className={t.ok ? "" : "bad"}>
+                  <button className="calc-recall" title="put this back in the field"
+                          onClick={() => insert(t.src)}>{t.src}</button>
+                  <span className="calc-out">{t.ok ? `= ${t.out}` : t.out}</span>
+                </li>
+              ))}
+            </ol>
           )}
-        </p>
+
+          <div className="calc-display">
+            <input ref={input} className="calc-in" value={src} spellCheck={false}
+                   placeholder="40 * 0.3   ·   sin(30)   ·   2^10"
+                   aria-label="Expression"
+                   onChange={e => setSrc(e.target.value)}
+                   onKeyDown={e => {
+                     if (e.key === "Enter") { e.preventDefault(); commit(); }
+                     // The workbench binds single letters; a calculator field
+                     // must keep its own keystrokes.
+                     e.stopPropagation();
+                   }} />
+            <p className="calc-now">
+              <span className="calc-eq">=</span>
+              <span className="calc-val">
+                {live?.err ? <span className="calc-err">{live.err}</span>
+                  : freeVars.length ? <span className="dim">
+                      a function of {freeVars.join(", ")} — Enter graphs it
+                    </span>
+                  : value !== null ? show(value)
+                  : <span className="dim">{show(ans)}</span>}
+              </span>
+              {scratchAppend && value !== null && (
+                <button className="wb-btn wb-btn-quiet"
+                        title="append this line to the work pad"
+                        onClick={() => scratchAppend(`${src.trim()} = ${show(value)}`)}>
+                  → work
+                </button>
+              )}
+            </p>
+          </div>
+
+          <div className={`calc-pad ${inv ? "is-inv" : ""}`}>
+            {KEYS.map((k, i) => {
+              const second = inv && k.ins2 !== undefined;
+              const label = second ? k.t2! : k.t;
+              // Only `2nd` lights up. The angle key *shows* the current unit
+              // rather than lighting when it is one of the two — a key reading
+              // "rad" and highlighted is two signals for one fact, and the
+              // segmented control above already says which is selected.
+              const on = k.act === "inv" && inv;
+              return (
+                <button key={i} type="button"
+                        className={`calc-key ${k.cls ? `k-${k.cls}` : ""} ${on ? "on" : ""}`}
+                        title={k.title ?? (k.t2 ? `2nd: ${k.t2}` : undefined)}
+                        onClick={() => {
+                          if (k.act) act(k.act);
+                          else insert(second ? k.ins2! : k.ins!);
+                          if (second) setInv(false);   // 2nd is one key deep
+                        }}>
+                  {k.act === "deg" ? (deg ? "deg" : "rad") : label}
+                </button>
+              );
+            })}
+          </div>
+
+          <p className="calc-note dim">
+            Enter keeps the line and stores <code>ans</code>. Implicit products
+            (<code>2x</code>, <code>3(x+1)</code>) and <code>!</code> are read the
+            way you write them.
+          </p>
+        </>
       )}
 
-      {live?.c?.usesX && (
+      {mode === "graph" && (
         <>
-          <Plot f={live.c.at} x0={range[0]} x1={range[1]} />
-          <div className="calc-range">
-            <span className="dim">x from</span>
-            <input type="number" value={range[0]} aria-label="x minimum"
-                   onChange={e => setRange(([, b]) => [Number(e.target.value), b])}
-                   onKeyDown={e => e.stopPropagation()} />
-            <span className="dim">to</span>
-            <input type="number" value={range[1]} aria-label="x maximum"
-                   onChange={e => setRange(([a]) => [a, Number(e.target.value)])}
-                   onKeyDown={e => e.stopPropagation()} />
-            <button className="wb-btn wb-btn-quiet"
-                    onClick={() => setRange(([a, b]) => {
-                      const m = (a + b) / 2, half = (b - a) / 4;
-                      return [m - half, m + half];
-                    })}>in</button>
-            <button className="wb-btn wb-btn-quiet"
-                    onClick={() => setRange(([a, b]) => {
-                      const m = (a + b) / 2, half = b - a;
-                      return [m - half, m + half];
-                    })}>out</button>
+          <div className="calc-fns">
+            {curves.map((c, i) => (
+              <div key={c.id} className="calc-fn">
+                <button className={`calc-swatch ${c.on ? "" : "off"}`}
+                        style={{ background: `var(--curve-${(i % CURVES) + 1})` }}
+                        title={c.on ? "hide this curve" : "show this curve"}
+                        aria-label={c.on ? "hide this curve" : "show this curve"}
+                        onClick={() => setCurves(cs => cs.map(
+                          (x, j) => (j === i ? { ...x, on: !x.on } : x)))} />
+                <span className="calc-fn-y">y =</span>
+                <input className="calc-fn-in" value={c.src} spellCheck={false}
+                       placeholder={i === 0 ? "x^2 - 4" : "another curve"}
+                       aria-label={`function ${i + 1}`}
+                       onChange={e => setCurves(cs => cs.map(
+                         (x, j) => (j === i ? { ...x, src: e.target.value } : x)))}
+                       onKeyDown={e => e.stopPropagation()} />
+                {curves.length > 1 && (
+                  <button className="calc-fn-x" title="remove this curve"
+                          aria-label="remove this curve"
+                          onClick={() => setCurves(cs => cs.filter((_, j) => j !== i))}>
+                    ✕
+                  </button>
+                )}
+              </div>
+            ))}
+            {errs.map((e, i) => e && (
+              <p key={i} className="calc-err">y{i + 1}: {e}</p>
+            ))}
+            {curves.length < CURVES && (
+              <button className="wb-btn wb-btn-quiet calc-add"
+                      onClick={() => setCurves(cs => [...cs,
+                        { id: Math.max(0, ...cs.map(c => c.id)) + 1, src: "", on: true }])}>
+                + another curve
+              </button>
+            )}
+          </div>
+
+          <Plot curves={curves} nodes={nodes} win={win} deg={deg}
+                setWin={w => { setAutoWin(false); setWin(w); }} />
+
+          <div className="calc-win">
+            <label>x <input type="number" value={win.x0} aria-label="x minimum"
+                            onChange={e => setWin(w => ({ ...w, x0: Number(e.target.value) }))}
+                            onKeyDown={e => e.stopPropagation()} /></label>
+            <label>to <input type="number" value={win.x1} aria-label="x maximum"
+                             onChange={e => setWin(w => ({ ...w, x1: Number(e.target.value) }))}
+                             onKeyDown={e => e.stopPropagation()} /></label>
+            <label>y <input type="number" value={Number(win.y0.toPrecision(6))}
+                            aria-label="y minimum" disabled={autoWin}
+                            onChange={e => setWin(w => ({ ...w, y0: Number(e.target.value) }))}
+                            onKeyDown={e => e.stopPropagation()} /></label>
+            <label>to <input type="number" value={Number(win.y1.toPrecision(6))}
+                             aria-label="y maximum" disabled={autoWin}
+                             onChange={e => setWin(w => ({ ...w, y1: Number(e.target.value) }))}
+                             onKeyDown={e => e.stopPropagation()} /></label>
+          </div>
+          <div className="calc-winbtns">
+            <div className="wb-seg" role="group" aria-label="y fit">
+              <button className={autoWin ? "on" : ""} onClick={() => setAutoWin(true)}>
+                fit y
+              </button>
+              <button className={!autoWin ? "on" : ""} onClick={() => setAutoWin(false)}>
+                manual
+              </button>
+            </div>
+            <button className="wb-btn wb-btn-quiet" onClick={() => {
+              setAutoWin(false);
+              setWin(w => {
+                const cx = (w.x0 + w.x1) / 2, cy = (w.y0 + w.y1) / 2;
+                return { x0: cx + (w.x0 - cx) / 2, x1: cx + (w.x1 - cx) / 2,
+                         y0: cy + (w.y0 - cy) / 2, y1: cy + (w.y1 - cy) / 2 };
+              });
+            }}>zoom in</button>
+            <button className="wb-btn wb-btn-quiet" onClick={() => {
+              setAutoWin(false);
+              setWin(w => {
+                const cx = (w.x0 + w.x1) / 2, cy = (w.y0 + w.y1) / 2;
+                return { x0: cx + (w.x0 - cx) * 2, x1: cx + (w.x1 - cx) * 2,
+                         y0: cy + (w.y0 - cy) * 2, y1: cy + (w.y1 - cy) * 2 };
+              });
+            }}>zoom out</button>
+            <button className="wb-btn wb-btn-quiet" onClick={() => {
+              setAutoWin(true);
+              setWin({ x0: -10, x1: 10, y0: -10, y1: 10 });
+            }}>reset</button>
+            <div className="wb-seg" role="group" aria-label="Angle unit">
+              <button className={deg ? "on" : ""} onClick={() => setDeg(true)}>deg</button>
+              <button className={!deg ? "on" : ""} onClick={() => setDeg(false)}>rad</button>
+            </div>
           </div>
         </>
       )}
 
-      <p className="calc-note dim">
-        Enter evaluates and keeps the line. <code>ans</code> is the last result;
-        write <code>x</code> anywhere to get a plot instead of a number.
-      </p>
+      {mode === "algebra" && (
+        <>
+          <input className="calc-in" value={aSrc} spellCheck={false}
+                 placeholder="x^2 - 5x + 6 = 0   ·   sin(x)/x   ·   (x+1)^3"
+                 aria-label="Expression or equation"
+                 onChange={e => setASrc(e.target.value)}
+                 onKeyDown={e => {
+                   if (e.key === "Enter") { e.preventDefault(); doOp("simplify"); }
+                   e.stopPropagation();
+                 }} />
+
+          <div className="calc-ops">
+            <button className="wb-btn" onClick={() => doOp("simplify")}>Simplify</button>
+            <button className="wb-btn" onClick={() => doOp("expand")}>Expand</button>
+            <button className="wb-btn" onClick={() => doOp("factor")}>Factor</button>
+            <button className="wb-btn" onClick={() => doOp("diff")}>d/d{aVar}</button>
+            <button className="wb-btn" onClick={() => doOp("integrate")}>∫ d{aVar}</button>
+            <button className="wb-btn wb-btn-primary" onClick={() => doOp("solve")}>
+              Solve
+            </button>
+            {aVars.length > 1 && (
+              <label className="calc-var">
+                in
+                <select value={aVar} onChange={e => setAVar(e.target.value)}
+                        onKeyDown={e => e.stopPropagation()}>
+                  {aVars.map(v => <option key={v} value={v}>{v}</option>)}
+                </select>
+              </label>
+            )}
+          </div>
+
+          {aErr && <p className="calc-err">{aErr}</p>}
+
+          {out && (
+            <div className="calc-res">
+              <p className="calc-res-h">{out.label}</p>
+              {out.tex && <MathBlock tex={out.tex} />}
+              {out.roots && (out.roots.length ? (
+                <ul className="calc-roots">
+                  {out.roots.map((r, i) => (
+                    <li key={i}>
+                      <MathBlock tex={`${aVar} = ${r.tex}`} />
+                      {r.value !== null && !/^[-\d.]+$/.test(r.tex) && (
+                        <span className="dim">≈ {show(r.value, 8)}</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              ) : <p className="dim">no solution found</p>)}
+              {out.note && <p className="calc-res-n dim">{out.note}</p>}
+              <div className="calc-res-act">
+                {scratchAppend && (out.text || out.roots) && (
+                  <button className="wb-btn wb-btn-quiet"
+                          title="append this to the work pad"
+                          onClick={() => scratchAppend(out.text
+                            ? `${aSrc.trim()}  →  ${out.text}`
+                            : `${aSrc.trim()}  →  ${aVar} = ${out.roots!
+                                .map(r => (r.value !== null ? show(r.value, 8) : r.tex))
+                                .join(", ")}`)}>
+                    → work
+                  </button>
+                )}
+                {out.text && (
+                  <button className="wb-btn wb-btn-quiet"
+                          title="draw this in the graph pane"
+                          onClick={() => toGraph(out.text!)}>
+                    → graph
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          <p className="calc-note dim">
+            Write an equation with <code>=</code> to solve it, or an expression on
+            its own. The algebra works in <b>radians</b> and over the rationals —
+            when something does not factor or integrate in that world it says so
+            rather than guessing.
+          </p>
+        </>
+      )}
     </div>
   );
 }

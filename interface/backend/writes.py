@@ -1080,6 +1080,12 @@ class AttemptReq(BaseModel):
     hints: int = 0                 # how many hints were open when it resolved
     revealed: bool = False         # the solution was shown before resolving
     answer: str | None = None      # what was typed, for the record
+    # How many answers were actually checked. A reveal is not one, and neither
+    # is a skip — see the workbench's `resolve`. Unset means the client predates
+    # the retry flow, where an answered question had exactly one try and a
+    # skipped one had none; both are filled in below rather than defaulted to a
+    # single number, because "1" on a skip would read as a wrong answer.
+    tries: int | None = None
 
 
 @router.post("/lesson/attempt")
@@ -1116,6 +1122,8 @@ def api_lesson_attempt(req: AttemptReq):
         "kind": item["kind"], "seg": seg["n"], "seg_title": seg["title"],
         "result": req.result, "hints": max(0, req.hints),
         "revealed": bool(req.revealed),
+        "tries": max(0, min(99, req.tries if req.tries is not None
+                            else (0 if req.result == "skipped" else 1))),
     }
     if req.checkpoint is not None:
         row["checkpoint"] = req.checkpoint
@@ -1250,6 +1258,18 @@ def api_lesson_session_end(req: SessionEnd):
     correct = [r for r in answered if r["result"] == "correct"]
     wrong = [r for r in answered if r["result"] == "wrong"]
     skipped = [r for r in rows if r.get("result") == "skipped"]
+    # Right, but not first time. The workbench lets a missed question be tried
+    # again instead of resolving on the first wrong answer, and this is the
+    # difference that makes visible: `correct` still counts it, because it was
+    # got in the end, and `recovered` says what it cost. Without this the retry
+    # would have been a way to quietly improve your own numbers.
+    recovered = [r for r in correct if int(r.get("tries") or 1) > 1]
+    # Answered wrong, then skipped rather than tried again. Skipping is still
+    # "never counted as missed" in the counts above — that promise is about a
+    # question you did not attempt. One you attempted, got wrong and then
+    # walked away from is a question you missed, and it is only reachable at
+    # all because the retry flow leaves the item open after a wrong answer.
+    bailed = [r for r in skipped if int(r.get("tries") or 0) > 0]
     mods = sorted({int(r["module"]) for r in rows
                    if isinstance(r.get("module"), int)})
     cps = sorted({int(r["checkpoint"]) for r in rows
@@ -1272,6 +1292,10 @@ def api_lesson_session_end(req: SessionEnd):
     if skipped:
         bits.append(f"skipped {len(skipped)}")
     bits.append(f"missed {len(wrong)}")
+    # Only when there were any, so a session without a single retry writes the
+    # row it always wrote and no historical digest changes shape.
+    if recovered:
+        bits.append(f"recovered {len(recovered)}")
     if wrong:
         bits.append(ln.digest(wrong))
     line = " · ".join(bits)
@@ -1306,8 +1330,15 @@ def api_lesson_session_end(req: SessionEnd):
             # The same misses become recall cards, in the same commit — one
             # session, one record, one undo (S8). A failure here must never
             # cost the digest, which is the durable half.
+            #
+            # Recovered answers are misses for this purpose. Before the retry
+            # flow every wrong answer was final and every one of them raised a
+            # card; leaving them out here would have meant that trying again —
+            # the thing the feature exists to encourage — quietly cost you the
+            # card that says to come back to it. A question you got on the
+            # third go is a question you missed.
             try:
-                cards = _recall_write(course, wrong, today)
+                cards = _recall_write(course, wrong + recovered + bailed, today)
             except OSError:
                 cards = None
             if cards and cards["changed"]:

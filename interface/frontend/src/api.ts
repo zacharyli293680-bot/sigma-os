@@ -353,6 +353,10 @@ export type LessonState = {
   practice?: Record<string, {
     hints?: number; revealed?: boolean;
     result?: "correct" | "wrong" | "skipped" | null; given?: string;
+    /** Answers already checked and found wrong — what a resumed item shows
+     *  struck through, so a reload cannot hand back an option you have already
+     *  spent. Absent in state written before the retry flow. */
+    missed?: string[];
   }>;
 };
 

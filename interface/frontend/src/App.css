@@ -2549,7 +2549,11 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
   /* ink, and only two steps of it: reading text, and everything subordinate */
   --ink: #1D1D1F;
   --ink-2: #55555E;
-  --muted: #A6A6AE;           --muted-rgb: 166 166 174;
+  /* Darkened from #A6A6AE, which was 2.4:1 on white — under WCAG's floor for
+     any text at all, and this is the colour the room's *smallest* type was
+     set in. "Subordinate" has to survive being read; below about 3:1 it stops
+     being a hierarchy and becomes a squint. */
+  --muted: #86868F;           --muted-rgb: 134 134 143;
   /* The one borrowed value. This declaration is the fallback: `workbench.tsx`
      sets `--accent` inline from the active palette, and an inline custom
      property beats any selector, so in practice the instrument's accent is
@@ -2584,13 +2588,33 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
   --add: #146C43;             --add-rgb: 20 108 67;
   --bronze: #8A5A1E;          --bronze-rgb: 138 90 30;
 
+  /* The type. `--sans` is the app's stack everywhere else; here it prefers the
+     optical size Windows ships *for* interface text — Segoe UI Variable Text
+     is drawn for 8–14pt, with the counters opened up and the strokes evened
+     out at exactly the sizes this room sets its navigation in. It is scoped to
+     the room rather than declared at `:root`, because the dashboard's density
+     was designed against the plain face and this is a reading surface.
+
+     The mono stack is unchanged and its job narrowed: code, paths, tape and
+     numbers. Monospace was doing the work of a small-text face in the rail,
+     the slot tabs and the tutor, and a 10.5px monospace label is the single
+     least legible thing an interface can put in front of someone. */
+  --sans: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+
   /* The scale. Hierarchy by size, per §2.4 — the dashboard does it by weight
-     and density because it has 40 facts on screen; a lesson has one. */
+     and density because it has 40 facts on screen; a lesson has one.
+
+     The bottom of it moved up. `--t-small` was 12.5px and the rules below
+     reached *under* it constantly — 11px, 10.5px, 10px, one 9px — every time
+     something had to fit. A scale you have to escape is a scale that is one
+     step short, so there is now a step below small, and it is 12px rather
+     than 9: the smallest type in the room is the type you read while tired. */
   --t-title: 27px;
   --t-seg: 21px;
   --t-body: 17px;
-  --t-meta: 14px;
-  --t-small: 12.5px;
+  --t-meta: 14.5px;
+  --t-small: 13.5px;
+  --t-micro: 12px;
   /* The reading column. In `rem`, not `ch`: `ch` is resolved against *each
      element's own* font, so a token of `68ch` gave the 17px prose 623px and the
      14px monospace block 557px — two different columns, visibly stepped, from
@@ -2603,9 +2627,14 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
      full-screen without it would stretch a chain row to 1900px, which is a
      worse read than the panel it replaced, not a better one. */
   --room: 1180px;
-  /* One number, because two rules depend on it agreeing: the dock's own width,
-     and the offset that keeps the reading column still while it is open. */
-  --dock: 420px;
+  /* The dock's width — one number for all six slots.
+     It was 420px, with the reference slot overriding it to 680px because a
+     sheet of equations is a document and a document needs a measure. That was
+     the right observation and the wrong fix: the dock jumped 260px sideways
+     whenever you moved between the sheet and the tutor, and the five other
+     slots were left in a width that had been chosen before any of them needed
+     a keypad or a plot in it. One width, set at what the widest slot needs. */
+  --dock: 560px;
 
   /* Full screen. It was a 1180px panel floating on the dashboard's scrim, and
      that width was what forced the dock to overlap the prose rather than open
@@ -2653,7 +2682,10 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
   --inset: #232328;           --inset-rgb: 35 35 40;
   --ink: #F3F3F5;
   --ink-2: #A8A8B2;
-  --muted: #6C6C76;           --muted-rgb: 108 108 118;
+  /* Lightened from #6C6C76 for the reason its light-mode twin was darkened:
+     at 2.7:1 on this ground the smallest type in the room was not readable so
+     much as inferable. */
+  --muted: #8B8B96;           --muted-rgb: 139 139 150;
   --chrome: #121215;
   --panel-line: rgb(255 255 255 / 0.14);
   --panel-line-dim: rgb(255 255 255 / 0.07);
@@ -2691,7 +2723,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
    `.workbench .err`, so source order is the only thing keeping the rollup
    line's 10.5px from being silently resized to 12. */
 .workbench .pad { padding: 14px 18px; }
-.workbench .err { color: var(--red); font-size: 12px; line-height: 1.5; }
+.workbench .err { color: var(--red); font-size: var(--t-small); line-height: 1.5; }
 
 /* The header. Scoped under `.workbench` throughout, because `.study-head`
    belongs to exam mode too and exam mode must not move. In the room it is
@@ -2915,7 +2947,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
      controls have. */
   flex: 0 0 auto; padding: 5px 11px; cursor: pointer;
   background: none; border: none; border-radius: calc(var(--r-ctl) - 3px);
-  color: var(--ink-2); font: 400 11.5px/1.5 var(--sans);
+  color: var(--ink-2); font: 400 var(--t-small)/1.45 var(--sans);
   letter-spacing: 0; text-transform: none; white-space: nowrap;
 }
 /* Only a control that spans the rail divides the track between its options —
@@ -2990,7 +3022,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
   font: 590 15px/1 var(--sans); color: var(--ink);
   font-variant-numeric: tabular-nums;
 }
-.wb-ring-n i { font: 400 9px/1 var(--sans); color: var(--muted); font-style: normal; }
+.wb-ring-n i { font: 400 11px/1 var(--sans); color: var(--muted); font-style: normal; }
 .wb-rail-meta {
   margin: 0; text-align: center; color: var(--ink-2);
   font: 400 var(--t-small)/1.45 var(--sans);
@@ -3003,7 +3035,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 .wb-band { margin: 0 0 14px; }
 .wb-band-h {
   margin: 0 0 6px; padding: 0 6px;
-  font: 590 10.5px/1 var(--sans); letter-spacing: 0.07em; text-transform: uppercase;
+  font: 590 var(--t-micro)/1 var(--sans); letter-spacing: 0.07em; text-transform: uppercase;
   color: var(--muted);
 }
 .wb-band > .wb-seg { display: flex; width: calc(100% - 12px); margin: 0 6px; }
@@ -3031,7 +3063,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .wb-rail-item.on .wb-rail-item-v { font-weight: 590; }
-.wb-rail-item-x { flex: none; color: var(--muted); font-size: 11px; }
+.wb-rail-item-x { flex: none; color: var(--muted); font-size: var(--t-micro); }
 /* Practice state on a segment row: a bar at the left edge, where a list of
    rows can carry it without a second glyph competing with the title. */
 .wb-seg-item { position: relative; }
@@ -3053,7 +3085,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
   gap: 8px; padding: 10px 6px 2px; border-top: 1px solid var(--panel-line-dim);
 }
 .wb-scheme button { padding: 4px 10px; font-size: var(--t-meta); line-height: 1.1; }
-.wb-rail-esc { color: var(--muted); font: 400 11px/1 var(--sans); }
+.wb-rail-esc { color: var(--muted); font: 400 var(--t-micro)/1.3 var(--sans); }
 .wb-rail-esc kbd {
   font-family: var(--mono); border: 1px solid var(--panel-line);
   border-radius: 4px; padding: 1px 4px; margin-right: 3px;
@@ -3083,7 +3115,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 .ref { display: flex; flex-direction: column; gap: 12px; }
 .ref-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .ref-file {
-  color: var(--muted); font: 400 11px/1.4 var(--mono);
+  color: var(--muted); font: 400 var(--t-micro)/1.4 var(--mono);
   text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .ref-file:hover { color: var(--accent-ink); }
@@ -3104,11 +3136,11 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
   padding: 8px 11px; font: 400 var(--t-small)/1.55 var(--sans);
 }
 .ref-held p { margin: 0 0 4px; }
-.ref-held ul { margin: 0; padding-left: 16px; font-family: var(--mono); font-size: 11px; }
+.ref-held ul { margin: 0; padding-left: 16px; font-family: var(--mono); font-size: var(--t-micro); }
 .ref-none p { margin: 0 0 8px; font: 400 var(--t-small)/1.6 var(--sans); }
 .ref-none code {
   font-family: var(--mono); background: var(--inset);
-  border-radius: 4px; padding: 1px 5px; font-size: 11.5px;
+  border-radius: 4px; padding: 1px 5px; font-size: var(--t-micro);
 }
 
 /* The section index. Wraps rather than scrolls sideways: at the reference
@@ -3123,10 +3155,10 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
   padding: 4px 9px; cursor: pointer;
   background: var(--surface); color: var(--ink-2);
   border: 1px solid var(--panel-line-dim); border-radius: var(--r-pill);
-  font: 400 11.5px/1.4 var(--sans); text-align: left;
+  font: 400 var(--t-small)/1.4 var(--sans); text-align: left;
 }
 .ref-nav button:hover { color: var(--ink); border-color: var(--panel-line); }
-.ref-nav-n { color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.ref-nav-n { color: var(--muted); font-size: var(--t-micro); font-variant-numeric: tabular-nums; }
 
 /* On the page's own ground, so a sheet of sixty entries reads as a document
    inside the dock rather than as more chrome. */
@@ -3139,7 +3171,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 .ref-s-h {
   margin: 0 0 6px; padding-bottom: 4px;
   border-bottom: 1px solid var(--panel-line-dim);
-  font: 590 11px/1.4 var(--sans); letter-spacing: 0.06em;
+  font: 590 var(--t-micro)/1.4 var(--sans); letter-spacing: 0.06em;
   text-transform: uppercase; color: var(--muted);
 }
 .ref-e { padding: 7px 0; border-bottom: 1px solid var(--panel-line-dim); }
@@ -3150,7 +3182,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 }
 .ref-e-t { font: 590 var(--t-meta)/1.35 var(--sans); color: var(--ink); }
 .ref-e-k {
-  flex: none; color: var(--muted); font: 400 10px/1.4 var(--mono);
+  flex: none; color: var(--muted); font: 400 var(--t-micro)/1.4 var(--mono);
   white-space: nowrap;
 }
 /* The dock is 420px, so the sheet reads a step tighter than the lesson column
@@ -3159,7 +3191,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 .ref-e-b p { margin: 4px 0; line-height: 1.55; }
 .ref-e-b table {
   width: 100%; border-collapse: collapse; margin: 6px 0;
-  font-size: 11.5px;
+  font-size: var(--t-micro);
 }
 .ref-e-b th, .ref-e-b td {
   border: 1px solid var(--panel-line-dim); padding: 3px 6px; text-align: left;
@@ -3172,15 +3204,43 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 .ref-e-b li { margin: 2px 0; line-height: 1.5; }
 .wb-read ol, .wb-read ul { margin: 12px 0; padding-left: 24px; }
 .wb-read li { margin: 4px 0; line-height: 1.6; }
-.ref-e-b pre { font-size: 11.5px; }
+.ref-e-b pre { font-size: var(--t-micro); }
 
-/* --- the calculator ------------------------------------------------------- */
-.calc { display: flex; flex-direction: column; gap: 10px; }
-.calc-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+/* --- the calculator -------------------------------------------------------
+ * Three panes behind one tab (calc.tsx says why), and they share everything
+ * they can: one input shape, one result shape, one set of curve colours.
+ */
+.calc { display: flex; flex-direction: column; gap: 11px; }
+.calc-modes { align-self: stretch; }
+.calc-modes button { flex: 1 1 0; }
+.calc-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.calc-head .wb-btn { margin-left: auto; }
+.calc-head .wb-btn + .wb-btn { margin-left: 0; }
+
+/* Six curve colours, distinguishable from each other *and* from the room's
+   ink at both schemes. Not the nebula tokens: those are picked to glow on the
+   instrument's black, and three of the four are unreadable on paper. */
+.workbench {
+  --curve-1: var(--accent);
+  --curve-2: #C2410C;
+  --curve-3: #15803D;
+  --curve-4: #7E22CE;
+  --curve-5: #B91C1C;
+  --curve-6: #A16207;
+}
+.workbench.scheme-dark {
+  --curve-2: #FB923C;
+  --curve-3: #4ADE80;
+  --curve-4: #C084FC;
+  --curve-5: #F87171;
+  --curve-6: #FACC15;
+}
+
+/* the tape — arithmetic already done, kept where it can be clicked back */
 .calc-tape {
-  list-style: none; margin: 0; padding: 8px 10px; max-height: 190px; overflow-y: auto;
+  list-style: none; margin: 0; padding: 8px 10px; max-height: 168px; overflow-y: auto;
   background: var(--inset); border-radius: var(--r-ctl);
-  font: 400 var(--t-small)/1.6 var(--mono);
+  font: 400 var(--t-small)/1.7 var(--mono);
 }
 .calc-tape li { display: flex; justify-content: space-between; gap: 12px; }
 .calc-tape li.bad .calc-out { color: var(--red); font-family: var(--sans); }
@@ -3190,44 +3250,165 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 }
 .calc-recall:hover { color: var(--accent-ink); }
 .calc-out { color: var(--ink); flex: none; }
+
+/* The display: the field you type in and the answer, in one raised block, so
+   the calculator has a face rather than a form. */
+.calc-display {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 10px 12px 8px;
+  background: var(--surface); border: 1px solid var(--panel-line);
+  border-radius: var(--r-card); box-shadow: var(--lift);
+}
+.calc-display .calc-in { box-shadow: none; border-color: var(--panel-line-dim); }
 .calc-in {
-  width: 100%; padding: 11px 13px;
+  width: 100%; padding: 10px 12px;
   background: var(--surface); color: var(--ink);
   border: 1px solid var(--panel-line); border-radius: var(--r-ctl);
-  font: 400 var(--t-meta)/1.4 var(--mono);
+  font: 400 var(--t-meta)/1.45 var(--mono);
   box-shadow: var(--lift);
 }
+.calc-in:focus { outline: none; border-color: var(--accent); }
 .calc-in::placeholder { color: var(--muted); }
-.calc-keys { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
-.calc-keys .wb-btn { justify-content: center; padding: 8px 0; }
 .calc-err { margin: 0; color: var(--red); font: 400 var(--t-small)/1.5 var(--sans); }
-.calc-now { display: flex; align-items: baseline; gap: 9px; margin: 0; }
+.calc-now { display: flex; align-items: baseline; gap: 9px; margin: 0; min-height: 28px; }
 .calc-eq { color: var(--muted); font: 400 var(--t-meta)/1 var(--mono); }
 .calc-val {
-  flex: 1 1 auto; color: var(--ink); font: 590 21px/1.25 var(--mono);
-  overflow-wrap: anywhere; font-variant-numeric: tabular-nums;
+  flex: 1 1 auto; color: var(--ink); font: 590 22px/1.25 var(--mono);
+  overflow-wrap: anywhere; font-variant-numeric: tabular-nums; text-align: right;
 }
+.calc-val .dim, .calc-val .calc-err {
+  font: 400 var(--t-small)/1.5 var(--sans);
+}
+
+/* The keypad. Six columns, digits blocked at the lower left, operators down
+   the right edge — the layout every scientific calculator has shipped since
+   1985, because a keypad is muscle memory or it is nothing. */
+.calc-pad {
+  display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px;
+}
+.calc-key {
+  padding: 9px 0; cursor: pointer; text-align: center;
+  background: var(--surface); color: var(--ink);
+  border: 1px solid var(--panel-line-dim); border-radius: var(--r-ctl);
+  font: 400 var(--t-small)/1.2 var(--sans);
+  box-shadow: var(--lift);
+  font-variant-numeric: tabular-nums;
+}
+.calc-key:hover { border-color: var(--ink); }
+.calc-key:active { transform: translateY(1px); box-shadow: none; }
+.calc-key.k-num { font-weight: 590; font-size: var(--t-meta); }
+.calc-key.k-op { color: var(--accent-ink); font-weight: 590; font-size: var(--t-meta); }
+.calc-key.k-fn { color: var(--ink-2); }
+.calc-key.k-warn { color: var(--amber); }
+.calc-key.k-go {
+  background: var(--ink); border-color: var(--ink); color: var(--void);
+  font-weight: 590; font-size: var(--t-meta);
+}
+.calc-key.on { background: var(--ink); border-color: var(--ink); color: var(--void); }
+/* While `2nd` is held the keys that have one are marked, so the shift is
+   visible on the keys rather than only on the key that caused it. */
+.calc-pad.is-inv .calc-key.k-fn { border-color: rgb(var(--accent-rgb) / 0.45); }
+
+.calc-note { margin: 0; font: 400 var(--t-micro)/1.6 var(--sans); }
+.calc-note code {
+  font-family: var(--mono); background: var(--inset);
+  border-radius: 4px; padding: 0 4px;
+}
+
+/* --- the grapher ---------------------------------------------------------- */
+.calc-fns { display: flex; flex-direction: column; gap: 5px; }
+.calc-fn { display: flex; align-items: center; gap: 7px; }
+.calc-swatch {
+  flex: none; width: 14px; height: 14px; border-radius: 4px;
+  border: 1px solid rgb(0 0 0 / 0.2); cursor: pointer; padding: 0;
+}
+.calc-swatch.off { background: none !important; border-color: var(--muted); }
+.calc-fn-y {
+  flex: none; color: var(--muted); font: 400 var(--t-small)/1 var(--mono);
+}
+.calc-fn-in {
+  flex: 1 1 auto; min-width: 0; padding: 6px 9px;
+  background: var(--surface); color: var(--ink);
+  border: 1px solid var(--panel-line-dim); border-radius: var(--r-ctl);
+  font: 400 var(--t-small)/1.4 var(--mono);
+}
+.calc-fn-in:focus { outline: none; border-color: var(--accent); }
+.calc-fn-x {
+  flex: none; background: none; border: none; cursor: pointer;
+  color: var(--muted); font-size: var(--t-small); padding: 2px 4px;
+}
+.calc-fn-x:hover { color: var(--red); }
+.calc-add { align-self: flex-start; }
+
+.calc-plotwrap { display: flex; flex-direction: column; gap: 5px; }
 .calc-plot {
-  width: 100%; height: auto; display: block;
+  width: 100%; height: auto; display: block; touch-action: none; cursor: crosshair;
   background: var(--surface); border: 1px solid var(--panel-line-dim);
   border-radius: var(--r-card);
 }
 .calc-grid { stroke: var(--panel-line-dim); stroke-width: 1; }
 .calc-axis { stroke: var(--muted); stroke-width: 1; }
-.calc-tick { fill: var(--muted); font: 400 8.5px var(--mono); }
-.calc-curve { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; }
-.calc-range { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.calc-range input {
-  width: 64px; padding: 5px 8px;
+.calc-tick { fill: var(--muted); font: 400 10px var(--mono); }
+.calc-curve { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.calc-trace line { stroke: var(--ink-2); stroke-width: 1; stroke-dasharray: 3 3; }
+
+.calc-readout {
+  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; min-height: 20px;
+  font: 400 var(--t-micro)/1.5 var(--sans);
+}
+.calc-at { color: var(--ink); font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.calc-yv {
+  display: inline-flex; align-items: center; gap: 5px;
+  color: var(--ink-2); font-family: var(--mono); font-variant-numeric: tabular-nums;
+}
+.calc-yv i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+
+.calc-win { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.calc-win label {
+  display: inline-flex; align-items: center; gap: 5px;
+  color: var(--muted); font: 400 var(--t-micro)/1.4 var(--sans);
+}
+.calc-win input {
+  width: 62px; padding: 5px 7px;
   background: var(--surface); color: var(--ink);
   border: 1px solid var(--panel-line); border-radius: var(--r-ctl);
-  font: 400 var(--t-small)/1.3 var(--mono);
+  font: 400 var(--t-micro)/1.3 var(--mono);
 }
-.calc-note { margin: 0; font: 400 11.5px/1.6 var(--sans); }
-.calc-note code {
-  font-family: var(--mono); background: var(--inset);
-  border-radius: 4px; padding: 0 4px;
+.calc-win input:disabled { color: var(--muted); background: var(--inset); }
+.calc-winbtns { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+
+/* --- the algebra pane ------------------------------------------------------ */
+.calc-ops { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.calc-var {
+  display: inline-flex; align-items: center; gap: 5px; margin-left: auto;
+  color: var(--muted); font: 400 var(--t-micro)/1.4 var(--sans);
 }
+.calc-var select {
+  padding: 4px 6px; background: var(--surface); color: var(--ink);
+  border: 1px solid var(--panel-line); border-radius: var(--r-ctl);
+  font: 400 var(--t-micro)/1.3 var(--mono);
+}
+.calc-res {
+  padding: 10px 13px 12px;
+  background: var(--surface); border: 1px solid var(--panel-line-dim);
+  border-radius: var(--r-card);
+}
+.calc-res-h {
+  margin: 0; color: var(--muted);
+  font: 590 var(--t-micro)/1.4 var(--sans);
+  letter-spacing: 0.06em; text-transform: uppercase;
+}
+.calc-res .math-block { margin: 8px 0; }
+.calc-res-n { margin: 6px 0 0; font: 400 var(--t-micro)/1.55 var(--sans); }
+.calc-res-act { display: flex; gap: 7px; margin-top: 9px; }
+.calc-roots { list-style: none; margin: 4px 0 0; padding: 0; }
+.calc-roots li {
+  display: flex; align-items: baseline; gap: 10px;
+  border-top: 1px solid var(--panel-line-dim); padding: 2px 0;
+}
+.calc-roots li:first-child { border-top: none; }
+.calc-roots .math-block { margin: 6px 0; text-align: left; }
+.calc-roots .dim { font: 400 var(--t-micro)/1.5 var(--mono); }
 
 /* --- the dock, as a column ------------------------------------------------ */
 /* Three shapes in three days, and the width of the room is what decided each.
@@ -3239,18 +3420,15 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
    margin that was empty anyway. */
 .wb-dock {
   flex: none; z-index: 3;
-  width: min(var(--dock), 34%);
+  /* One width, every slot. The `%` cap is what keeps the reading column's
+     measure intact on a narrower screen; on a wide one the dock opens into
+     margin that was empty anyway. */
+  width: min(var(--dock), 44%);
   background: var(--chrome); border-left: 1px solid var(--panel-line);
   display: flex; flex-direction: column;
   padding: 16px 20px 18px; overflow-y: auto;
   animation: wb-sheet-in 180ms ease-out both;
 }
-/* The reference is a document, not a panel: tables, display equations and
-   sixty entries. At the tool width it showed four lines at a time, which is
-   why it was the one slot that was hard to read from. It gets its own width
-   and the room can afford it — the reading column keeps its full measure at
-   any screen this wide, and below that the `%` cap takes over. */
-.wb-dock.is-ref { width: min(680px, 46%); }
 @keyframes wb-sheet-in {
   from { transform: translateX(14px); opacity: 0; }
   to   { transform: none; opacity: 1; }
@@ -3379,26 +3557,26 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 }
 .wb-card-open:hover { color: var(--ink); }
 .wb-card-count {
-  order: 3; font: 400 10.5px/1.6 var(--mono); color: var(--ink-2);
+  order: 3; font: 400 var(--t-micro)/1.6 var(--mono); color: var(--ink-2);
   letter-spacing: 0.04em; text-transform: none;
 }
-.wb-card-x { order: 4; font-size: 12px; }
-.wb-card-name { margin: 0 0 6px; font-size: 12px; color: var(--ink-2); }
+.wb-card-x { order: 4; font-size: var(--t-micro); }
+.wb-card-name { margin: 0 0 6px; font-size: var(--t-small); color: var(--ink-2); }
 .wb-card-bar { display: flex; align-items: center; gap: 8px; margin: 0 0 5px;
-  font: 400 10.5px/1.5 var(--mono); }
+  font: 400 var(--t-micro)/1.5 var(--mono); }
 .wb-card-bar .cov-bar { width: 100px; }
-.wb-card-meta { margin: 0 0 4px; font: 400 11px/1.5 var(--mono); }
+.wb-card-meta { margin: 0 0 4px; font: 400 var(--t-micro)/1.5 var(--mono); }
 /* Attention pairs a glyph with the colour, never colour alone. */
 .wb-card-warn { color: var(--amber); }
-.wb-card-act { margin: 6px 0 0; font-size: 12px; }
-.wb-card-act .ghost { font-size: 12px; }
+.wb-card-act { margin: 6px 0 0; font-size: var(--t-small); }
+.wb-card-act .ghost { font-size: var(--t-small); }
 
 /* The add tile. A dashed border does not break "a frame means something is on
    you": here the border IS the affordance — an empty slot — and dashed-vs-solid
    is what separates the two readings. */
 .wb-card-new {
   border: 1px dashed var(--panel-line-dim); background: none;
-  color: var(--ink-2); font: 400 12px/1.5 var(--mono); cursor: pointer;
+  color: var(--ink-2); font: 400 var(--t-small)/1.5 var(--sans); cursor: pointer;
   padding: 18px 10px; min-height: 92px;
 }
 .wb-card-new:hover { border-color: var(--ink); color: var(--ink); }
@@ -3410,15 +3588,15 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 .wb-addform input {
   background: rgb(var(--accent-rgb) / 0.04);
   border: 1px solid var(--panel-line-dim);
-  color: var(--ink); font: 400 12px/1.5 var(--mono); padding: 4px 7px;
+  color: var(--ink); font: 400 var(--t-small)/1.5 var(--mono); padding: 4px 7px;
 }
 .wb-addform input:focus { outline: none; border-color: var(--accent); }
 .wb-addform input::placeholder { color: var(--muted); }
 .wb-add-code { width: 11ch; }
 .wb-add-name { flex: 1 1 140px; min-width: 100px; font-family: var(--sans) !important; }
 .wb-add-term { width: 12ch; }
-.wb-addform .q-add-go { padding: 4px 12px; font-size: 12px; }
-.wb-said { margin: 6px 0 0; font: 400 11px/1.5 var(--mono); color: var(--ink-2); }
+.wb-addform .q-add-go { padding: 4px 12px; font-size: var(--t-small); }
+.wb-said { margin: 6px 0 0; font: 400 var(--t-micro)/1.5 var(--mono); color: var(--ink-2); }
 .wb-said a { color: var(--ink); text-decoration: none; }
 .wb-said.err { color: var(--red); }
 
@@ -3436,13 +3614,13 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 .wb-chainbody { padding-top: 14px; padding-bottom: 40px; }
 .wb-chainhead {
   display: flex; justify-content: space-between; align-items: baseline;
-  gap: 12px; margin: 10px 0 6px; font-size: 12px;
+  gap: 12px; margin: 10px 0 6px; font-size: var(--t-small);
 }
-.wb-chainhead a { color: var(--ink); text-decoration: none; font-family: var(--mono); font-size: 11px; }
+.wb-chainhead a { color: var(--ink); text-decoration: none; font-family: var(--mono); font-size: var(--t-micro); }
 .wb-chainhead a:hover { text-decoration: underline; }
 .wb-last {
   display: flex; align-items: center; gap: 8px; margin: 4px 0;
-  font: 400 11.5px/1.6 var(--mono); color: var(--add);
+  font: 400 var(--t-micro)/1.6 var(--mono); color: var(--add);
 }
 .wb-last code { color: var(--ink); }
 
@@ -3478,7 +3656,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 }
 .wb-resume-eyebrow {
   margin: 0 0 4px; color: var(--accent-ink);
-  font: 590 10.5px/1 var(--sans); letter-spacing: 0.07em; text-transform: uppercase;
+  font: 590 var(--t-micro)/1 var(--sans); letter-spacing: 0.07em; text-transform: uppercase;
 }
 .wb-resume-t { margin: 0 0 5px; font: 590 var(--t-seg)/1.3 var(--sans); color: var(--ink); }
 .wb-resume-meta { margin: 0 0 14px; color: var(--ink-2); font: 400 var(--t-meta)/1.5 var(--sans); }
@@ -3495,7 +3673,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
   margin: 0; display: flex; align-items: baseline; gap: 9px;
   font: 590 var(--t-meta)/1.3 var(--sans); color: var(--ink);
 }
-.wb-unit-span { font: 400 11px/1 var(--mono); color: var(--muted); }
+.wb-unit-span { font: 400 var(--t-micro)/1 var(--mono); color: var(--muted); }
 .wb-unit-meta { color: var(--muted); font: 400 var(--t-small)/1.4 var(--sans); }
 /* A finished unit stays legible and stops competing — the same treatment a
    skipped row gets, one level up. Nothing is hidden. */
@@ -3506,7 +3684,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 .wb-row { display: flex; align-items: stretch; gap: 2px; }
 .wb-row-mark {
   flex: none; width: 16px; padding-top: 7px;
-  font: 400 11px/1 var(--mono); color: var(--muted); text-align: center;
+  font: 400 var(--t-micro)/1 var(--mono); color: var(--muted); text-align: center;
 }
 .wb-frontier .wb-row-mark { color: var(--accent-ink); }
 /* The whole row is the target, not the words in it — a 900px line whose only
@@ -3548,7 +3726,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 .wb-row-cp .wb-row-t { font-weight: 590; }
 
 .wb-chip {
-  font: 400 10px/1.5 var(--mono); color: var(--muted); font-style: normal;
+  font: 400 var(--t-micro)/1.5 var(--sans); color: var(--muted); font-style: normal;
   border: 1px solid var(--panel-line-dim); padding: 0 5px; margin-left: 8px;
   white-space: nowrap;
 }
@@ -3565,7 +3743,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
   font: 590 var(--t-meta)/1.4 var(--sans); color: var(--ink);
   letter-spacing: 0; text-transform: none;
 }
-.wb-block-m { color: var(--accent-ink); font-size: 12px; }
+.wb-block-m { color: var(--accent-ink); font-size: var(--t-small); }
 /* The count is a fact about progress, so it sits where a badge sits and goes
    green only when the section is actually finished. */
 .wb-count {
@@ -3590,13 +3768,13 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
   font: 400 var(--t-small)/1.5 var(--sans); color: var(--ink-2);
   letter-spacing: 0;
 }
-.wb-kind-m { color: var(--accent-ink); font-size: 12px; }
-.wb-kind-id { color: var(--muted); font-family: var(--mono); font-size: 10.5px; }
+.wb-kind-m { color: var(--accent-ink); font-size: var(--t-small); }
+.wb-kind-id { color: var(--muted); font-family: var(--mono); font-size: var(--t-micro); }
 /* Resolved state as a badge rather than two grey words: a filled tint, its own
    glyph, and the word — three signals, none of them colour alone. */
 .wb-q-mark {
   flex: none; padding: 2px 9px; border-radius: var(--r-pill);
-  font: 590 11px/1.5 var(--sans);
+  font: 590 var(--t-micro)/1.5 var(--sans);
 }
 .wb-q-mark.correct { color: var(--add); background: rgb(var(--add-rgb) / 0.14); }
 .wb-q-mark.wrong { color: var(--amber); background: rgb(var(--amber-rgb) / 0.14); }
@@ -3606,6 +3784,25 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 .wb-q-correct { border-color: rgb(var(--add-rgb) / 0.45); }
 .wb-q-wrong { border-color: rgb(var(--amber-rgb) / 0.5); }
 .wb-q-skipped { opacity: 0.6; }
+/* Still open, and one answer in. A dashed edge rather than a solid tint: the
+   card is *unfinished*, which is a different state from resolved-and-wrong and
+   must not look like it. */
+.wb-q-again { border-style: dashed; border-color: rgb(var(--amber-rgb) / 0.55); }
+
+/* "Not quite" — the whole point of the retry flow, so it says what to do next
+   rather than only what went wrong. Amber and a word, never colour alone. */
+.wb-q-retry {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  margin: 0; padding: 8px 11px;
+  background: rgb(var(--amber-rgb) / 0.09);
+  border: 1px solid rgb(var(--amber-rgb) / 0.35); border-radius: var(--r-ctl);
+  font: 400 var(--t-small)/1.5 var(--sans); color: var(--ink-2);
+}
+.wb-q-retry b { color: var(--amber); font-weight: 590; }
+.wb-q-tried {
+  margin-left: auto; color: var(--muted);
+  font: 400 var(--t-micro)/1.5 var(--mono);
+}
 
 .wb-hints { list-style: none; margin: 10px 0; padding: 0; }
 .wb-hints li {
@@ -3614,7 +3811,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
   background: var(--inset); border-radius: var(--r-ctl);
   padding: 7px 11px; margin: 5px 0;
 }
-.wb-hint-m { flex: none; color: var(--amber); font-size: 10px; }
+.wb-hint-m { flex: none; color: var(--amber); font-size: var(--t-micro); }
 
 .wb-q-act { display: flex; flex-direction: column; gap: 9px; margin: 12px 0 2px; }
 .wb-q-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -3631,6 +3828,15 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 }
 .wb-choice:hover { background: var(--inset); border-color: var(--accent); }
 .wb-choice:active { transform: translateY(1px); box-shadow: none; }
+/* An option already tried and wrong. Struck through and out of the tab order,
+   but still on screen: what you have ruled out is part of the question now,
+   and a vanishing option would make the second attempt a different one. */
+.wb-choice.spent {
+  color: var(--muted); background: var(--inset);
+  border-color: var(--panel-line-dim); box-shadow: none;
+  text-decoration: line-through; cursor: not-allowed;
+}
+.wb-choice.spent:hover { background: var(--inset); border-color: var(--panel-line-dim); }
 /* The two self-assessment verbs are opposites, so they are not the same
    button — but the tint is a *border*, not a fill: neither is the primary
    action, they are two halves of one honest answer. */
@@ -3665,19 +3871,41 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 }
 
 /* --- the dock's four slots (study S4/S5) --------------------------------- */
+/* The dock's own tabs. They were 10.5px monospace showing the *state key* —
+   `prov`, `ref` — which is an internal name and a hard face to read at that
+   size, both because there was no room for anything better at 420px. There is
+   now, so they say what they are, in the room's own text face, at a size that
+   does not need the title attribute to be usable. */
 .wb-slots {
-  display: flex; gap: 6px; align-items: center; flex: none;
-  border-bottom: 1px solid var(--panel-line-dim); padding-bottom: 8px; margin-bottom: 8px;
+  display: flex; gap: 5px; align-items: center; flex: none; flex-wrap: wrap;
+  border-bottom: 1px solid var(--panel-line-dim); padding-bottom: 9px; margin-bottom: 10px;
 }
 .wb-slots button {
   background: none; border: 1px solid var(--panel-line-dim); color: var(--ink-2);
-  font: 400 10.5px/1.5 var(--mono); padding: 2px 8px; cursor: pointer;
+  font: 400 var(--t-micro)/1.5 var(--sans); padding: 4px 10px; cursor: pointer;
+  white-space: nowrap;
 }
 .wb-slots button.active {
   background: var(--ink); border-color: var(--ink); color: var(--void);
+  font-weight: 590;
 }
-.wb-slots button:hover { color: var(--ink); }
-.wb-slot-x { margin-left: auto; border: none !important; }
+.wb-slots button:hover { color: var(--ink); border-color: var(--panel-line); }
+.wb-slot-x { margin-left: auto; border: none !important; font-size: var(--t-small) !important; }
+
+/* Every slot opens the same way: a marked heading and one line saying what
+   the thing in front of you is. Three of the six used to open with nothing at
+   all, which is what made them feel like six different panels rather than six
+   drawers of one desk. */
+.wb-slot-h { flex: none; margin: 0 0 12px; }
+.wb-slot-h h4 {
+  margin: 0 0 3px;
+  font: 590 var(--t-meta)/1.35 var(--sans); letter-spacing: 0; color: var(--ink);
+  text-transform: none;
+}
+.wb-slot-m { color: var(--accent-ink); }
+.wb-slot-h p {
+  margin: 0; color: var(--ink-2); font: 400 var(--t-micro)/1.5 var(--sans);
+}
 /* One declaration, not two: `.wb-dock` was declared here and again 250 lines
    up, and the pair had to be read together to know what a dock was. */
 /* The second half of the same rule, further down the file since before the
@@ -3695,7 +3923,7 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 .wb-editor {
   flex: 1 1 auto; min-height: 120px; resize: none; width: 100%;
   background: var(--inset); border: 1px solid var(--panel-line-dim); color: var(--ink);
-  font: 400 12px/1.6 var(--mono); padding: 8px 10px;
+  font: 400 var(--t-small)/1.65 var(--mono); padding: 8px 10px;
 }
 .wb-editor:focus { outline: none; border-color: var(--accent); }
 
@@ -3705,19 +3933,19 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 .wb-codebar .active {
   background: var(--ink); border-color: var(--ink); color: var(--void);
 }
-.wb-codenote { font: 400 10px/1.5 var(--mono); margin-right: auto; }
+.wb-codenote { font: 400 var(--t-micro)/1.5 var(--sans); margin-right: auto; }
 .wb-code .wb-editor { min-height: 110px; flex: none; height: 32%; }
 .wb-codeout { flex: 1 1 auto; min-height: 0; overflow-y: auto; margin-top: 6px; }
 .wb-out {
-  font: 400 11.5px/1.6 var(--mono); color: var(--ink);
+  font: 400 var(--t-small)/1.6 var(--mono); color: var(--ink);
   border: 1px solid var(--panel-line-dim); padding: 6px 10px; margin: 6px 0;
   overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere;
   background: var(--inset);
 }
 /* A failure is amber text in its own box — a failure, never a shrug. */
 .wb-outerr { color: var(--amber); border-color: rgb(var(--amber-rgb) / 0.45); }
-.wb-res { font: 400 12px/1.6 var(--mono); color: var(--add); margin: 4px 0; }
-.wb-sqltab { border-collapse: collapse; font: 400 11.5px/1.6 var(--mono); margin: 6px 0; }
+.wb-res { font: 400 var(--t-small)/1.6 var(--mono); color: var(--add); margin: 4px 0; }
+.wb-sqltab { border-collapse: collapse; font: 400 var(--t-micro)/1.6 var(--mono); margin: 6px 0; }
 .wb-sqltab th, .wb-sqltab td {
   border: 1px solid var(--panel-line-dim); padding: 2px 8px; text-align: left;
 }
@@ -3732,28 +3960,28 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
    survives, and the geometry is identical: 6px/0/2px from the shared rule with
    the bottom re-stated is the same box as 6px/0/6px. */
 .wb-modes { margin-bottom: 6px; }
-.wb-pin { font: 400 10.5px/1.5 var(--mono); margin: 0 0 6px; overflow-wrap: anywhere; }
+.wb-pin { font: 400 var(--t-micro)/1.5 var(--sans); margin: 0 0 6px; overflow-wrap: anywhere; }
 /* Held is a word plus amber, never colour alone — the palette's own rule. */
-.wb-hold { color: var(--amber); font: 400 11.5px/1.6 var(--mono); border: 1px solid rgb(var(--amber-rgb) / 0.45); padding: 4px 8px; }
+.wb-hold { color: var(--amber); font: 400 var(--t-small)/1.6 var(--sans); border: 1px solid rgb(var(--amber-rgb) / 0.45); padding: 4px 8px; }
 .wb-turns { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .wb-turn { margin: 8px 0; }
-.wb-turn-q { color: var(--ink-2); font-size: 12px; margin: 2px 0; }
+.wb-turn-q { color: var(--ink-2); font-size: var(--t-small); margin: 2px 0; }
 .wb-turn-q::before { content: "› "; color: var(--muted); }
-.wb-turn-trail { font: 400 10.5px/1.5 var(--mono); margin: 2px 0; overflow-wrap: anywhere; }
-.wb-turn-a p { margin: 4px 0; font-size: 12.5px; line-height: 1.55; }
+.wb-turn-trail { font: 400 var(--t-micro)/1.5 var(--sans); margin: 2px 0; overflow-wrap: anywhere; }
+.wb-turn-a p { margin: 4px 0; font-size: var(--t-small); line-height: 1.62; }
 .wb-turn-a pre {
-  font: 400 11.5px/1.6 var(--mono); border: 1px solid var(--panel-line-dim);
+  font: 400 var(--t-small)/1.6 var(--mono); border: 1px solid var(--panel-line-dim);
   padding: 6px 10px; margin: 6px 0; overflow-x: auto;
   background: var(--inset);
 }
 .wb-proposal {
-  font-size: 12px; border: 1px solid var(--panel-line); border-left: 2px solid var(--ink-2);
+  font-size: var(--t-small); border: 1px solid var(--panel-line); border-left: 2px solid var(--ink-2);
   padding: 4px 8px; margin: 4px 0;
 }
 .wb-tutorform { display: flex; gap: 6px; margin-top: 8px; flex: none; }
 .wb-tutorform input {
   flex: 1 1 auto; background: none; border: 1px solid var(--panel-line-dim);
-  color: var(--ink); font: 400 12px/1.6 var(--mono); padding: 3px 8px;
+  color: var(--ink); font: 400 var(--t-small)/1.6 var(--sans); padding: 3px 8px;
 }
 .wb-tutorform input:focus { outline: none; border-color: var(--accent); }
 
@@ -3765,29 +3993,29 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
 .miss-topics { list-style: none; margin: 6px 0; padding: 0; }
 .miss-topics li {
   display: flex; gap: 10px; align-items: baseline;
-  font-size: 12.5px; padding: 1px 0;
+  font-size: var(--t-small); padding: 1px 0;
 }
 .miss-topics li b { font-family: var(--mono); color: var(--amber); }
 .miss-sessions { list-style: none; margin: 2px 0 6px; padding: 0; }
 .miss-sessions li {
-  font: 400 11px/1.7 var(--mono); color: var(--ink-2); overflow-wrap: anywhere;
+  font: 400 var(--t-micro)/1.7 var(--mono); color: var(--ink-2); overflow-wrap: anywhere;
 }
 .miss-course .sub a { color: var(--ink); text-decoration: none; }
 
 /* --- generation pipeline (study S7) -------------------------------------- */
 /* The affordance row under the chain head: a draft/generate button, the live
    run line, or a notice. Live is a word plus the accent, never colour alone. */
-.wb-gen { margin: 4px 0 8px; font-size: 12.5px; }
-.wb-gen.live { color: var(--ink); font-family: var(--mono); font-size: 11.5px; }
-.wb-gen code { font: 400 11px/1.6 var(--mono); }
-.guide-line { font: 400 11px/1.6 var(--mono); margin: 4px 0 0; }
+.wb-gen { margin: 4px 0 8px; font-size: var(--t-small); }
+.wb-gen.live { color: var(--ink); font-family: var(--mono); font-size: var(--t-micro); }
+.wb-gen code { font: 400 var(--t-micro)/1.6 var(--mono); }
+.guide-line { font: 400 var(--t-micro)/1.6 var(--mono); margin: 4px 0 0; }
 .guide-line.live { color: var(--ink); }
 
 /* One generation run folded into one ledger entry; rows expand nested and
    keep their own undo — the fold is never a bigger lever. */
 .led-group .led-run-toggle {
   background: none; border: none; padding: 0; cursor: pointer;
-  color: var(--ink); font: 400 12px/1.6 var(--mono);
+  color: var(--ink); font: 400 var(--t-small)/1.6 var(--mono);
 }
 .led-group .led-run-toggle:hover { color: var(--ink); }
 .led-row.led-nested { padding-left: 26px; }

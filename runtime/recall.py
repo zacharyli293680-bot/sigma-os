@@ -231,10 +231,31 @@ def wanted_from(rows: list, units: dict) -> list[dict]:
     the two must group the same way or the note and the card would disagree
     about what was missed. A miss whose unit has no note on disk is dropped: a
     card you cannot click through to is not actionable.
+
+    **Anything you got wrong once is a miss here**, whatever happened next. The
+    workbench lets a wrong answer be tried again rather than resolving on the
+    first miss, so a question can now end up `correct` after three goes, or
+    `skipped` after two — and before the retry flow existed, both of those were
+    a plain `wrong` that raised a card. If getting there in the end cancelled
+    the card, then trying again — the thing the retry exists to encourage —
+    would quietly cost you the reminder to come back to it; and if walking away
+    cancelled it, the retry would have handed you a way to dodge one. The
+    rollup row reports the counts (`recovered`, and skips are still never
+    counted as missed there); what belongs here is the judgement about cards.
     """
     counts: dict = {}
     for r in rows:
-        if str(r.get("result") or "") != "wrong":
+        result = str(r.get("result") or "")
+        try:
+            tries = int(r.get("tries") or 0)
+        except (TypeError, ValueError):
+            tries = 0
+        # `tries` counts answers *checked*, so a correct one includes the
+        # successful attempt and a skipped one counts only the wrong answers
+        # before it. Hence the two thresholds.
+        if not (result == "wrong"
+                or (result == "correct" and tries > 1)
+                or (result == "skipped" and tries > 0)):
             continue
         cp, mod = r.get("checkpoint"), r.get("module")
         unit = ("cp", int(cp)) if isinstance(cp, int) else (
