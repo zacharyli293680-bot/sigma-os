@@ -1595,11 +1595,19 @@ pre.diff .meta { color: var(--muted); }
 
 /* ------------------- Agenda P4: the full view (Ctrl+') */
 
+/* Full-bleed, like .work below and for the same reason. The calendar and the
+   queues are the two views you *work* in rather than glance at, and both spend
+   everything they are given: a week grid gets taller rows, a month grid gets
+   cells you can read three items in. Floating them in 94vw × 92vh was framing.
+
+   The border and the shadow went with the float — they separated a box from the
+   dashboard behind it, and there is no longer a behind. Esc and ✕ still close;
+   the backdrop's click-outside has nothing left to be outside of, which is the
+   one affordance this costs. */
 .agview {
-  width: min(1360px, 94vw); height: min(860px, 92vh);
+  width: 100%; height: 100%;
   display: flex; flex-direction: column;
-  background: var(--surface); border: 1px solid var(--panel-line);
-  box-shadow: 0 0 60px rgb(var(--glow-rgb) / 0.06);
+  background: var(--surface);
 }
 .agview-head {
   display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
@@ -1624,7 +1632,14 @@ pre.diff .meta { color: var(--muted); }
   margin: 0; padding: 5px 12px; font: 400 11px/1.4 var(--mono);
   color: var(--amber); border-bottom: 1px solid var(--panel-line-dim); cursor: help;
 }
-.agview-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 10px 12px; }
+/* A flex column rather than a block, so the mode inside it can *fill* rather
+   than reach for `min-height: 100%` — which is 100% of the content box and then
+   adds this padding on top of it, leaving 20px of scroll on a view that fits.
+   Invisible at 92vh; not invisible when the view is the screen. */
+.agview-body {
+  flex: 1 1 auto; min-height: 0; overflow: auto; padding: 10px 12px;
+  display: flex; flex-direction: column;
+}
 
 .agview-foot {
   flex: none; display: flex; align-items: center; gap: 10px;
@@ -1655,7 +1670,11 @@ pre.diff .meta { color: var(--muted); }
 .agrow-title:hover { color: var(--ink); }
 
 /* ---- week */
-.agweek { display: flex; flex-direction: column; gap: 6px; min-height: 100%; }
+/* `flex: 1 1 auto` with the automatic minimum size left alone: it grows into
+   whatever the screen gives it, and never shrinks below what .agweek-grid's
+   460px floor needs — at which point the body scrolls, which is the old
+   behaviour on a short window. */
+.agweek { display: flex; flex-direction: column; gap: 6px; flex: 1 1 auto; }
 .agweek-gutter {
   display: grid; grid-template-columns: 58px repeat(7, 1fr); gap: 1px;
   border-bottom: 1px solid var(--panel-line-dim); padding-bottom: 5px;
@@ -1711,7 +1730,18 @@ pre.diff .meta { color: var(--muted); }
 }
 
 /* ---- month */
-.agmonth { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; }
+/* The rows share the height the full-bleed view hands them, never dropping
+   below the 96px a three-item cell needs. Without this the month sat at its
+   minimum with a screen of empty surface under it — bigger cells are the whole
+   reason the view is full-bleed. `grid-template-rows: auto` is load-bearing: the
+   seven day names are children of this same grid, and without an explicit first
+   row they would be sized by `grid-auto-rows` too and take 96px to say "Mon". */
+.agmonth {
+  display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px;
+  flex: 1 1 auto;
+  grid-template-rows: auto;
+  grid-auto-rows: minmax(96px, 1fr);
+}
 .agmonth-dow {
   font: 500 8.5px/1 var(--mono); letter-spacing: 0.14em; color: var(--muted);
   padding: 0 4px 4px; text-align: center;
@@ -1738,7 +1768,10 @@ pre.diff .meta { color: var(--muted); }
 }
 
 /* ---- 14-day list */
-.aglist { display: flex; flex-direction: column; gap: 2px; }
+/* `flex: none`, unlike the two grids: fourteen days is a list, and a list that
+   stretched to fill would just be fourteen taller gaps. It keeps its own height
+   and the body scrolls past it. */
+.aglist { display: flex; flex-direction: column; gap: 2px; flex: none; }
 .aglist section { display: grid; grid-template-columns: 132px 1fr; gap: 10px; padding: 3px 0; }
 .aglist section + section { border-top: 1px solid rgb(var(--accent-rgb) / 0.07); }
 .aglist h4 {
@@ -1894,14 +1927,20 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
    rather than one column, and the cards are the existing .panel — bordered-not-
    filled, notched, mono numbers — so the view reads as more of the dashboard
    rather than a second visual language layered on top of it. */
+/* Full-bleed, the same as .agview. In 1120px the cards were two columns and a
+   scroll; the whole width is three at 1700px (measured) and four past ~1900,
+   with the 420px track floor unchanged — a queue row is what that floor was
+   picked for, and widening the view is no reason to squeeze it.
+
+   `align-self: flex-start` and `max-height` used to live here, to stop a short
+   queue sitting in 600px of void — the backdrop is a flex row with the default
+   `align-items: stretch`. That problem belonged to a floating box. Filling the
+   viewport deliberately, the cards are packed to the top by `.work-grid`'s
+   `align-content` instead, and the leftover is the bottom of the screen rather
+   than the bottom of a frame. */
 .work {
-  /* The backdrop is a flex row with the default `align-items: stretch`, so
-     without this the box grows to its max-height and four short cards sit in
-     600px of void. STUDY never showed it because its content is always long. */
-  align-self: flex-start;
-  margin-top: 6vh; width: min(1120px, 96vw); max-height: 84vh;
-  background: var(--surface); border: 1px solid var(--panel-line);
-  box-shadow: 0 0 40px rgb(var(--glow-rgb) / 0.08);
+  width: 100%; height: 100%;
+  background: var(--surface);
   display: flex; flex-direction: column; overflow: hidden;
 }
 .work-head {
@@ -1920,6 +1959,12 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
    min-width, so the single-column case is a genuinely small viewport rather
    than a layout that never happens. */
 .work-grid {
+  /* The scroll region is the rest of the screen, so the scrollbar ends where
+     the window does. `align-content: start` is what that costs: a grid with
+     free space stretches its auto rows by default, which would pull four
+     collapsed cards to a quarter of the viewport each. */
+  flex: 1 1 auto; min-height: 0;
+  align-content: start;
   overflow-y: auto;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
@@ -1969,11 +2014,13 @@ button.legend-row.on { border-color: var(--panel-line); color: var(--ink); }
   display: flex;
   flex-direction: column;
   min-height: 0;
-  /* 84vh is .work's own max-height; the subtrahend is its chrome —
+  /* 100vh is .work's own height; the subtrahend is its chrome —
      .work-head ~38 + .q-add ~48 + .q-review ~36 + .work-grid's 28 of vertical
      padding, plus slack. The 560 ceiling keeps the three collapsed cards a
-     short scroll away rather than a screen away on a tall monitor. */
-  height: min(calc(84vh - 172px), 560px);
+     short scroll away rather than a screen away on a tall monitor, and stays
+     where it was: the full-bleed view spends its extra height on showing more
+     of them, not on a taller pane. */
+  height: min(calc(100vh - 172px), 560px);
 }
 .q-card.open > h2,
 .q-card.open > .q-rows,
