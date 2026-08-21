@@ -480,16 +480,63 @@
 
 /* ------------------------------------------- shared overlays, office dress */
 
-/* The overlays are the same components in both rooms; here they trade the
-   notch for the office's radii and a lighter scrim. Contents stay untouched —
-   they already speak in tokens. */
+/* The overlays are the same components in both rooms — same logic, same Esc
+   ladder, same write paths — re-dressed here at the container level only.
+   Their interiors already speak in tokens and wear the shape block's radii,
+   so what changes is the chrome: sheets instead of instrument boxes, the
+   office's one ambient float (scrim-tinted, never a glow), rounded corners
+   instead of the notch, and a lighter scrim behind everything. */
 [data-layout="enterprise"] .palette-backdrop {
   background: rgb(var(--scrim-rgb) / 0.45);
 }
-[data-layout="enterprise"] .palette {
+
+/* The centered boxes — command/theme/layout pickers, ledger, review,
+   build/soon, capture, no-sync — become sheets. */
+[data-layout="enterprise"] .palette,
+[data-layout="enterprise"] .ledger,
+[data-layout="enterprise"] .review,
+[data-layout="enterprise"] .study,
+[data-layout="enterprise"] .capture,
+[data-layout="enterprise"] .nosync {
   clip-path: none;
-  border-radius: var(--r-card, 12px);
+  border-radius: 20px;
+  border-color: color-mix(in oklab, var(--ink) 10%, transparent);
+  box-shadow: 0 16px 40px rgb(var(--scrim-rgb) / 0.16),
+              0 2px 8px rgb(var(--scrim-rgb) / 0.08);
+  overflow: hidden;             /* a rounded sheet clips its own corners */
 }
+/* Bronze keeps its edge: the seal's box saying "this is the boundary" in its
+   own colour is meaning, not instrument dress. Only the shadow softens. */
+[data-layout="enterprise"] .nosync {
+  border-color: rgb(var(--bronze-rgb) / 0.42);
+}
+
+/* The full-bleed views — the calendar and the queues — float as sheets with
+   the canvas visible around them, instead of paving the whole window. */
+[data-layout="enterprise"] .agview,
+[data-layout="enterprise"] .work {
+  width: calc(100% - 40px);
+  height: calc(100% - 40px);
+  margin: 20px auto;
+  border-radius: 20px;
+  border: 1px solid color-mix(in oklab, var(--ink) 10%, transparent);
+  box-shadow: 0 16px 40px rgb(var(--scrim-rgb) / 0.16),
+              0 2px 8px rgb(var(--scrim-rgb) / 0.08);
+  overflow: hidden;
+}
+
+/* The chat drawer keeps its edge but rounds the corners it shows the page. */
+[data-layout="enterprise"] .drawer {
+  border-left-color: color-mix(in oklab, var(--ink) 10%, transparent);
+  border-radius: 20px 0 0 20px;
+  box-shadow: -12px 0 40px rgb(var(--scrim-rgb) / 0.14);
+}
+
+/* Interior touches: the week grid's event blocks round like everything else
+   in the office, and the offline card loses the notchless panel's hard edge. */
+[data-layout="enterprise"] .agblock { border-radius: 6px; }
+[data-layout="enterprise"] .panel.offline { border-radius: 16px; }
+
 [data-layout="enterprise"] .room-glyph {
   font-size: 15px; color: var(--ink-2);
 }
