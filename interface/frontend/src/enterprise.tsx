@@ -18,9 +18,10 @@
  * so they invert with the palette; sans is what a human wrote, mono is what
  * a machine produced.
  */
+import { useState } from "react";
 import { GLYPH, todayModel, until, minutes } from "./agenda-rail";
 import { obsidianHref, QUEUE_ORDER, rel } from "./api";
-import type { Agenda, Fleet, Health, Progress, Project, Proposals, Queue,
+import type { Agenda, Fleet, Health, Progress, Proposals, Queue,
               Tasks, Window_ } from "./api";
 import { NoSyncMark } from "./panels";
 import { breakdown, chipsFor, useFreshIds, useQueueTick } from "./queue-bits";
@@ -52,7 +53,6 @@ export interface EnterpriseProps {
   agenda: Agenda | null;
   queue: Queue | null;
   proposals: Proposals | null;
-  projects: Project[] | null;
   fleet: Fleet | null;
   progress: Progress | null;
   noSyncCount: number | null;
@@ -232,6 +232,12 @@ export default function EnterpriseShell(p: EnterpriseProps) {
             </div>
           </section>
 
+          {/* The one flexing region: everything above and below it is fixed
+              height, so the overview always fits the viewport — a card that
+              outgrows its cell clamps behind an expander instead of pushing
+              the page into scroll. Projects has no card here: the git facts
+              live one click away behind Build, and the overview's job is the
+              day, not the repos. */}
           <section className="ent-grid">
             <EntQueueCard queue={p.queue} vault={p.vault}
                           onMutate={p.onMutate} onOpen={p.onWork} />
@@ -241,8 +247,6 @@ export default function EnterpriseShell(p: EnterpriseProps) {
               <EntWaitingCard rows={waitingRows} onReview={p.onReview} />
             </div>
           </section>
-
-          <EntProjectsCard projects={p.projects} vault={p.vault} onOpen={p.onBuild} />
 
           <section className="ent-system" aria-label="the fleet">
             <span className="ent-sys-lbl">SYSTEM</span>
@@ -292,9 +296,16 @@ export default function EnterpriseShell(p: EnterpriseProps) {
 
 /* ------------------------------------------------------------- work queue */
 
+/** Collapsed, the card spends a fixed row budget — every section keeps at
+ *  least one row, the remainder goes to the earliest sections — so the
+ *  overview fits the viewport whatever the queues hold. Expanding shows the
+ *  full window inside the card's own scroll; the page never grows. */
+const QROWS = 6;
+
 function EntQueueCard({ queue, vault, onMutate, onOpen }: {
   queue: Queue | null; vault: string; onMutate: () => void; onOpen: () => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
   // The same tick machinery as the Instrument's digest — one write path,
   // one revertible commit per tick, whichever room it came from.
   const { rows, errs, tick } = useQueueTick(onMutate);
@@ -307,8 +318,17 @@ function EntQueueCard({ queue, vault, onMutate, onOpen }: {
     ? QUEUE_ORDER.map(k => queue.sections[k]).filter(s => s.visible.length)
     : [];
 
+  // One row per filled section first, then the leftovers in queue order.
+  const take = filled.map(s => Math.min(1, s.visible.length));
+  let left = Math.max(0, QROWS - take.reduce((a, b) => a + b, 0));
+  filled.forEach((s, i) => {
+    const extra = Math.min(left, s.visible.length - take[i]);
+    take[i] += extra; left -= extra;
+  });
+  const hidden = filled.reduce((n, s, i) => n + s.visible.length - take[i], 0);
+
   return (
-    <div className="ent-card" aria-label="work queue">
+    <div className="ent-card ent-qcard" aria-label="work queue">
       <div className="ent-card-head">
         <h2>Work queue</h2>
         <button className="ent-meta" onClick={onOpen}
@@ -316,39 +336,48 @@ function EntQueueCard({ queue, vault, onMutate, onOpen }: {
           {queue ? `${queue.counts.visible} visible · ${queue.counts.queued} queued ▸` : "…"}
         </button>
       </div>
-      {!queue && <p className="ent-dim">loading…</p>}
-      {queue && filled.length === 0 && (
-        <p className="ent-dim">✓ nothing eligible — every queue is empty or blocked</p>
+      <div className={`ent-qbody ${expanded ? "expanded" : ""}`}>
+        {!queue && <p className="ent-dim">loading…</p>}
+        {queue && filled.length === 0 && (
+          <p className="ent-dim">✓ nothing eligible — every queue is empty or blocked</p>
+        )}
+        {filled.map((s, i) => (
+          <div key={s.key} className="ent-qsec">
+            <div className="ent-eyebrow">{s.title}</div>
+            {(expanded ? s.visible : s.visible.slice(0, take[i])).map(t => {
+              const st = rows[t.id];
+              return (
+                <div key={t.id}
+                     className={`ent-qrow ${st ?? ""}${fresh.has(t.id) ? " promoted" : ""}`}>
+                  <button className={`ent-check ${st ?? ""}`} disabled={!!st}
+                          onClick={() => tick(t)}
+                          title={st === "leaving"
+                            ? "ticked — one commit of its own, revertible in the ledger (Ctrl+J)"
+                            : "tick it — writes to the note as its own revertible commit"}>
+                    {st === "leaving" ? "✓" : ""}
+                  </button>
+                  <a className="ent-qtitle" href={obsidianHref(vault, t.file.replace(/\.md$/, ""))}
+                     title={`${t.file}:${t.line}\n${breakdown(t)}`}>
+                    {t.parent && <b className="ent-qparent">{t.parent}</b>}
+                    {t.no_sync && <NoSyncMark />} {t.text}
+                  </a>
+                  {chipsFor(t).slice(0, 1).map(c => (
+                    <em key={c.label} className={`ent-chip ${c.tone}`}>{c.label}</em>
+                  ))}
+                  {errs[t.id] && <span className="ent-err">{errs[t.id]}</span>}
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+      {(hidden > 0 || expanded) && (
+        <button className="ent-more" onClick={() => setExpanded(e => !e)}
+                title={expanded ? "back to the short view"
+                  : "show every visible row — the card scrolls, the page does not"}>
+          {expanded ? "▴ show less" : `▾ ${hidden} more`}
+        </button>
       )}
-      {filled.map(s => (
-        <div key={s.key} className="ent-qsec">
-          <div className="ent-eyebrow">{s.title}</div>
-          {s.visible.map(t => {
-            const st = rows[t.id];
-            return (
-              <div key={t.id}
-                   className={`ent-qrow ${st ?? ""}${fresh.has(t.id) ? " promoted" : ""}`}>
-                <button className={`ent-check ${st ?? ""}`} disabled={!!st}
-                        onClick={() => tick(t)}
-                        title={st === "leaving"
-                          ? "ticked — one commit of its own, revertible in the ledger (Ctrl+J)"
-                          : "tick it — writes to the note as its own revertible commit"}>
-                  {st === "leaving" ? "✓" : ""}
-                </button>
-                <a className="ent-qtitle" href={obsidianHref(vault, t.file.replace(/\.md$/, ""))}
-                   title={`${t.file}:${t.line}\n${breakdown(t)}`}>
-                  {t.parent && <b className="ent-qparent">{t.parent}</b>}
-                  {t.no_sync && <NoSyncMark />} {t.text}
-                </a>
-                {chipsFor(t).slice(0, 1).map(c => (
-                  <em key={c.label} className={`ent-chip ${c.tone}`}>{c.label}</em>
-                ))}
-                {errs[t.id] && <span className="ent-err">{errs[t.id]}</span>}
-              </div>
-            );
-          })}
-        </div>
-      ))}
     </div>
   );
 }
@@ -366,8 +395,8 @@ function EntTodayCard({ agenda, vault, onOpen, onStudy }: {
       </div>
     );
   }
-  const day = todayModel(agenda, 4);
-  const shown = [...day.past.slice(-2), ...day.upcoming];
+  const day = todayModel(agenda, 3);
+  const shown = [...day.past.slice(-1), ...day.upcoming];
   const nowLabel = `${String(day.now.getHours()).padStart(2, "0")}:${String(day.now.getMinutes()).padStart(2, "0")}`;
   const dateLabel = day.now.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 
@@ -387,7 +416,7 @@ function EntTodayCard({ agenda, vault, onOpen, onStudy }: {
       </div>
 
       {shown.length === 0 && <p className="ent-dim">nothing left today</p>}
-      {day.past.slice(-2).map(o => (
+      {day.past.slice(-1).map(o => (
         <a key={o.id} className="ent-trow done" href={obsidianHref(vault, o.source.path)}
            title={`${o.kind} · ${o.source.path}`}>
           <span className="ent-twhen">{o.start}</span>
@@ -437,11 +466,19 @@ function EntTodayCard({ agenda, vault, onOpen, onStudy }: {
 
 /* ---------------------------------------------------------------- waiting */
 
+/** The same clamp as the queue's: three rows on the overview, the rest behind
+ *  the expander. Proposals are rarely many, but the one week they are is the
+ *  week this card must not push the page into scroll. */
+const WROWS = 3;
+
 function EntWaitingCard({ rows, onReview }: {
   rows: ({ file: string; title: string; kind: string | null;
            target: string | null; badge: string })[] | null;
   onReview: (name: string) => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const shown = rows && !expanded ? rows.slice(0, WROWS) : rows;
+  const hidden = rows ? rows.length - (shown?.length ?? 0) : 0;
   return (
     <div className={`ent-card ${rows?.length ? "attn" : ""}`} aria-label="waiting on you">
       <div className="ent-card-head">
@@ -450,7 +487,7 @@ function EntWaitingCard({ rows, onReview }: {
       </div>
       {!rows && <p className="ent-dim">loading…</p>}
       {rows && rows.length === 0 && <p className="ent-dim">✓ nothing is waiting on you</p>}
-      {rows?.map(r => (
+      {shown?.map(r => (
         <button key={r.file} className="ent-wrow"
                 onClick={() => onReview(r.file.replace(/\.md$/, ""))}
                 title={`${r.kind ?? "?"} → ${r.target ?? "?"}\nreview the diff and decide`}>
@@ -458,38 +495,11 @@ function EntWaitingCard({ rows, onReview }: {
           <span>{r.title}</span>
         </button>
       ))}
+      {(hidden > 0 || expanded) && (
+        <button className="ent-more" onClick={() => setExpanded(e => !e)}>
+          {expanded ? "▴ show less" : `▾ ${hidden} more`}
+        </button>
+      )}
     </div>
-  );
-}
-
-/* --------------------------------------------------------------- projects */
-
-function EntProjectsCard({ projects, vault, onOpen }: {
-  projects: Project[] | null; vault: string; onOpen: () => void;
-}) {
-  return (
-    <section className="ent-card" aria-label="projects">
-      <div className="ent-card-head">
-        <h2>Projects</h2>
-        <button className="ent-meta" onClick={onOpen} title="open repo awareness">▸ build</button>
-      </div>
-      {!projects && <p className="ent-dim">loading…</p>}
-      {projects?.map(pr => (
-        <a key={pr.name} className="ent-prow"
-           href={obsidianHref(vault, `03-Projects/${pr.name}`)} title={pr.repo ?? "no repo"}>
-          <span className="ent-pname">{pr.no_sync && <NoSyncMark />}{pr.name}</span>
-          {pr.git ? (
-            <span className="ent-pgit">
-              {pr.git.dirty == null ? "? unreadable"
-                : pr.git.dirty ? <span className="dirty">● {pr.git.dirty} dirty</span> : "○ clean"}
-              {pr.git.unpushed ? ` · ↑${pr.git.unpushed}` : ""}
-              {" · "}{rel(pr.git.last_commit)}
-            </span>
-          ) : (
-            <span className="ent-pgit">no repo</span>
-          )}
-        </a>
-      ))}
-    </section>
   );
 }

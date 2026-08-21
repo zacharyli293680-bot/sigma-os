@@ -362,7 +362,7 @@ export default function App() {
         <EnterpriseShell
           health={health} window={window_ ?? null} tasks={tasks ?? null}
           agenda={agenda ?? null} queue={queue ?? null}
-          proposals={proposals ?? null} projects={projects?.projects ?? null}
+          proposals={proposals ?? null}
           fleet={fleet ?? null} progress={progress}
           noSyncCount={noSync?.ok ? noSync.total : null}
           vault={vault} clock={clock} activity={dock}

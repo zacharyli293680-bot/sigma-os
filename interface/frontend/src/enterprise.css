@@ -200,22 +200,29 @@
 
 /* -------------------------------------------------------------------- main */
 
+/* The overview owns no scrollbar: everything above and below the work grid
+   is fixed height, the grid flexes to what is left, and a card that outgrows
+   its cell clamps behind its expander (which scrolls the card, never the
+   page). Only an unusually short window falls back to page scroll. */
 [data-layout="enterprise"] .ent-main {
   position: fixed; top: 0; bottom: var(--ent-footh);
   left: var(--ent-side); right: 0;
-  overflow-y: auto; z-index: 5;
-  padding: calc(var(--ent-top) + 28px) 32px 64px;
+  overflow: hidden; z-index: 5;
+  padding: calc(var(--ent-top) + 20px) 32px 18px;
   scrollbar-width: thin;
   scrollbar-color: color-mix(in oklab, var(--ink) 20%, transparent) transparent;
 }
+@media (max-height: 620px) {
+  [data-layout="enterprise"] .ent-main { overflow-y: auto; }
+}
 [data-layout="enterprise"] .ent-col {
-  max-width: 1240px; margin: 0 auto;
-  display: flex; flex-direction: column; gap: 28px;
+  max-width: 1240px; margin: 0 auto; height: 100%;
+  display: flex; flex-direction: column; gap: 18px;
 }
 [data-layout="enterprise"] .ent-dim { color: var(--ink-2); font-size: 13px; }
 
 [data-layout="enterprise"] .ent-greeting h1 {
-  font-size: 30px; font-weight: 300; letter-spacing: -0.02em;
+  font-size: 26px; font-weight: 300; letter-spacing: -0.02em;
   margin: 0; color: var(--ink);
 }
 [data-layout="enterprise"] .ent-sub {
@@ -234,7 +241,7 @@
 }
 [data-layout="enterprise"] .ent-num {
   margin-top: 6px;
-  font-size: 40px; font-weight: 300; letter-spacing: -0.02em; line-height: 1.1;
+  font-size: 34px; font-weight: 300; letter-spacing: -0.02em; line-height: 1.1;
   font-variant-numeric: tabular-nums;
   color: var(--ink);
 }
@@ -274,12 +281,33 @@
 }
 
 [data-layout="enterprise"] .ent-grid {
-  display: grid; grid-template-columns: 1.6fr 1fr; gap: 24px;
+  display: grid; grid-template-columns: 1.6fr 1fr; gap: 20px;
   align-items: start;
+  flex: 1; min-height: 0;
 }
 [data-layout="enterprise"] .ent-rightcol {
-  display: flex; flex-direction: column; gap: 24px;
+  display: flex; flex-direction: column; gap: 20px;
+  max-height: 100%;
 }
+
+/* The queue card is the one that can outgrow its cell: collapsed it clips,
+   expanded its body scrolls — either way the cell is its ceiling. */
+[data-layout="enterprise"] .ent-qcard {
+  display: flex; flex-direction: column;
+  max-height: 100%; min-height: 0;
+}
+[data-layout="enterprise"] .ent-qbody { min-height: 0; overflow: hidden; }
+[data-layout="enterprise"] .ent-qbody.expanded {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--ink) 20%, transparent) transparent;
+}
+[data-layout="enterprise"] .ent-more {
+  margin-top: 10px; padding-top: 10px; width: 100%; text-align: left;
+  border-top: 1px solid var(--ent-hairline);
+  font: 400 11px var(--mono); color: var(--ink-2);
+}
+[data-layout="enterprise"] .ent-more:hover { color: var(--accent); }
 
 /* queue */
 [data-layout="enterprise"] .ent-qsec { margin-top: 12px; }
@@ -388,23 +416,6 @@
   background: color-mix(in oklab, var(--ink) 3.5%, transparent);
 }
 [data-layout="enterprise"] .ent-wrow .ent-chip { margin: 1px 0 0; }
-
-/* projects */
-[data-layout="enterprise"] .ent-prow {
-  display: flex; align-items: center; gap: 10px;
-  min-height: 38px; padding: 0 10px; margin: 0 -10px;
-  border-radius: var(--ent-r-ctl); font-size: 14px;
-  transition: background 120ms ease-out;
-}
-[data-layout="enterprise"] .ent-prow:hover {
-  background: color-mix(in oklab, var(--ink) 3.5%, transparent);
-}
-[data-layout="enterprise"] .ent-pname { font-weight: 500; }
-[data-layout="enterprise"] .ent-pgit {
-  margin-left: auto; font: 400 11.5px var(--mono); color: var(--ink-2);
-  white-space: nowrap;
-}
-[data-layout="enterprise"] .ent-pgit .dirty { color: var(--amber); }
 
 /* system strip — machine substrate, an inset well rather than a card */
 [data-layout="enterprise"] .ent-system {
