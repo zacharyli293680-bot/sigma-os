@@ -9,6 +9,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./App.css";
+import "./enterprise.css";
 import { API, get } from "./api";
 import type { Agenda, Fire, Fleet, Graph, GuideProgress, Health, Job, NoSync, Progress, Projects, Proposals, Queue, Tasks, Window_ } from "./api";
 import Brain, { VaultHud } from "./brain";
@@ -28,6 +29,9 @@ import { Foot, Panel, ProjectsPanel, QueuePanel, Rail, TopStrip, WaitingPanel } 
 import Reactor, { activityLine, useElapsed } from "./reactor";
 import ThemeView from "./theme-view";
 import { useTheme } from "./theme";
+import EnterpriseShell from "./enterprise";
+import RoomView from "./room-view";
+import { useRoom } from "./room";
 
 const REFRESH_MS = 60_000;
 
@@ -105,9 +109,12 @@ export default function App() {
   const [agendaOpen, setAgendaOpen] = useState(false);
   const [captureOpen, setCaptureOpen] = useState(false);
   const [themeOpen, setThemeOpen] = useState(false);
+  const [roomOpen, setRoomOpen] = useState(false);
   // Only for the strip's readout — the palette itself is applied to :root by
   // theme.ts, so nothing here re-renders to change a colour.
   const theme = useTheme();
+  // The room, by contrast, IS the render branch: which shell mounts below.
+  const room = useRoom();
   // Fetched once for the rail's count badge; the view refetches on open.
   const [noSync, setNoSync] = useState<NoSync | null>(null);
   const [job, setJob] = useState<Job | null>(null);
@@ -238,7 +245,14 @@ export default function App() {
         // means "I want to type a task", not "close this".
         e.preventDefault();
         setWorkOpen(true);
-      } else if (e.ctrlKey && e.key === ",") {
+      } else if (e.ctrlKey && e.shiftKey && (e.key === "," || e.key === "<")) {
+        // The layout picker — Shift over the palette's own key, because the
+        // two are siblings: `,` picks the colours, Shift+`,` picks the room.
+        // `<` is what Shift+, reports on this keyboard layout; both spellings
+        // are accepted so the bind survives a layout that differs.
+        e.preventDefault();
+        setRoomOpen(o => !o);
+      } else if (e.ctrlKey && !e.shiftKey && e.key === ",") {
         // The palette picker. `,` is the settings key everywhere else and is
         // unclaimed by Chrome here; it is also the only one of these that
         // changes how the dashboard looks rather than what it says.
@@ -340,58 +354,100 @@ export default function App() {
     : activityLine(fleet ?? null, progress, dockElapsed);
 
   return (
-    <div className="shell">
-      {/* the same drifting haze the sky sits in — one material, one view */}
-      <div className="haze" aria-hidden="true" />
-      <TopStrip health={health} window={window_ ?? null} block={tasks?.block ?? null}
-                clock={clock} onHealthClick={checkHealth}
-                theme={theme.name} onTheme={() => setThemeOpen(o => !o)} />
-      <Rail noSyncOpen={noSyncOpen} onNoSync={() => setNoSyncOpen(o => !o)}
-            noSyncCount={noSync?.ok ? noSync.total : null}
-            studyOpen={workbenchOpen} onStudy={() => setWorkbenchOpen(o => !o)}
-            buildOpen={buildOpen} onBuild={() => setBuildOpen(o => !o)}
-            workOpen={workOpen} onWork={() => setWorkOpen(o => !o)}
-            agendaOpen={agendaOpen} onAgenda={() => setAgendaOpen(o => !o)}
-            soonSlot={soonSlot}
-            onSoon={k => setSoonSlot(s => (s === k ? null : k))} />
-      {/* The centre stage: one scene, not a panel with a picture in it. The sky
-          fills this cell and nothing else — it briefly spanned the whole shell
-          behind every panel, and what that cost was the alignment, because the
-          reactor is the thing the vault is supposed to be firing *around*. The
-          sky is bounded here, the reactor sits at its heart in a pool of
-          darkened sky, and the vault's numbers run down the left margin. */}
-      <section className="panel center">
-        <h2>FLEET</h2>
-        <Brain graph={graph} vault={vault} fireRef={fireRef} filter={brainFilter}
-               spin={spin} />
-        <div className="core-scrim" aria-hidden="true" />
-        <Reactor fleet={fleet ?? null} progress={progress} waitingCount={waitingCount}
-                 guide={guideProg} />
-        <VaultHud graph={graph} filter={brainFilter} onFilter={setBrainFilter}
-                  spin={spin} onSpin={setSpinSaved} />
-      </section>
-      <div className="right">
-        <WaitingPanel proposals={proposals ?? null} onReview={setReviewing} />
-        <QueuePanel queue={queue ?? null} vault={vault} onMutate={refresh}
-                    onOpen={() => setWorkOpen(true)} />
+    <>
+      {room.id === "enterprise" ? (
+        // The office. Same data, same handlers, different furniture — and no
+        // brain: the graph lives in the cockpit, the office gets the machine's
+        // facts (the SYSTEM strip, the dock).
+        <EnterpriseShell
+          health={health} window={window_ ?? null} tasks={tasks ?? null}
+          agenda={agenda ?? null} queue={queue ?? null}
+          proposals={proposals ?? null} projects={projects?.projects ?? null}
+          fleet={fleet ?? null} progress={progress}
+          noSyncCount={noSync?.ok ? noSync.total : null}
+          vault={vault} clock={clock} activity={dock}
+          themeName={theme.name} roomName={room.name}
+          open={{ work: workOpen, agenda: agendaOpen, study: workbenchOpen,
+                  build: buildOpen, nosync: noSyncOpen, soon: soonSlot }}
+          onHealth={checkHealth}
+          onTheme={() => setThemeOpen(o => !o)}
+          onRoom={() => setRoomOpen(o => !o)}
+          onPalette={() => setPaletteOpen(o => !o)}
+          onCapture={() => setCaptureOpen(o => !o)}
+          onChat={() => setChatOpen(o => !o)}
+          onLedger={() => setLedgerOpen(o => !o)}
+          onWork={() => setWorkOpen(o => !o)}
+          onAgenda={() => setAgendaOpen(o => !o)}
+          onStudy={() => setWorkbenchOpen(o => !o)}
+          onBuild={() => setBuildOpen(o => !o)}
+          onSoon={k => setSoonSlot(s => (s === k ? null : k))}
+          onNoSync={() => setNoSyncOpen(o => !o)}
+          onReview={setReviewing}
+          onMutate={refresh}
+        />
+      ) : (
+      <div className="shell">
+        {/* the same drifting haze the sky sits in — one material, one view */}
+        <div className="haze" aria-hidden="true" />
+        <TopStrip health={health} window={window_ ?? null} block={tasks?.block ?? null}
+                  clock={clock} onHealthClick={checkHealth}
+                  theme={theme.name} onTheme={() => setThemeOpen(o => !o)}
+                  room={room.name} onRoom={() => setRoomOpen(o => !o)} />
+        <Rail noSyncOpen={noSyncOpen} onNoSync={() => setNoSyncOpen(o => !o)}
+              noSyncCount={noSync?.ok ? noSync.total : null}
+              studyOpen={workbenchOpen} onStudy={() => setWorkbenchOpen(o => !o)}
+              buildOpen={buildOpen} onBuild={() => setBuildOpen(o => !o)}
+              workOpen={workOpen} onWork={() => setWorkOpen(o => !o)}
+              agendaOpen={agendaOpen} onAgenda={() => setAgendaOpen(o => !o)}
+              soonSlot={soonSlot}
+              onSoon={k => setSoonSlot(s => (s === k ? null : k))} />
+        {/* The centre stage: one scene, not a panel with a picture in it. The sky
+            fills this cell and nothing else — it briefly spanned the whole shell
+            behind every panel, and what that cost was the alignment, because the
+            reactor is the thing the vault is supposed to be firing *around*. The
+            sky is bounded here, the reactor sits at its heart in a pool of
+            darkened sky, and the vault's numbers run down the left margin. */}
+        <section className="panel center">
+          <h2>FLEET</h2>
+          <Brain graph={graph} vault={vault} fireRef={fireRef} filter={brainFilter}
+                 spin={spin} />
+          <div className="core-scrim" aria-hidden="true" />
+          <Reactor fleet={fleet ?? null} progress={progress} waitingCount={waitingCount}
+                   guide={guideProg} />
+          <VaultHud graph={graph} filter={brainFilter} onFilter={setBrainFilter}
+                    spin={spin} onSpin={setSpinSaved} />
+        </section>
+        <div className="right">
+          <WaitingPanel proposals={proposals ?? null} onReview={setReviewing} />
+          <QueuePanel queue={queue ?? null} vault={vault} onMutate={refresh}
+                      onOpen={() => setWorkOpen(true)} />
+        </div>
+        <div className="lower">
+          {/* The free-hours button used to open exam mode. With that gone it
+              opens the workbench, which is where the hours it is counting would
+              actually be spent. */}
+          <AgendaRail agenda={agenda ?? null} vault={vault}
+                      onOpen={() => setWorkbenchOpen(true)} />
+          <ProjectsPanel projects={projects?.projects ?? null} vault={vault} />
+        </div>
+        <Foot activity={dock}
+              onChat={() => setChatOpen(o => !o)}
+              onPalette={() => setPaletteOpen(o => !o)}
+              onLedger={() => setLedgerOpen(o => !o)}
+              onNoSync={() => setNoSyncOpen(o => !o)}
+              onCapture={() => setCaptureOpen(o => !o)}
+              onWork={() => setWorkOpen(true)}
+              onAgenda={() => setAgendaOpen(o => !o)}
+              onWorkbench={() => setWorkbenchOpen(o => !o)} />
+        {!chatOpen && (
+          <button className="chat-fab" onClick={() => setChatOpen(true)} title="Ask Sigma (Ctrl+/)">
+            ⌕ ask
+          </button>
+        )}
       </div>
-      <div className="lower">
-        {/* The free-hours button used to open exam mode. With that gone it
-            opens the workbench, which is where the hours it is counting would
-            actually be spent. */}
-        <AgendaRail agenda={agenda ?? null} vault={vault}
-                    onOpen={() => setWorkbenchOpen(true)} />
-        <ProjectsPanel projects={projects?.projects ?? null} vault={vault} />
-      </div>
-      <Foot activity={dock}
-            onChat={() => setChatOpen(o => !o)}
-            onPalette={() => setPaletteOpen(o => !o)}
-            onLedger={() => setLedgerOpen(o => !o)}
-            onNoSync={() => setNoSyncOpen(o => !o)}
-            onCapture={() => setCaptureOpen(o => !o)}
-            onWork={() => setWorkOpen(true)}
-            onAgenda={() => setAgendaOpen(o => !o)}
-            onWorkbench={() => setWorkbenchOpen(o => !o)} />
+      )}
+      {/* Every overlay is shared between the rooms: same components, same Esc
+          ladder, same write paths — a room is presentation, never behaviour. */}
       <Ledger open={ledgerOpen} vault={vault} onClose={() => setLedgerOpen(false)}
               onMutate={refresh} />
       <NoSyncView open={noSyncOpen} vault={vault} onClose={() => setNoSyncOpen(false)} />
@@ -409,13 +465,9 @@ export default function App() {
       <Palette open={paletteOpen} onClose={() => setPaletteOpen(false)}
                onLaunched={() => {}} />
       <ThemeView open={themeOpen} onClose={() => setThemeOpen(false)} />
+      <RoomView open={roomOpen} onClose={() => setRoomOpen(false)} />
       <ChatDrawer open={chatOpen} vault={vault} onClose={() => setChatOpen(false)}
                   onTool={d => fireRef.current?.(d)} />
-      {!chatOpen && (
-        <button className="chat-fab" onClick={() => setChatOpen(true)} title="Ask Sigma (Ctrl+/)">
-          ⌕ ask
-        </button>
-      )}
       {fleet === null && tasks === null && proposals === null && (
         // All three null means all three fetches *failed* — undefined (still
         // loading) never triggers this.
@@ -423,6 +475,6 @@ export default function App() {
           <p>backend unreachable — start it with <code>sigma ui</code></p>
         </Panel>
       )}
-    </div>
+    </>
   );
 }

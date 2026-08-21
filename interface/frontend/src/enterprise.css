@@ -1,0 +1,513 @@
+/*
+ * enterprise.css — the office (the ENTERPRISE room).
+ *
+ * Every rule here is scoped under [data-layout="enterprise"], which room.ts
+ * stamps on :root — the legal fork App.css's header forbids for palettes and
+ * the .center/.workbench precedents establish for rooms. Nothing in this file
+ * names a colour: every hue arrives through the same tokens theme.ts writes,
+ * so all seven palettes work in this room, which is the whole contract.
+ *
+ * The design language, from the approved mockup (interface/mockups/
+ * enterprise-layout.html) and the design notes inside it:
+ *
+ *   · Two layers (the Apple rule): content is FLAT — page --void, card
+ *     --surface, well --inset, elevation a lightness step, zero shadows —
+ *     and glass lives only on the floating chrome: top bar, sidebar, footer,
+ *     the Ask capsule. Never glass on glass.
+ *   · The glass recipe is palette-blind by a dual edge: an accent hairline
+ *     (--panel-line-dim) carries it on dark palettes, an inset surface sheen
+ *     on light ones; each fades out where the other takes over. The one
+ *     ambient float is built from --scrim-rgb — the palette's own idea of
+ *     darkness — because glass cannot be raised by lightness; it has none.
+ *   · The accent is spent five ways: brand Σ, the Ask capsule, the active-nav
+ *     dot, soon badges, the focus ring. Active fills are ink-on-void.
+ *   · Sans is what a human wrote; mono is what a machine produced. Weight
+ *     300 only at display sizes, nothing above 600, tabular numerals.
+ *   · No notched corners — the notch is the Instrument's silhouette. Radii:
+ *     20 sheets, 16 cards, 10 controls, pill chips, concentric.
+ */
+
+/* ------------------------------------------------------- the room's ground */
+
+/* The aurora replaces the circuit grid: the grid is cockpit substrate, and
+   painting both would say two things at once. On the body's own background
+   stack rather than a fixed layer — the page never scrolls (.ent-main does),
+   so a separate element buys nothing. */
+:root[data-layout="enterprise"] body {
+  background:
+    radial-gradient(48% 52% at 12% 18%, rgb(var(--haze-1) / 0.21), transparent 72%),
+    radial-gradient(44% 48% at 85% 12%, rgb(var(--haze-2) / 0.17), transparent 72%),
+    radial-gradient(50% 54% at 78% 82%, rgb(var(--haze-3) / 0.16), transparent 72%),
+    radial-gradient(40% 44% at 25% 88%, rgb(var(--haze-4) / 0.15), transparent 72%),
+    var(--void);
+}
+
+[data-layout="enterprise"] .ent {
+  /* The room's own tokens. Shape is the layout's property (App.css's own
+     doctrine), so the office states its shapes here rather than borrowing
+     the cockpit's. */
+  --ent-r-sheet: 20px;
+  --ent-r-card: 16px;
+  --ent-r-ctl: 10px;
+  --ent-hairline: color-mix(in oklab, var(--ink) 7%, transparent);
+  --ent-hairline-2: color-mix(in oklab, var(--ink) 12%, transparent);
+  --ent-chip-a: 0.12;
+  --ent-float: 0 12px 32px rgb(var(--scrim-rgb) / 0.10),
+               0 2px 8px rgb(var(--scrim-rgb) / 0.06);
+  --ent-glass: rgb(var(--surface-rgb) / 0.72);
+  --ent-sheen: inset 0 1px 0 rgb(var(--surface-rgb) / 0.60);
+  --ent-top: 56px;
+  --ent-side: 232px;
+  --ent-footh: 40px;
+
+  font: 400 14px/1.5 var(--sans);
+  color: var(--ink);
+}
+[data-layout="enterprise"] .ent :focus-visible {
+  outline: 2px solid rgb(var(--accent-rgb) / 0.55);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+[data-layout="enterprise"] .ent button {
+  font: inherit; color: inherit; background: none; border: none; cursor: pointer;
+}
+[data-layout="enterprise"] .ent a { color: inherit; text-decoration: none; }
+
+/* ------------------------------------------------------------------ chrome */
+
+[data-layout="enterprise"] .ent-topbar {
+  position: fixed; top: 0; left: 0; right: 0; height: var(--ent-top);
+  z-index: 20;
+  display: flex; align-items: center; gap: 14px;
+  padding: 0 24px 0 20px;
+  background: var(--ent-glass);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4);
+  backdrop-filter: blur(18px) saturate(1.4);
+  border-bottom: 1px solid var(--panel-line-dim);
+  box-shadow: var(--ent-sheen), var(--ent-float);
+}
+[data-layout="enterprise"] .ent-brand {
+  display: flex; align-items: baseline; gap: 8px;
+  font-size: 15px; font-weight: 500; white-space: nowrap;
+}
+[data-layout="enterprise"] .ent-sigil { color: var(--accent); font-size: 17px; }
+[data-layout="enterprise"] .ent-search {
+  flex: 0 1 420px; display: flex; align-items: center; gap: 10px;
+  height: 36px; padding: 0 8px 0 14px; margin-left: 8px;
+  background: rgb(var(--surface-rgb) / 0.60);
+  border: 1px solid var(--ent-hairline);
+  border-radius: var(--r-pill);
+  color: var(--ink-2); font-size: 13.5px;
+  white-space: nowrap; overflow: hidden;
+}
+[data-layout="enterprise"] .ent-search:hover { border-color: var(--ent-hairline-2); }
+[data-layout="enterprise"] .ent-search-glyph { font-size: 14px; }
+[data-layout="enterprise"] .ent-search .ent-kbd { margin-left: auto; }
+[data-layout="enterprise"] .ent-kbd {
+  font: 400 10.5px var(--mono); color: var(--ink-2);
+  background: var(--inset); border: 1px solid var(--ent-hairline);
+  border-radius: 6px; padding: 2px 7px; white-space: nowrap;
+}
+[data-layout="enterprise"] .ent-spacer { flex: 1; }
+[data-layout="enterprise"] .ent-status {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 13px; color: var(--ink-2); white-space: nowrap;
+  padding: 0 10px; height: 34px; border-radius: var(--r-pill);
+}
+[data-layout="enterprise"] .ent-status:hover { background: color-mix(in oklab, var(--ink) 5%, transparent); }
+[data-layout="enterprise"] .ent-status.ok .ent-status-dot { color: var(--add); }
+[data-layout="enterprise"] .ent-status.warn { color: var(--amber); }
+[data-layout="enterprise"] .ent-status.down { color: var(--red); }
+[data-layout="enterprise"] .ent-tb {
+  display: flex; align-items: center; gap: 7px;
+  height: 34px; padding: 0 13px; border-radius: var(--r-pill);
+  font-size: 13px; color: var(--ink-2); white-space: nowrap;
+  transition: background 120ms ease-out;
+}
+[data-layout="enterprise"] .ent-tb:hover {
+  background: color-mix(in oklab, var(--ink) 5%, transparent);
+  color: var(--ink);
+}
+[data-layout="enterprise"] .ent-readout {
+  font: 400 11.5px var(--mono); letter-spacing: 0.04em;
+}
+[data-layout="enterprise"] .ent-clock {
+  font: 400 13.5px var(--mono); letter-spacing: 0.04em; white-space: nowrap;
+}
+
+/* ----------------------------------------------------------------- sidebar */
+
+[data-layout="enterprise"] .ent-side {
+  position: fixed; top: var(--ent-top); bottom: var(--ent-footh); left: 0;
+  width: var(--ent-side); z-index: 10;
+  display: flex; flex-direction: column;
+  padding: 16px 12px 14px;
+  background: var(--ent-glass);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4);
+  backdrop-filter: blur(18px) saturate(1.4);
+  border-right: 1px solid var(--panel-line-dim);
+  box-shadow: var(--ent-sheen);
+}
+[data-layout="enterprise"] .ent-nav { display: flex; flex-direction: column; gap: 2px; }
+[data-layout="enterprise"] .ent-nav-item {
+  display: flex; align-items: center; gap: 10px;
+  height: 38px; padding: 0 12px; border-radius: var(--ent-r-ctl);
+  font-size: 13.5px; text-align: left;
+  transition: background 120ms ease-out;
+}
+[data-layout="enterprise"] .ent-nav-item:hover {
+  background: color-mix(in oklab, var(--ink) 5%, transparent);
+}
+[data-layout="enterprise"] .ent-nav-item.active {
+  /* §1.3: the active state is ink, not the accent — near-black on light
+     palettes, near-white on dark, and the accent stays meaningful. */
+  background: var(--ink); color: var(--void); font-weight: 500;
+}
+[data-layout="enterprise"] .ent-nav-item.active::before {
+  content: ""; width: 4px; height: 4px; border-radius: 50%;
+  background: var(--accent); margin-right: 2px; flex: none;
+}
+[data-layout="enterprise"] .ent-nav-item.soon { color: var(--ink-2); }
+[data-layout="enterprise"] .ent-nav-n {
+  margin-left: auto; font: 400 11px var(--mono); color: var(--ink-2);
+}
+[data-layout="enterprise"] .ent-nav-item.active .ent-nav-n {
+  color: var(--void); opacity: 0.7;
+}
+[data-layout="enterprise"] .ent-soon {
+  margin-left: auto;
+  font: 500 9px var(--mono); letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--accent); background: rgb(var(--accent-rgb) / 0.10);
+  border-radius: var(--r-pill); padding: 2px 8px;
+}
+[data-layout="enterprise"] .ent-side-push { flex: 1; }
+[data-layout="enterprise"] .ent-sealed {
+  display: flex; align-items: center; gap: 9px;
+  height: 38px; padding: 0 12px; border-radius: var(--ent-r-ctl);
+  font-size: 13px; color: var(--bronze); text-align: left;
+  transition: background 120ms ease-out;
+}
+[data-layout="enterprise"] .ent-sealed:hover,
+[data-layout="enterprise"] .ent-sealed.active {
+  background: rgb(var(--bronze-rgb) / 0.08);
+}
+[data-layout="enterprise"] .ent-sealed .ent-nav-n { color: var(--bronze); }
+[data-layout="enterprise"] .ent-side-foot {
+  padding: 12px 12px 0; margin-top: 10px;
+  border-top: 1px solid var(--ent-hairline);
+  font: 400 10.5px/1.8 var(--mono); color: var(--muted);
+}
+
+/* -------------------------------------------------------------------- main */
+
+[data-layout="enterprise"] .ent-main {
+  position: fixed; top: 0; bottom: var(--ent-footh);
+  left: var(--ent-side); right: 0;
+  overflow-y: auto; z-index: 5;
+  padding: calc(var(--ent-top) + 28px) 32px 64px;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--ink) 20%, transparent) transparent;
+}
+[data-layout="enterprise"] .ent-col {
+  max-width: 1240px; margin: 0 auto;
+  display: flex; flex-direction: column; gap: 28px;
+}
+[data-layout="enterprise"] .ent-dim { color: var(--ink-2); font-size: 13px; }
+
+[data-layout="enterprise"] .ent-greeting h1 {
+  font-size: 30px; font-weight: 300; letter-spacing: -0.02em;
+  margin: 0; color: var(--ink);
+}
+[data-layout="enterprise"] .ent-sub {
+  margin-top: 6px; font-size: 12.5px; color: var(--ink-2);
+}
+[data-layout="enterprise"] .ent-block { font: 400 11.5px var(--mono); }
+
+/* KPIs — unboxed: mono eyebrow, big light numeral, one qualifier with its
+   noun. Whitespace does the framing. */
+[data-layout="enterprise"] .ent-kpis {
+  display: grid; grid-template-columns: repeat(5, 1fr); gap: 24px;
+}
+[data-layout="enterprise"] .ent-eyebrow {
+  font: 500 11px var(--mono); letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--ink-2);
+}
+[data-layout="enterprise"] .ent-num {
+  margin-top: 6px;
+  font-size: 40px; font-weight: 300; letter-spacing: -0.02em; line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+[data-layout="enterprise"] .ent-qual {
+  margin-top: 3px; font-size: 12.5px; color: var(--ink-2);
+}
+[data-layout="enterprise"] .ent-qual.alert { color: var(--red); }
+[data-layout="enterprise"] .ent-qual .m { font: 400 11.5px var(--mono); }
+
+/* ------------------------------------------------------------------- cards */
+
+[data-layout="enterprise"] .ent-card {
+  background: var(--surface);
+  border: 1px solid var(--ent-hairline);
+  border-radius: var(--ent-r-card);
+  padding: 24px;
+}
+[data-layout="enterprise"] .ent-card.attn {
+  /* The one card allowed a frame that says something: amber means it is on
+     you, with the header word carrying the same fact. */
+  border-color: rgb(var(--amber-rgb) / 0.35);
+}
+[data-layout="enterprise"] .ent-card.attn .ent-card-head h2 { color: var(--amber); }
+[data-layout="enterprise"] .ent-card-head {
+  display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px;
+}
+[data-layout="enterprise"] .ent-card-head h2 {
+  font-size: 15px; font-weight: 500; margin: 0; color: var(--ink);
+}
+[data-layout="enterprise"] .ent-meta {
+  margin-left: auto; font: 400 11px var(--mono); color: var(--ink-2);
+  white-space: nowrap;
+}
+[data-layout="enterprise"] button.ent-meta:hover { color: var(--accent); }
+[data-layout="enterprise"] .ent-problem {
+  font: 400 11px var(--mono); color: var(--amber);
+}
+
+[data-layout="enterprise"] .ent-grid {
+  display: grid; grid-template-columns: 1.6fr 1fr; gap: 24px;
+  align-items: start;
+}
+[data-layout="enterprise"] .ent-rightcol {
+  display: flex; flex-direction: column; gap: 24px;
+}
+
+/* queue */
+[data-layout="enterprise"] .ent-qsec { margin-top: 12px; }
+[data-layout="enterprise"] .ent-qsec:first-of-type { margin-top: 0; }
+[data-layout="enterprise"] .ent-qrow {
+  display: flex; align-items: center; gap: 12px;
+  min-height: 40px; padding: 0 10px; margin: 0 -10px;
+  border-radius: var(--ent-r-ctl);
+  transition: background 120ms ease-out, opacity 240ms ease;
+}
+[data-layout="enterprise"] .ent-qrow:hover {
+  background: color-mix(in oklab, var(--ink) 3.5%, transparent);
+}
+[data-layout="enterprise"] .ent-qrow.leaving { opacity: 0.35; }
+[data-layout="enterprise"] .ent-check {
+  flex: none; width: 18px; height: 18px; border-radius: 5px;
+  border: 1.5px solid color-mix(in oklab, var(--ink) 30%, transparent);
+  font-size: 12px; line-height: 1; color: var(--add);
+  transition: border-color 120ms ease-out;
+}
+[data-layout="enterprise"] .ent-qrow:hover .ent-check {
+  border-color: color-mix(in oklab, var(--ink) 55%, transparent);
+}
+[data-layout="enterprise"] .ent-qtitle {
+  font-size: 14px; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+[data-layout="enterprise"] .ent-qparent { font-weight: 500; margin-right: 6px; }
+[data-layout="enterprise"] .ent-err {
+  font: 400 11px var(--mono); color: var(--red);
+}
+[data-layout="enterprise"] .ent-chip {
+  margin-left: auto; flex: none;
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11.5px; font-weight: 500; font-style: normal;
+  border-radius: var(--r-pill); padding: 3px 10px;
+  background: var(--inset); color: var(--ink-2);
+}
+[data-layout="enterprise"] .ent-chip.danger { background: rgb(var(--red-rgb) / var(--ent-chip-a)); color: var(--red); }
+[data-layout="enterprise"] .ent-chip.warn { background: rgb(var(--amber-rgb) / var(--ent-chip-a)); color: var(--amber); }
+[data-layout="enterprise"] .ent-chip.urg { background: rgb(var(--accent-rgb) / var(--ent-chip-a)); color: var(--accent); }
+[data-layout="enterprise"] .ent-chip.ok { background: rgb(var(--add-rgb) / var(--ent-chip-a)); color: var(--add); }
+/* .age and .dim keep the neutral inset chip */
+
+/* today */
+[data-layout="enterprise"] .ent-trow {
+  display: flex; align-items: center; gap: 10px;
+  min-height: 34px; font-size: 13.5px;
+}
+[data-layout="enterprise"] .ent-trow.done { color: var(--ink-2); }
+[data-layout="enterprise"] .ent-twhen {
+  font: 400 11.5px var(--mono); color: var(--ink-2); width: 48px; flex: none;
+}
+[data-layout="enterprise"] .ent-tglyph { flex: none; font-size: 11px; color: var(--ink-2); }
+[data-layout="enterprise"] .ent-ttitle {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+[data-layout="enterprise"] .ent-ttick { margin-left: auto; color: var(--add); font-size: 12px; }
+[data-layout="enterprise"] .ent-tuntil {
+  margin-left: auto; font: 400 10.5px var(--mono); color: var(--ink-2); white-space: nowrap;
+}
+[data-layout="enterprise"] .ent-conflict { color: var(--amber); }
+[data-layout="enterprise"] .ent-nowrule {
+  display: flex; align-items: center; gap: 8px; margin: 6px 0;
+}
+[data-layout="enterprise"] .ent-nowrule::before {
+  content: ""; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent); flex: none;
+}
+[data-layout="enterprise"] .ent-nowrule .t {
+  font: 400 10.5px var(--mono); color: var(--accent); white-space: nowrap;
+}
+[data-layout="enterprise"] .ent-nowrule .line {
+  flex: 1; height: 1px; background: rgb(var(--accent-rgb) / 0.35);
+}
+[data-layout="enterprise"] .ent-week {
+  display: flex; align-items: flex-end; gap: 14px;
+  margin-top: 14px; padding-top: 14px;
+  border-top: 1px solid var(--ent-hairline);
+}
+[data-layout="enterprise"] .ent-bars {
+  display: flex; align-items: flex-end; gap: 5px; height: 28px;
+}
+[data-layout="enterprise"] .ent-bar {
+  width: 6px; height: 100%; position: relative;
+}
+[data-layout="enterprise"] .ent-bar-fill {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  border-radius: 2px;
+  background: rgb(var(--accent-rgb) / 0.30);
+}
+[data-layout="enterprise"] .ent-bar.today .ent-bar-fill { background: var(--accent); }
+[data-layout="enterprise"] .ent-free {
+  margin-left: auto; font: 400 11px var(--mono); color: var(--ink-2);
+}
+[data-layout="enterprise"] .ent-free:hover { color: var(--accent); }
+
+/* waiting */
+[data-layout="enterprise"] .ent-wrow {
+  display: flex; align-items: flex-start; gap: 10px; width: 100%;
+  padding: 8px 10px; margin: 0 -10px; border-radius: var(--ent-r-ctl);
+  font-size: 13.5px; line-height: 1.45; text-align: left;
+  transition: background 120ms ease-out;
+}
+[data-layout="enterprise"] .ent-wrow:hover {
+  background: color-mix(in oklab, var(--ink) 3.5%, transparent);
+}
+[data-layout="enterprise"] .ent-wrow .ent-chip { margin: 1px 0 0; }
+
+/* projects */
+[data-layout="enterprise"] .ent-prow {
+  display: flex; align-items: center; gap: 10px;
+  min-height: 38px; padding: 0 10px; margin: 0 -10px;
+  border-radius: var(--ent-r-ctl); font-size: 14px;
+  transition: background 120ms ease-out;
+}
+[data-layout="enterprise"] .ent-prow:hover {
+  background: color-mix(in oklab, var(--ink) 3.5%, transparent);
+}
+[data-layout="enterprise"] .ent-pname { font-weight: 500; }
+[data-layout="enterprise"] .ent-pgit {
+  margin-left: auto; font: 400 11.5px var(--mono); color: var(--ink-2);
+  white-space: nowrap;
+}
+[data-layout="enterprise"] .ent-pgit .dirty { color: var(--amber); }
+
+/* system strip — machine substrate, an inset well rather than a card */
+[data-layout="enterprise"] .ent-system {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  background: var(--inset);
+  border: 1px solid var(--ent-hairline);
+  border-radius: var(--ent-r-ctl);
+  padding: 12px 18px;
+  font: 400 11.5px var(--mono); color: var(--ink-2);
+}
+[data-layout="enterprise"] .ent-sys-lbl { letter-spacing: 0.14em; color: var(--muted); }
+[data-layout="enterprise"] .ent-sys-cell b { font-weight: 600; color: var(--ink); }
+[data-layout="enterprise"] .ent-sys-cell .due { color: var(--amber); }
+[data-layout="enterprise"] .ent-sys-cell.live { color: var(--accent); }
+[data-layout="enterprise"] .ent-sys-sep { color: var(--muted); }
+[data-layout="enterprise"] .ent-sys-ledger {
+  margin-left: auto; font: 400 11px var(--mono); color: var(--ink-2);
+}
+[data-layout="enterprise"] .ent-sys-ledger:hover { color: var(--accent); }
+
+/* ------------------------------------------------------- capsule & footer */
+
+[data-layout="enterprise"] .ent-ask {
+  position: fixed; right: 24px; bottom: calc(var(--ent-footh) + 16px);
+  z-index: 15;
+  display: flex; align-items: center; gap: 8px;
+  background: var(--accent); color: var(--surface);
+  border-radius: var(--r-pill); padding: 11px 20px;
+  font: 500 14px var(--sans);
+  box-shadow: var(--ent-float);
+  transition: filter 120ms ease-out;
+}
+[data-layout="enterprise"] .ent-ask:hover { filter: brightness(1.06); }
+
+[data-layout="enterprise"] .ent-foot {
+  position: fixed; left: 0; right: 0; bottom: 0; height: var(--ent-footh);
+  z-index: 20;
+  display: flex; align-items: center; gap: 24px;
+  padding: 0 24px;
+  background: var(--ent-glass);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4);
+  backdrop-filter: blur(18px) saturate(1.4);
+  border-top: 1px solid var(--panel-line-dim);
+  font: 400 11px var(--mono); color: var(--ink-2);
+  white-space: nowrap; overflow: hidden;
+}
+[data-layout="enterprise"] .ent-mode { letter-spacing: 0.04em; }
+[data-layout="enterprise"] .ent-hints {
+  flex: 1; text-align: center; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis;
+}
+[data-layout="enterprise"] .ent-hints button {
+  font: inherit; color: inherit; padding: 0;
+}
+[data-layout="enterprise"] .ent-hints button:hover { color: var(--ink); }
+[data-layout="enterprise"] .ent-dock {
+  font: inherit; color: var(--ink-2); max-width: 320px;
+  overflow: hidden; text-overflow: ellipsis;
+}
+[data-layout="enterprise"] .ent-dock.live { color: var(--accent); }
+[data-layout="enterprise"] .ent-dock:hover { color: var(--ink); }
+
+/* ------------------------------------------- shared overlays, office dress */
+
+/* The overlays are the same components in both rooms; here they trade the
+   notch for the office's radii and a lighter scrim. Contents stay untouched —
+   they already speak in tokens. */
+[data-layout="enterprise"] .palette-backdrop {
+  background: rgb(var(--scrim-rgb) / 0.45);
+}
+[data-layout="enterprise"] .palette {
+  clip-path: none;
+  border-radius: var(--r-card, 12px);
+}
+[data-layout="enterprise"] .room-glyph {
+  font-size: 15px; color: var(--ink-2);
+}
+
+/* ---------------------------------------------------------------- fallbacks */
+
+@media (prefers-reduced-transparency: reduce) {
+  [data-layout="enterprise"] .ent-topbar,
+  [data-layout="enterprise"] .ent-side,
+  [data-layout="enterprise"] .ent-foot {
+    background: var(--surface);
+    -webkit-backdrop-filter: none; backdrop-filter: none;
+  }
+  :root[data-layout="enterprise"] body { background: var(--void); }
+}
+@media (prefers-contrast: more) {
+  [data-layout="enterprise"] .ent {
+    --ent-hairline: color-mix(in oklab, var(--ink) 22%, transparent);
+    --ent-chip-a: 0.2;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-layout="enterprise"] .ent * { transition: none !important; }
+}
+
+/* The shell wants ~1100px before the grid folds; below that the two columns
+   stack. The Instrument never had a breakpoint (min-width 920 and scroll);
+   the office is a reading surface, so it folds instead. */
+@media (max-width: 1180px) {
+  [data-layout="enterprise"] .ent-grid { grid-template-columns: 1fr; }
+  [data-layout="enterprise"] .ent-kpis { grid-template-columns: repeat(3, 1fr); row-gap: 20px; }
+}

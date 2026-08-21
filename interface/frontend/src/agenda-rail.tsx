@@ -32,12 +32,14 @@ const AHEAD = 3;            // how many upcoming items the strip will show
 const WEEK = 7;
 
 /** Glyphs separate what happens *to* you from what you *do* — the distinction
- *  the brief asks the rail to carry, and status is never colour alone here. */
-const GLYPH: Record<Occurrence["kind"], string> = {
+ *  the brief asks the rail to carry, and status is never colour alone here.
+ *  Exported since the enterprise room: its Today card carries the same
+ *  vocabulary, because two glyph sets for one calendar teaches two calendars. */
+export const GLYPH: Record<Occurrence["kind"], string> = {
   event: "◆", rule: "▣", note: "▦", task: "☐", practice: "◎",
 };
 
-function minutes(hhmm: string): number {
+export function minutes(hhmm: string): number {
   const [h, m] = hhmm.split(":").map(Number);
   return h * 60 + m;
 }
@@ -51,7 +53,7 @@ function iso(d: Date): string {
 }
 
 /** "in 1h 18m" / "in 12m" / "now" — a countdown reads as a countdown. */
-function until(mins: number): string {
+export function until(mins: number): string {
   if (mins <= 0) return "now";
   const h = Math.floor(mins / 60), m = mins % 60;
   return h ? `in ${h}h ${m}m` : `in ${m}m`;
@@ -73,11 +75,12 @@ function hoursByDay(occ: Occurrence[]): Record<string, number> {
   return out;
 }
 
-export default function AgendaRail({ agenda, vault, onOpen }: {
-  agenda: Agenda | null; vault: string; onOpen: () => void;
-}) {
-  if (!agenda) return null;
-
+/** Everything the rail computes, computed once. Exported since the enterprise
+ *  room: its Today card shows the same day, and the promise this file opens
+ *  with — nothing else does the arithmetic twice — has to survive a second
+ *  consumer. `limit` is the caller's window; the rail shows AHEAD, the
+ *  enterprise card a row or two more. */
+export function todayModel(agenda: Agenda, limit = AHEAD) {
   const now = new Date();
   const today = iso(now);
   const nowMin = now.getHours() * 60 + now.getMinutes();
@@ -93,8 +96,12 @@ export default function AgendaRail({ agenda, vault, onOpen }: {
   // agenda view — the record of a day that was kept is worth seeing — but the
   // rail answers "what is still ahead", and a satisfied obligation is not.
   const untimed = todays.filter(o => !o.start && o.done !== true);
+  // What already happened, for a view with room to show the day whole.
+  const past = todays
+    .filter(o => o.start && minutes(o.start) < nowMin)
+    .sort((a, b) => minutes(a.start!) - minutes(b.start!));
   const next = ahead[0] ?? null;
-  const upcoming = [...ahead, ...untimed].slice(0, AHEAD);
+  const upcoming = [...ahead, ...untimed].slice(0, limit);
 
   // Free hours *left*: the rest of the waking day, minus what is still ahead in
   // it. Past commitments are already spent and are not subtracted twice.
@@ -118,6 +125,19 @@ export default function AgendaRail({ agenda, vault, onOpen }: {
     return { key, d, hours: byDay[key] ?? 0, count: agenda.occurrences.filter(o => o.date === key).length };
   });
   const peak = Math.max(1, ...week.map(w => w.hours));
+
+  return { now, today, nowMin, past, ahead, untimed, next, upcoming,
+           committedAhead, freeLeft, week, peak,
+           dayStart: DAY_START, dayEnd: DAY_END };
+}
+
+export default function AgendaRail({ agenda, vault, onOpen }: {
+  agenda: Agenda | null; vault: string; onOpen: () => void;
+}) {
+  if (!agenda) return null;
+
+  const { now, today, nowMin, next, upcoming, committedAhead, freeLeft,
+          week, peak } = todayModel(agenda);
 
   return (
     <section className="agrail">

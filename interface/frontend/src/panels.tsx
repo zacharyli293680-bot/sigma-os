@@ -23,10 +23,11 @@ export function Panel({ label, children, className = "" }: {
 // ---------------------------------------------------------------- top strip
 
 export function TopStrip({ health, window: win, block, clock, onHealthClick,
-                          theme, onTheme }: {
+                          theme, onTheme, room, onRoom }: {
   health: Health | null | undefined; window: Window_ | null; block: string | null;
   clock: string; onHealthClick: () => void;
   theme: string; onTheme: () => void;
+  room: string; onRoom: () => void;
 }) {
   // undefined = the doctor is still running (it can take ~30s when the auth
   // probe fires); null = the fetch actually failed. Different words for
@@ -71,6 +72,12 @@ export function TopStrip({ health, window: win, block, clock, onHealthClick,
       <button className="health theme-btn" onClick={onTheme}
               title="switch the palette (Ctrl+,)">
         <span className="glyph">◐</span> {theme}
+      </button>
+      {/* The room readout, beside the palette's for the same reason: the two
+          are siblings — one picks the colours, the other picks the furniture. */}
+      <button className="health theme-btn" onClick={onRoom}
+              title="switch the layout (Ctrl+Shift+,)">
+        <span className="glyph">▦</span> {room}
       </button>
       <span className="clock">{clock}</span>
     </header>
