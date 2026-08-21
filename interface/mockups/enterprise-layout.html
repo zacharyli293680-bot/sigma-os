@@ -1,0 +1,938 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sigma Enterprise</title>
+</head>
+<body>
+<style>
+/*
+ * Sigma — ENTERPRISE layout mockup.
+ * The office register: glass chrome over a tinted canvas, flat white cards,
+ * the day's work front and centre. Palette-blind: every colour below arrives
+ * through the same tokens theme.ts emits — press 1–7 to prove it.
+ * Mockup keys: 1–7 palettes · E empty state · N design notes · K command.
+ */
+
+:root {
+  /* QUARTZ at rest, so the first paint is already right (the script re-applies). */
+  --void: #EEF0F8;        --void-rgb: 238 240 248;
+  --surface: #FFFFFF;     --surface-rgb: 255 255 255;
+  --inset: #F5F6FA;       --inset-rgb: 245 246 250;
+  --scrim-rgb: 30 34 51;
+  --accent: #4F46E5;      --accent-rgb: 79 70 229;
+  --glow-rgb: 109 99 255;
+  --panel-line: rgb(79 70 229 / 0.22);
+  --panel-line-dim: rgb(79 70 229 / 0.11);
+  --ink: #171A2B;         --ink-2: #5A6175;        --muted: #A6ADC0;
+  --amber: #8A5000;       --amber-rgb: 138 80 0;
+  --red: #B3243C;         --red-rgb: 179 36 60;
+  --add: #15703A;         --add-rgb: 21 112 58;
+  --bronze: #8A5A1E;      --bronze-rgb: 138 90 30;
+  --haze-1: 199 191 255;  --haze-2: 165 180 252;
+  --haze-3: 221 214 254;  --haze-4: 191 219 254;
+
+  /* Enterprise design tokens — the layout's own property, never the palette's. */
+  --r-sheet: 20px;  --r-card: 16px;  --r-ctl: 10px;  --r-pill: 999px;
+  --hairline: color-mix(in oklab, var(--ink) 7%, transparent);
+  --hairline-2: color-mix(in oklab, var(--ink) 12%, transparent);
+  --chip-a: 0.12;
+  --float: 0 12px 32px rgb(var(--scrim-rgb) / 0.10),
+           0 2px 8px rgb(var(--scrim-rgb) / 0.06);
+  --sans: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system,
+          "SF Pro Text", sans-serif;
+  --mono: "JetBrains Mono", "Cascadia Code", "SF Mono", Consolas, monospace;
+
+  --topbar-h: 56px;  --sidebar-w: 232px;  --footer-h: 40px;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+/* The aurora lives on the body's own background stack — never on a separate
+ * fixed element. A viewport-sized fixed layer with opacity blacks out the
+ * artifact sandbox's compositor (bisected 2026-08-21); painted here, the same
+ * gradients cost nothing. Alphas carry the old element's 0.5 opacity baked in. */
+body {
+  background:
+    radial-gradient(48% 52% at 12% 18%, rgb(var(--haze-1) / 0.21), transparent 72%),
+    radial-gradient(44% 48% at 85% 12%, rgb(var(--haze-2) / 0.17), transparent 72%),
+    radial-gradient(50% 54% at 78% 82%, rgb(var(--haze-3) / 0.16), transparent 72%),
+    radial-gradient(40% 44% at 25% 88%, rgb(var(--haze-4) / 0.15), transparent 72%),
+    var(--void);
+  color: var(--ink);
+  font: 400 14px/1.5 var(--sans);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+:focus-visible { outline: 2px solid rgb(var(--accent-rgb) / 0.55); outline-offset: 2px; border-radius: 4px; }
+.mono { font-family: var(--mono); }
+
+/* --------------------------------------------------------- glass, the once */
+.glass {
+  background: rgb(var(--surface-rgb) / 0.88);
+  box-shadow: inset 0 1px 0 rgb(var(--surface-rgb) / 0.60), var(--float);
+}
+
+/* ------------------------------------------------------------------ chrome */
+.topbar {
+  position: fixed; top: 0; left: 0; right: 0; height: var(--topbar-h);
+  z-index: 20;
+  display: flex; align-items: center; gap: 16px;
+  padding: 0 24px 0 20px;
+  border-bottom: 1px solid transparent;
+  transition: background 200ms ease, border-color 200ms ease, box-shadow 200ms ease;
+}
+.topbar.scrolled {
+  background: rgb(var(--surface-rgb) / 0.88);
+  border-bottom-color: var(--panel-line-dim);
+  box-shadow: inset 0 1px 0 rgb(var(--surface-rgb) / 0.60), var(--float);
+}
+.brand { display: flex; align-items: baseline; gap: 8px; font-size: 15px; font-weight: 500; }
+.brand .sigil { color: var(--accent); font-size: 17px; font-weight: 500; }
+
+.search {
+  flex: 0 1 420px; display: flex; align-items: center; gap: 10px;
+  height: 36px; padding: 0 8px 0 14px; margin-left: 8px;
+  background: rgb(var(--surface-rgb) / 0.60);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-pill);
+  color: var(--ink-2); font-size: 13.5px;
+  cursor: pointer;
+}
+.search:hover { border-color: var(--hairline-2); }
+.search .glyph { font-size: 14px; }
+.search .kbd { margin-left: auto; }
+.kbd {
+  font-family: var(--mono); font-size: 10.5px; color: var(--ink-2);
+  background: var(--inset); border: 1px solid var(--hairline);
+  border-radius: 6px; padding: 2px 7px; white-space: nowrap;
+}
+
+.topbar .spacer { flex: 1; }
+.status { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--ink-2); }
+.status .dot { color: var(--add); font-size: 12px; }
+.tb-btn {
+  display: flex; align-items: center; gap: 7px;
+  height: 34px; padding: 0 13px; border-radius: var(--r-pill);
+  font-size: 13px; color: var(--ink-2);
+  transition: background 120ms ease-out;
+}
+.tb-btn:hover { background: color-mix(in oklab, var(--ink) 5%, transparent); color: var(--ink); }
+.tb-btn .readout { font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.04em; }
+.clock { font-family: var(--mono); font-size: 13.5px; color: var(--ink); letter-spacing: 0.04em; }
+
+/* ----------------------------------------------------------------- sidebar */
+.sidebar {
+  position: fixed; top: var(--topbar-h); bottom: var(--footer-h); left: 0;
+  width: var(--sidebar-w); z-index: 10;
+  display: flex; flex-direction: column;
+  padding: 16px 12px 14px;
+  border-right: 1px solid var(--panel-line-dim);
+  background: rgb(var(--surface-rgb) / 0.88);
+  box-shadow: inset 0 1px 0 rgb(var(--surface-rgb) / 0.60);
+}
+.nav { display: flex; flex-direction: column; gap: 2px; }
+.nav-item {
+  display: flex; align-items: center; gap: 10px;
+  height: 38px; padding: 0 12px; border-radius: var(--r-ctl);
+  font-size: 13.5px; color: var(--ink); text-align: left;
+  transition: background 120ms ease-out;
+}
+.nav-item:hover { background: color-mix(in oklab, var(--ink) 5%, transparent); }
+.nav-item .count { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--ink-2); }
+.nav-item.active {
+  background: var(--ink); color: var(--void);
+  font-weight: 500;
+}
+.nav-item.active::before {
+  content: ""; width: 4px; height: 4px; border-radius: 50%;
+  background: var(--accent); margin-right: 2px;
+}
+.nav-item.active .count { color: var(--void); opacity: 0.7; }
+.soon-pill {
+  margin-left: auto;
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.12em;
+  color: var(--accent); background: rgb(var(--accent-rgb) / 0.10);
+  border-radius: var(--r-pill); padding: 2px 8px; text-transform: uppercase;
+}
+.nav-item.soon { color: var(--ink-2); }
+.nav-sep { height: 1px; background: var(--hairline); margin: 10px 4px; }
+.sidebar .push { flex: 1; }
+.sealed {
+  display: flex; align-items: center; gap: 9px;
+  height: 38px; padding: 0 12px; border-radius: var(--r-ctl);
+  font-size: 13px; color: var(--bronze);
+  transition: background 120ms ease-out;
+}
+.sealed:hover { background: rgb(var(--bronze-rgb) / 0.08); }
+.sealed .count { margin-left: auto; font-family: var(--mono); font-size: 11px; }
+.side-foot {
+  padding: 12px 12px 0; border-top: 1px solid var(--hairline); margin-top: 10px;
+  font-family: var(--mono); font-size: 10.5px; color: var(--muted); line-height: 1.8;
+}
+
+/* -------------------------------------------------------------------- main */
+.main {
+  position: fixed; top: 0; bottom: var(--footer-h); left: var(--sidebar-w); right: 0;
+  overflow-y: auto; z-index: 5;
+  padding: calc(var(--topbar-h) + 28px) 32px 48px;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--ink) 20%, transparent) transparent;
+}
+.col { max-width: 1240px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px; }
+
+.greeting h1 { font-size: 30px; font-weight: 300; letter-spacing: -0.02em; text-wrap: balance; }
+.greeting .sub { margin-top: 6px; font-size: 12.5px; color: var(--ink-2); }
+.greeting .sub .block { font-family: var(--mono); font-size: 11.5px; }
+
+/* ------------------------------------------------------------------- KPIs */
+.kpis {
+  display: grid; grid-template-columns: repeat(5, 1fr); gap: 24px;
+  padding: 4px 0;
+}
+.kpi .eyebrow {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--ink-2);
+}
+.kpi .value {
+  margin-top: 6px;
+  font-size: 40px; font-weight: 300; letter-spacing: -0.02em; line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.kpi .qual { margin-top: 3px; font-size: 12.5px; color: var(--ink-2); }
+.kpi .qual.alert { color: var(--red); }
+.kpi .qual .m { font-family: var(--mono); font-size: 11.5px; }
+
+/* ------------------------------------------------------------------- cards */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-card);
+  padding: 24px;
+}
+.card-head {
+  display: flex; align-items: baseline; gap: 12px; margin-bottom: 16px;
+}
+.card-head h2 { font-size: 15px; font-weight: 500; }
+.card-head .meta {
+  margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--ink-2);
+  background: none; border-radius: 6px; padding: 2px 4px;
+}
+button.meta:hover { color: var(--accent); }
+
+.work-grid { display: grid; grid-template-columns: 1.6fr 1fr; gap: 24px; align-items: start; }
+.right-col { display: flex; flex-direction: column; gap: 24px; }
+
+/* queue */
+.q-section { margin-bottom: 6px; }
+.q-eyebrow {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--ink-2);
+  margin: 14px 0 4px;
+}
+.q-section:first-of-type .q-eyebrow { margin-top: 0; }
+.q-row {
+  display: flex; align-items: center; gap: 12px;
+  min-height: 40px; padding: 0 10px; margin: 0 -10px;
+  border-radius: var(--r-ctl);
+  transition: background 120ms ease-out;
+}
+.q-row:hover { background: color-mix(in oklab, var(--ink) 3.5%, transparent); }
+.check {
+  flex: none; width: 18px; height: 18px; border-radius: 5px;
+  border: 1.5px solid color-mix(in oklab, var(--ink) 30%, transparent);
+  transition: border-color 120ms ease-out;
+}
+.q-row:hover .check { border-color: color-mix(in oklab, var(--ink) 55%, transparent); }
+.q-title { font-size: 14px; }
+.q-title .crs { font-weight: 500; }
+.chip {
+  margin-left: auto; flex: none;
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11.5px; font-weight: 500;
+  border-radius: var(--r-pill); padding: 3px 10px;
+  background: var(--inset); color: var(--ink-2);
+}
+.chip.warn  { background: rgb(var(--amber-rgb) / var(--chip-a));  color: var(--amber); }
+.chip.danger{ background: rgb(var(--red-rgb) / var(--chip-a));    color: var(--red); }
+.chip.urg   { background: rgb(var(--accent-rgb) / var(--chip-a)); color: var(--accent); }
+.chip.ok    { background: rgb(var(--add-rgb) / var(--chip-a));    color: var(--add); }
+
+/* today */
+.t-row {
+  display: flex; align-items: center; gap: 10px;
+  min-height: 34px; font-size: 13.5px;
+}
+.t-row .when { font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); width: 44px; flex: none; }
+.t-row .glyph { flex: none; font-size: 11px; color: var(--ink-2); }
+.t-row.done { color: var(--ink-2); }
+.t-row.done .tick { color: var(--add); margin-left: auto; font-size: 12px; }
+.t-row .until { margin-left: auto; font-family: var(--mono); font-size: 10.5px; color: var(--ink-2); }
+.now-rule { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.now-rule::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.now-rule .line { flex: 1; height: 1px; background: rgb(var(--accent-rgb) / 0.35); }
+.now-rule .t { font-family: var(--mono); font-size: 10.5px; color: var(--accent); }
+.week {
+  display: flex; align-items: flex-end; gap: 14px;
+  margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--hairline);
+}
+.week .bars { display: flex; align-items: flex-end; gap: 5px; height: 28px; }
+.week .bar { width: 6px; border-radius: 2px; background: rgb(var(--accent-rgb) / 0.30); }
+.week .bar.today { background: var(--accent); }
+.week .free {
+  margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--ink-2);
+  padding: 2px 4px; border-radius: 6px;
+}
+.week button.free:hover { color: var(--accent); }
+
+/* waiting */
+.card.attn { border-color: rgb(var(--amber-rgb) / 0.35); }
+.card.attn .card-head h2 { color: var(--amber); }
+.w-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 8px 10px; margin: 0 -10px; border-radius: var(--r-ctl);
+  font-size: 13.5px; line-height: 1.45;
+  transition: background 120ms ease-out;
+}
+.w-row:hover { background: color-mix(in oklab, var(--ink) 3.5%, transparent); }
+.w-row .chip { margin: 1px 0 0; }
+
+/* projects */
+.p-row {
+  display: flex; align-items: center; gap: 10px;
+  min-height: 38px; padding: 0 10px; margin: 0 -10px;
+  border-radius: var(--r-ctl); font-size: 14px;
+  transition: background 120ms ease-out;
+}
+.p-row:hover { background: color-mix(in oklab, var(--ink) 3.5%, transparent); }
+.p-row .name { font-weight: 500; }
+.p-row .seal { color: var(--bronze); }
+.p-row .git { margin-left: auto; font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); }
+.p-row .git .dirty { color: var(--amber); }
+
+/* system strip */
+.system {
+  display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  background: var(--inset);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-ctl);
+  padding: 12px 18px;
+  font-family: var(--mono); font-size: 11.5px; color: var(--ink-2);
+}
+.system .lbl { letter-spacing: 0.14em; color: var(--muted); }
+.system .cell b { font-weight: 500; color: var(--ink); }
+.system .cell .due { color: var(--amber); }
+.system .sep { color: var(--muted); }
+.system .ledger { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--ink-2); padding: 2px 4px; border-radius: 6px; }
+.system .ledger:hover { color: var(--accent); }
+
+/* ------------------------------------------------------------- empty state */
+.empty-state { display: none; text-align: center; padding: 64px 0 48px; }
+body.empty .empty-state { display: block; }
+body.empty .work-grid { display: none; }
+.empty-state .sigil { font-size: 34px; color: var(--accent); }
+.empty-state h2 { margin-top: 18px; font-size: 26px; font-weight: 300; letter-spacing: -0.02em; }
+.empty-state p { margin-top: 8px; font-size: 13.5px; color: var(--ink-2); }
+.suggest { display: flex; justify-content: center; gap: 16px; margin-top: 36px; }
+.suggest button {
+  width: 216px; text-align: left;
+  background: var(--surface); border: 1px solid var(--hairline);
+  border-radius: var(--r-card); padding: 16px;
+  transition: border-color 120ms ease-out;
+}
+.suggest button:hover { border-color: var(--hairline-2); }
+.suggest .s-title { font-size: 13.5px; font-weight: 500; display: flex; align-items: center; gap: 8px; }
+.suggest .s-title .g { color: var(--ink-2); }
+.suggest .s-body { margin-top: 6px; font-size: 12.5px; color: var(--ink-2); line-height: 1.5; }
+.suggest .s-body .kbd { margin-left: 2px; }
+
+/* ------------------------------------------------------------ ask capsule */
+.ask {
+  position: fixed; right: 24px; bottom: calc(var(--footer-h) + 16px); z-index: 15;
+  display: flex; align-items: center; gap: 8px;
+  background: var(--accent); color: var(--surface);
+  border-radius: var(--r-pill); padding: 11px 20px;
+  font-size: 14px; font-weight: 500;
+  box-shadow: var(--float);
+  transition: filter 120ms ease-out;
+}
+.ask:hover { filter: brightness(1.06); }
+
+/* ------------------------------------------------------------------ footer */
+.footer {
+  position: fixed; left: 0; right: 0; bottom: 0; height: var(--footer-h); z-index: 20;
+  display: flex; align-items: center; gap: 24px;
+  padding: 0 24px;
+  border-top: 1px solid var(--panel-line-dim);
+  background: rgb(var(--surface-rgb) / 0.88);
+  font-family: var(--mono); font-size: 11px; color: var(--ink-2);
+  white-space: nowrap; overflow: hidden;
+}
+.footer .mode { letter-spacing: 0.04em; }
+.footer .hints { flex: 1; text-align: center; color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+.footer .dock { padding: 2px 4px; border-radius: 6px; font-family: var(--mono); font-size: 11px; color: var(--ink-2); }
+.footer .dock:hover { color: var(--accent); }
+
+/* --------------------------------------------------- overlays & dropdowns */
+.backdrop {
+  position: fixed; inset: 0; z-index: 40; display: none;
+  background: rgb(var(--scrim-rgb) / 0.30);
+}
+.backdrop.open { display: block; }
+
+.dropdown {
+  position: fixed; z-index: 50; display: none;
+  border-radius: var(--r-sheet);
+  border: 1px solid var(--panel-line-dim);
+  padding: 8px;
+  min-width: 320px;
+}
+.dropdown.open { display: block; }
+.dropdown .dd-note {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--muted); padding: 8px 12px 6px;
+}
+.dd-row {
+  width: 100%; display: flex; align-items: center; gap: 12px;
+  padding: 9px 12px; border-radius: 12px; text-align: left;
+  transition: background 120ms ease-out;
+}
+.dd-row:hover { background: color-mix(in oklab, var(--ink) 5%, transparent); }
+.dd-row.active { background: var(--ink); color: var(--void); }
+.dd-row .swatches { display: flex; gap: 4px; flex: none; }
+.dd-row .sw { width: 10px; height: 10px; border-radius: 50%; border: 1px solid rgb(0 0 0 / 0.12); }
+.dd-row .dd-name { font-family: var(--mono); font-size: 12px; letter-spacing: 0.06em; }
+.dd-row .dd-note2 { font-size: 11.5px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 300px; }
+.dd-row.active .dd-note2 { color: var(--void); opacity: 0.75; }
+
+/* command capsule */
+.cmd {
+  position: fixed; z-index: 50; display: none;
+  left: 50%; top: 18%; transform: translateX(-50%);
+  width: min(560px, 90vw);
+  border-radius: var(--r-sheet);
+  border: 1px solid var(--panel-line-dim);
+  padding: 10px;
+}
+.cmd.open { display: block; }
+.cmd input {
+  width: 100%; height: 44px; padding: 0 16px;
+  font: 400 14.5px var(--sans); color: var(--ink);
+  background: rgb(var(--surface-rgb) / 0.5);
+  border: 1px solid var(--hairline); border-radius: 12px;
+  outline: none;
+}
+.cmd input::placeholder { color: var(--muted); }
+.cmd .rows { margin-top: 8px; display: flex; flex-direction: column; gap: 2px; }
+.cmd .c-row {
+  display: flex; align-items: baseline; gap: 14px;
+  padding: 9px 14px; border-radius: 12px; text-align: left;
+  transition: background 120ms ease-out;
+}
+.cmd .c-row:hover { background: color-mix(in oklab, var(--ink) 5%, transparent); }
+.cmd .verb { font-family: var(--mono); font-size: 12.5px; }
+.cmd .what { font-size: 12.5px; color: var(--ink-2); }
+.cmd .c-foot {
+  padding: 8px 14px 4px; font-family: var(--mono); font-size: 10px;
+  color: var(--muted); letter-spacing: 0.08em;
+}
+
+/* design notes sheet */
+.notes {
+  position: fixed; top: 12px; right: 12px; bottom: calc(var(--footer-h) + 12px); z-index: 50;
+  width: min(420px, 92vw); display: none;
+  border-radius: var(--r-sheet);
+  border: 1px solid var(--panel-line-dim);
+  padding: 24px; overflow-y: auto;
+  scrollbar-width: thin;
+}
+.notes.open { display: block; }
+.notes h3 { font-size: 15px; font-weight: 500; margin-bottom: 4px; }
+.notes .n-sub { font-size: 12px; color: var(--ink-2); margin-bottom: 16px; }
+.notes h4 {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--ink-2);
+  margin: 16px 0 6px; padding-top: 14px; border-top: 1px solid var(--hairline);
+}
+.notes p { font-size: 12.5px; color: var(--ink); line-height: 1.6; margin-bottom: 6px; }
+.notes p b { font-weight: 500; }
+.notes code { font-family: var(--mono); font-size: 11px; background: var(--inset); border-radius: 4px; padding: 1px 5px; }
+
+/* mockup controls hint */
+.mock-hint {
+  position: fixed; left: calc(var(--sidebar-w) + 20px); bottom: calc(var(--footer-h) + 14px); z-index: 15;
+  font-family: var(--mono); font-size: 10.5px; color: var(--ink-2);
+  background: rgb(var(--surface-rgb) / 0.88);
+  border: 1px solid var(--panel-line-dim);
+  border-radius: var(--r-pill); padding: 6px 14px;
+}
+.mock-hint b { font-weight: 500; color: var(--ink); }
+
+/* ---------------------------------------------------------------- fallbacks */
+/* This page carries no backdrop-filter: the artifact sandbox's compositor
+ * blacks out on it (bisected 2026-08-21), so glass here is a heavier tint.
+ * The repo copy appends a blur override — the real dashboard blurs. */
+@media (prefers-reduced-transparency: reduce) {
+  .glass, .sidebar, .footer, .topbar.scrolled, .mock-hint {
+    background: var(--surface);
+    -webkit-backdrop-filter: none; backdrop-filter: none;
+  }
+  body { background: var(--void); }
+}
+@media (prefers-contrast: more) {
+  :root { --hairline: color-mix(in oklab, var(--ink) 22%, transparent); --chip-a: 0.2; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
+</style>
+
+<header class="topbar" id="topbar">
+  <div class="brand"><span class="sigil">Σ</span> Sigma</div>
+  <button class="search" id="searchBtn" aria-label="Search or command">
+    <span class="glyph">⌕</span> Search or command…
+    <span class="kbd">Ctrl K</span>
+  </button>
+  <div class="spacer"></div>
+  <div class="status" title="capture, reflection, login, privacy and the fleet are all fine"><span class="dot">◉</span> all clear</div>
+  <button class="tb-btn">＋ Capture</button>
+  <button class="tb-btn" id="themeBtn">◐ <span class="readout" id="themeName">QUARTZ</span></button>
+  <button class="tb-btn" id="layoutBtn">▦ <span class="readout">ENTERPRISE</span></button>
+  <div class="clock">14:32</div>
+</header>
+
+<nav class="sidebar">
+  <div class="nav">
+    <button class="nav-item active">Overview</button>
+    <button class="nav-item">Work <span class="count">12</span></button>
+    <button class="nav-item">Calendar</button>
+    <button class="nav-item">Study</button>
+    <button class="nav-item">Build</button>
+    <div class="nav-sep"></div>
+    <button class="nav-item soon">Agents <span class="soon-pill">soon</span></button>
+    <button class="nav-item soon">Career <span class="soon-pill">soon</span></button>
+    <button class="nav-item soon">System <span class="soon-pill">soon</span></button>
+  </div>
+  <div class="push"></div>
+  <button class="sealed" title="material that never leaves this machine">⊘ Sealed <span class="count">12</span></button>
+  <div class="side-foot">vault: zach-vault<br>layout: enterprise · v0.9</div>
+</nav>
+
+<main class="main" id="main">
+  <div class="col">
+
+    <section class="greeting">
+      <h1>Good afternoon, Zach.</h1>
+      <div class="sub">Thursday, August 21 · <span class="block">deep block · 311 proof set</span></div>
+    </section>
+
+    <section class="kpis" aria-label="Today at a glance">
+      <div class="kpi">
+        <div class="eyebrow">Due today</div>
+        <div class="value" data-alt="0">3</div>
+        <div class="qual">tasks</div>
+      </div>
+      <div class="kpi">
+        <div class="eyebrow">Overdue</div>
+        <div class="value" data-alt="0">1</div>
+        <div class="qual alert" id="overdueQual" data-alt="none late">⚠ 1 day late</div>
+      </div>
+      <div class="kpi">
+        <div class="eyebrow">Waiting on you</div>
+        <div class="value" data-alt="0">2</div>
+        <div class="qual">proposals</div>
+      </div>
+      <div class="kpi">
+        <div class="eyebrow">Free today</div>
+        <div class="value" data-alt="6.2h">4.5h</div>
+        <div class="qual">of 8h waking</div>
+      </div>
+      <div class="kpi">
+        <div class="eyebrow">Window</div>
+        <div class="value">ok</div>
+        <div class="qual"><span class="m">14 calls/5h</span></div>
+      </div>
+    </section>
+
+    <section class="empty-state">
+      <div class="sigil">Σ</div>
+      <h2>Nothing needs you right now.</h2>
+      <p>Every queue is clear and no proposal is waiting on review.</p>
+      <div class="suggest">
+        <button><span class="s-title"><span class="g">✎</span> Capture</span>
+          <span class="s-body">an idea, before it evaporates <span class="kbd">Ctrl N</span></span></button>
+        <button><span class="s-title"><span class="g">▤</span> Study</span>
+          <span class="s-body">the CSE 311 guide has 2 open modules</span></button>
+        <button><span class="s-title"><span class="g">⌕</span> Ask</span>
+          <span class="s-body">“what's due this week?” <span class="kbd">Ctrl /</span></span></button>
+      </div>
+    </section>
+
+    <section class="work-grid">
+      <div class="card" aria-label="Work queue">
+        <div class="card-head">
+          <h2>Work queue</h2>
+          <button class="meta">12 visible · 41 queued ▸</button>
+        </div>
+        <div class="q-section">
+          <div class="q-eyebrow">Courses</div>
+          <div class="q-row"><span class="check"></span><span class="q-title"><span class="crs">CSE 311</span> — HW2 §1.5 problems</span><span class="chip warn">due today</span></div>
+          <div class="q-row"><span class="check"></span><span class="q-title"><span class="crs">MATH 208</span> — read §2.3, row reduction</span><span class="chip">due tomorrow</span></div>
+          <div class="q-row"><span class="check"></span><span class="q-title"><span class="crs">AA 210</span> — statics problem set 3</span><span class="chip">due Fri</span></div>
+        </div>
+        <div class="q-section">
+          <div class="q-eyebrow">ProCertus</div>
+          <div class="q-row"><span class="check"></span><span class="q-title">review PR #142 — auth middleware</span><span class="chip danger">⚠ overdue 1d</span></div>
+          <div class="q-row"><span class="check"></span><span class="q-title">standup notes → decisions log</span><span class="chip urg">high</span></div>
+        </div>
+        <div class="q-section">
+          <div class="q-eyebrow">Projects</div>
+          <div class="q-row"><span class="check"></span><span class="q-title">sigma-os — enterprise layout mockup</span></div>
+        </div>
+        <div class="q-section">
+          <div class="q-eyebrow">Misc</div>
+          <div class="q-row"><span class="check"></span><span class="q-title">renew UPass autoload</span><span class="chip">aging 12d</span></div>
+        </div>
+      </div>
+
+      <div class="right-col">
+        <div class="card" aria-label="Today">
+          <div class="card-head">
+            <h2>Today</h2>
+            <button class="meta">Aug 21 ▸</button>
+          </div>
+          <div class="t-row done"><span class="when">09:30</span><span class="glyph">◆</span> ProCertus standup <span class="tick">✓</span></div>
+          <div class="now-rule"><span class="t">now · 14:32</span><span class="line"></span></div>
+          <div class="t-row"><span class="when">16:00</span><span class="glyph">◆</span> AA 210 office hours <span class="until">in 1h 28m</span></div>
+          <div class="t-row"><span class="when">19:00</span><span class="glyph">◎</span> gym</div>
+          <div class="week">
+            <div class="bars" aria-label="week load">
+              <span class="bar" style="height:8px"></span><span class="bar" style="height:16px"></span>
+              <span class="bar" style="height:24px"></span><span class="bar today" style="height:13px"></span>
+              <span class="bar" style="height:8px"></span><span class="bar" style="height:6px"></span>
+              <span class="bar" style="height:10px"></span>
+            </div>
+            <button class="free">4.5h free ▸</button>
+          </div>
+        </div>
+
+        <div class="card attn" aria-label="Waiting on you">
+          <div class="card-head">
+            <h2>Waiting on you</h2>
+            <button class="meta">review ▸</button>
+          </div>
+          <div class="w-row"><span class="chip warn">pending</span><span>Promote “spaced-practice cadence” into the system prompt</span></div>
+          <div class="w-row"><span class="chip ok">approved</span><span>Queue weights: deadline decay — <span class="mono" style="font-size:11.5px">reflect --apply</span></span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" aria-label="Projects">
+      <div class="card-head">
+        <h2>Projects</h2>
+        <button class="meta">▸ build</button>
+      </div>
+      <div class="p-row"><span class="name">sigma-os</span><span class="git"><span class="dirty">● 3 dirty</span> · ↑2 · 2h ago</span></div>
+      <div class="p-row"><span class="name">procertus-interface</span><span class="git">○ clean · 1d ago</span></div>
+      <div class="p-row"><span class="seal">⊘</span><span class="name">journal</span><span class="git">no repo</span></div>
+    </section>
+
+    <section class="system" aria-label="System">
+      <span class="lbl">SYSTEM</span>
+      <span class="cell"><b>coach</b> · ok 2d ago · weekly</span><span class="sep">▪</span>
+      <span class="cell"><b>auditor</b> · ok 5d ago · weekly</span><span class="sep">▪</span>
+      <span class="cell"><b>tracker</b> · <span class="due">due</span> · weekly</span><span class="sep">▪</span>
+      <span class="cell"><b>intake</b> · manual · 8d ago</span>
+      <button class="ledger">ledger ▸</button>
+    </section>
+
+  </div>
+</main>
+
+<button class="ask">⌕ Ask Sigma</button>
+
+<div class="mock-hint"><b>mockup</b> · 1–7 palettes · E empty · N notes · K command</div>
+
+<footer class="footer">
+  <span class="mode">layout: enterprise · palette: <span id="paletteReadout">quartz</span></span>
+  <span class="hints">Ctrl+K command · Ctrl+/ ask · Ctrl+J ledger · Ctrl+. sealed · Ctrl+N capture · Ctrl+; task · Ctrl+' agenda · Ctrl+\ study · Esc back</span>
+  <button class="dock">⌁ coach ran 2h ago · 1 proposal → waiting</button>
+</footer>
+
+<div class="backdrop" id="backdrop"></div>
+
+<div class="dropdown glass" id="themeDrop" role="menu" aria-label="Palette">
+  <div class="dd-note">palette — value swap, never a fork</div>
+  <div id="themeRows"></div>
+</div>
+
+<div class="dropdown glass" id="layoutDrop" role="menu" aria-label="Layout">
+  <div class="dd-note">layout — the room, not the palette</div>
+  <button class="dd-row">
+    <span class="dd-name">INSTRUMENT</span>
+    <span class="dd-note2">the cockpit — cyan structure on the void, the brain at centre</span>
+  </button>
+  <button class="dd-row active">
+    <span class="dd-name">ENTERPRISE</span>
+    <span class="dd-note2">the office — cards on a tinted canvas, the day's work front and centre</span>
+  </button>
+</div>
+
+<div class="cmd glass" id="cmd">
+  <input type="text" placeholder="Type a command or ask the vault…" id="cmdInput">
+  <div class="rows">
+    <button class="c-row"><span class="verb">doctor</span><span class="what">run the health check now</span></button>
+    <button class="c-row"><span class="verb">coach run</span><span class="what">run the study coach specialist</span></button>
+    <button class="c-row"><span class="verb">capture sweep</span><span class="what">triage the inbox into the vault</span></button>
+    <button class="c-row"><span class="verb">reflect apply</span><span class="what">apply the approved proposals</span></button>
+    <button class="c-row"><span class="verb">guide render AA-210</span><span class="what">regenerate the study guide</span></button>
+  </div>
+  <div class="c-foot">⇥ cycle · ⏎ run · esc back</div>
+</div>
+
+<aside class="notes glass" id="notes" aria-label="Design notes">
+  <h3>Design notes</h3>
+  <div class="n-sub">Why this layout looks the way it does. Press N to close.</div>
+
+  <h4>The two-layer rule</h4>
+  <p>Content is <b>flat</b>: the page is <code>--void</code>, a card is <code>--surface</code>, a well is
+  <code>--inset</code> — elevation is a lightness step, never a shadow. Glass lives only on the
+  floating functional layer: top bar, sidebar, pickers, the Ask capsule, sheet scrims. Never
+  glass on glass.</p>
+
+  <h4>The glass recipe</h4>
+  <p><code>rgb(var(--surface-rgb)/.72)</code> + <code>blur(18px) saturate(1.4)</code>, with a dual edge:
+  an accent hairline (<code>--panel-line-dim</code>) that carries the edge on dark palettes, and an
+  inset surface sheen that carries it on light ones. Each fades out exactly where the other
+  takes over — that is what makes one recipe work across all seven palettes.</p>
+
+  <h4>The shadow ruling</h4>
+  <p>The reference rule is “never use a shadow to <b>raise</b> something.” Cards obey absolutely.
+  Glass cannot be raised by lightness — it has none of its own — so the floating layer alone
+  carries one ambient float built from <code>--scrim-rgb</code>, each palette's own idea of darkness:
+  indigo-navy under QUARTZ, near-nothing under VOID. A tinted shadow, never black.</p>
+
+  <h4>The accent budget</h4>
+  <p>Five spends: the brand Σ · the Ask capsule (the view's one primary action) · the active-nav
+  dot · <code>soon</code> badges · the focus ring. If two accented things are visible at once, one of
+  them is wrong. Active and selected states are <b>ink-filled</b>, not accent-filled — near-black
+  on light palettes, near-white on dark, from the same two tokens.</p>
+
+  <h4>Type</h4>
+  <p>Sans is what a human wrote; mono is what a machine produced — counts, times, git state,
+  key hints, readouts. Weight 300 only at display sizes (the greeting, KPI numerals); nothing
+  bolder than 500 anywhere. Every numeral is tabular.</p>
+
+  <h4>Status</h4>
+  <p>Status is never colour alone: every chip carries a word, warnings carry a glyph too.
+  Chips are a 12% tint of their own hue with the full-strength hue as text. Bronze means
+  exactly one thing — “never leaves this machine” — and is spent on nothing else.</p>
+
+  <h4>What's omitted</h4>
+  <p>The brain. The graph lives in the Instrument layout — the office gets the machine's
+  <b>facts</b> instead: the SYSTEM strip and the footer dock. Everything else has a named home
+  here; nothing was silently dropped. Agents, Career and System keep their <code>soon</code> pills —
+  nothing pretends to exist.</p>
+
+  <h4>Fallbacks</h4>
+  <p><code>prefers-reduced-transparency</code> turns glass opaque, <code>prefers-contrast</code> doubles
+  hairlines and chip tints, <code>prefers-reduced-motion</code> stops all transitions, and a browser
+  without backdrop-filter gets solid surfaces. The layout owes nothing to the effects.</p>
+  <p><b>One mockup-only substitution:</b> this hosted page uses a heavier tint instead of live
+  blur, because the artifact sandbox cannot composite <code>backdrop-filter</code>. The repo copy
+  (<code>interface/mockups/enterprise-layout.html</code>) and the real implementation blur.</p>
+</aside>
+
+<script>
+/* The seven palettes, mirrored from theme.ts Spec values. -rgb twins are
+ * derived by the same channels() trick, never hand-typed, so they cannot drift. */
+const THEMES = [
+  { id:"void",     name:"VOID",     note:"the original — cyan structure on near-black",
+    scheme:"dark",  void_:"#05070A", surface:"#0C1116", inset:"#080C11", scrim:"#020305",
+    accent:"#22D3EE", glow:"#00E5FF", ink:"#D9E4EB", ink2:"#8299A6", muted:"#3A4A55",
+    amber:"#FFB020", red:"#FF4D4D", add:"#4ADE80", bronze:"#C77D2E",
+    haze:["#00E5FF","#C084FC","#2DD4BF","#60A5FA"] },
+  { id:"ember",    name:"EMBER",    note:"tungsten — warm, red-orange on charred black",
+    scheme:"dark",  void_:"#0B0806", surface:"#150F0B", inset:"#0F0B08", scrim:"#050302",
+    accent:"#FF6B35", glow:"#FF9A5C", ink:"#F2E6D8", ink2:"#A88E75", muted:"#574536",
+    amber:"#FFC93D", red:"#FF4D6A", add:"#9BE04E", bronze:"#B08D57",
+    haze:["#FF6B35","#E0457B","#FFC93D","#7C4DFF"] },
+  { id:"verdant",  name:"VERDANT",  note:"phosphor — the green terminal",
+    scheme:"dark",  void_:"#050A07", surface:"#0C1310", inset:"#080D0A", scrim:"#010402",
+    accent:"#4ADE80", glow:"#7CF6A8", ink:"#DAEEDF", ink2:"#7FA189", muted:"#33503E",
+    amber:"#FFC44D", red:"#FF5C5C", add:"#A3E635", bronze:"#C77D2E",
+    haze:["#4ADE80","#2DD4BF","#A3E635","#38BDF8"] },
+  { id:"synapse",  name:"SYNAPSE",  note:"violet — the brain's own nebula colours",
+    scheme:"dark",  void_:"#08060D", surface:"#100D18", inset:"#0B0911", scrim:"#030208",
+    accent:"#C084FC", glow:"#DDA9FF", ink:"#E6DEF2", ink2:"#9A8FB5", muted:"#453A5E",
+    amber:"#FFB020", red:"#FF4D6A", add:"#4ADE80", bronze:"#C77D2E",
+    haze:["#C084FC","#EC4899","#60A5FA","#2DD4BF"] },
+  { id:"meridian", name:"MERIDIAN", note:"daylight — paper with a teal instrument accent",
+    scheme:"light", void_:"#F2F5F7", surface:"#FFFFFF", inset:"#F7F9FA", scrim:"#253039",
+    accent:"#0E7C99", glow:"#0B6F8A", ink:"#16212B", ink2:"#4E606E", muted:"#A7B5BE",
+    amber:"#9A5B00", red:"#B92B2B", add:"#1B7A3D", bronze:"#8A5A1E",
+    line:[0.34,0.18], haze:["#7DD3FC","#C4B5FD","#99F6E4","#BFDBFE"] },
+  { id:"graphite", name:"GRAPHITE", note:"neutral — grey structure, only status carries hue",
+    scheme:"dark",  void_:"#0A0A0C", surface:"#131317", inset:"#0E0E11", scrim:"#030304",
+    accent:"#9FB0BC", glow:"#D5E0E8", ink:"#E7E9EC", ink2:"#949AA1", muted:"#3E434A",
+    amber:"#E0A33A", red:"#E0555F", add:"#6FBF73", bronze:"#B0885A",
+    haze:["#9FB0BC","#7C8794","#B8C2CC","#63707C"] },
+  { id:"quartz",   name:"QUARTZ",   note:"the reference — tinted canvas under white cards",
+    scheme:"light", void_:"#EEF0F8", surface:"#FFFFFF", inset:"#F5F6FA", scrim:"#1E2233",
+    accent:"#4F46E5", glow:"#6D63FF", ink:"#171A2B", ink2:"#5A6175", muted:"#A6ADC0",
+    amber:"#8A5000", red:"#B3243C", add:"#15703A", bronze:"#8A5A1E",
+    line:[0.22,0.11], haze:["#C7BFFF","#A5B4FC","#DDD6FE","#BFDBFE"] },
+];
+
+function channels(hex) {
+  const h = hex.replace("#", "");
+  const n = h.length === 3 ? h.split("").map(c => c + c).join("") : h;
+  return [0, 2, 4].map(i => parseInt(n.slice(i, i + 2), 16)).join(" ");
+}
+
+let current = "quartz";
+
+function apply(id) {
+  const t = THEMES.find(x => x.id === id);
+  if (!t) return;
+  current = id;
+  const r = document.documentElement;
+  const set = (k, v) => r.style.setProperty(k, v);
+  const [la, ld] = t.line ?? [0.28, 0.14];
+  set("--void", t.void_);       set("--void-rgb", channels(t.void_));
+  set("--surface", t.surface);  set("--surface-rgb", channels(t.surface));
+  set("--inset", t.inset);      set("--inset-rgb", channels(t.inset));
+  set("--scrim-rgb", channels(t.scrim));
+  set("--accent", t.accent);    set("--accent-rgb", channels(t.accent));
+  set("--glow-rgb", channels(t.glow));
+  set("--panel-line", `rgb(${channels(t.accent)} / ${la})`);
+  set("--panel-line-dim", `rgb(${channels(t.accent)} / ${ld})`);
+  set("--ink", t.ink); set("--ink-2", t.ink2); set("--muted", t.muted);
+  set("--amber", t.amber); set("--amber-rgb", channels(t.amber));
+  set("--red", t.red);     set("--red-rgb", channels(t.red));
+  set("--add", t.add);     set("--add-rgb", channels(t.add));
+  set("--bronze", t.bronze); set("--bronze-rgb", channels(t.bronze));
+  t.haze.forEach((c, i) => set(`--haze-${i + 1}`, channels(c)));
+  r.style.colorScheme = t.scheme;
+  r.dataset.theme = t.id;
+  document.getElementById("themeName").textContent = t.name;
+  document.getElementById("paletteReadout").textContent = t.id;
+  buildThemeRows();
+}
+
+function buildThemeRows() {
+  const host = document.getElementById("themeRows");
+  host.innerHTML = "";
+  THEMES.forEach((t, i) => {
+    const b = document.createElement("button");
+    b.className = "dd-row" + (t.id === current ? " active" : "");
+    b.setAttribute("role", "menuitem");
+    const sw = document.createElement("span");
+    sw.className = "swatches";
+    [t.void_, t.accent, t.amber, t.red, t.add, t.bronze].forEach(c => {
+      const d = document.createElement("span");
+      d.className = "sw"; d.style.background = c;
+      sw.appendChild(d);
+    });
+    const name = document.createElement("span");
+    name.className = "dd-name"; name.textContent = `${i + 1} ${t.name}`;
+    const note = document.createElement("span");
+    note.className = "dd-note2"; note.textContent = t.note;
+    b.append(sw, name, note);
+    b.addEventListener("click", () => { apply(t.id); });
+    host.appendChild(b);
+  });
+}
+
+/* ------------------------------------------------------- overlay plumbing */
+const backdrop = document.getElementById("backdrop");
+const panes = {
+  theme: document.getElementById("themeDrop"),
+  layout: document.getElementById("layoutDrop"),
+  cmd: document.getElementById("cmd"),
+  notes: document.getElementById("notes"),
+};
+let open = null;
+
+function closeAll() {
+  open = null;
+  backdrop.classList.remove("open");
+  Object.values(panes).forEach(p => p.classList.remove("open"));
+}
+function toggle(name, anchor) {
+  if (open === name) { closeAll(); return; }
+  closeAll();
+  open = name;
+  const p = panes[name];
+  if (anchor) {
+    const rect = anchor.getBoundingClientRect();
+    p.style.top = rect.bottom + 8 + "px";
+    p.style.right = Math.max(12, window.innerWidth - rect.right) + "px";
+    p.style.left = "auto";
+  }
+  p.classList.add("open");
+  if (name !== "notes") backdrop.classList.add("open");
+  if (name === "cmd") document.getElementById("cmdInput").focus();
+}
+
+document.getElementById("themeBtn").addEventListener("click", e => toggle("theme", e.currentTarget));
+document.getElementById("layoutBtn").addEventListener("click", e => toggle("layout", e.currentTarget));
+document.getElementById("searchBtn").addEventListener("click", () => toggle("cmd"));
+backdrop.addEventListener("click", closeAll);
+
+/* -------------------------------------------------------------- empty state */
+function toggleEmpty() {
+  document.body.classList.toggle("empty");
+  document.querySelectorAll("[data-alt]").forEach(el => {
+    const alt = el.getAttribute("data-alt");
+    el.setAttribute("data-alt", el.textContent);
+    el.textContent = alt;
+  });
+  document.getElementById("overdueQual").classList.toggle("alert");
+}
+
+/* ---------------------------------------------------------------- keyboard */
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT") {
+    if (e.key === "Escape") closeAll();
+    return;
+  }
+  if (e.key >= "1" && e.key <= "7") apply(THEMES[+e.key - 1].id);
+  else if (e.key === "k" || e.key === "K") toggle("cmd");
+  else if (e.key === "n" || e.key === "N") toggle("notes");
+  else if (e.key === "e" || e.key === "E") toggleEmpty();
+  else if (e.key === "Escape") closeAll();
+});
+
+/* --------------------------------------------------------------- scroll edge */
+const main = document.getElementById("main");
+const topbar = document.getElementById("topbar");
+main.addEventListener("scroll", () => {
+  topbar.classList.toggle("scrolled", main.scrollTop > 8);
+}, { passive: true });
+
+/* Deferred: the artifact frame-runtime negotiates with its host around
+ * DOMContentLoaded, and writing 40 inline properties onto <html> mid-parse
+ * races it. The :root block is already QUARTZ, so nothing flashes. */
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", () => apply("quartz"), { once: true });
+} else {
+  apply("quartz");
+}
+</script>
+<style>
+/* Repo-only override: real glass. The hosted artifact copy omits backdrop-filter
+ * because the artifact sandbox's compositor is unreliable with it; opened
+ * locally, the blur is what the actual implementation will do. */
+@media (prefers-reduced-transparency: no-preference) {
+  .glass, .sidebar, .footer, .topbar.scrolled, .mock-hint {
+    background: rgb(var(--surface-rgb) / 0.72);
+    -webkit-backdrop-filter: blur(18px) saturate(1.4);
+    backdrop-filter: blur(18px) saturate(1.4);
+  }
+}
+</style>
+</body>
+</html>
